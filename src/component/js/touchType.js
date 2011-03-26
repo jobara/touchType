@@ -17,6 +17,10 @@ var tt = tt || {};
         return that;
     };
     
+    tt.typingTest.stringToArray = function (str) {
+        return str.split(/\s/);
+    };
+    
     fluid.defaults("tt.typingTest", {
         
     });
