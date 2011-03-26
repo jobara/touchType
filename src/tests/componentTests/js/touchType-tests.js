@@ -30,6 +30,13 @@ in compliance with this License.
         });
     };
     
+    var wordsPerMinuteTest = function (testName, numWords, numErrors, numMinutes, expectedWPM) {
+        ttTests.test(testName, function () {
+            var actualWPM = tt.typingTest.wordsPerMinute(numWords, numErrors, numMinutes);
+            jqUnit.assertEquals("WPM calculated correctly", expectedWPM, actualWPM);
+        });
+    };
+    
     $(document).ready(function () {
     
         ttTests.test("Initialization", function () {
@@ -52,5 +59,11 @@ in compliance with this License.
             expected: "def",
             actual: "ghi"
         }]);
+        
+        wordsPerMinuteTest("wordsPerMinute: no errors", 12, 0, 1, 12);
+        wordsPerMinuteTest("wordsPerMinute: no errors, 2 minutes", 12, 0, 2, 6);
+        wordsPerMinuteTest("wordsPerMinute: with errors", 12, 2, 1, 10);
+        wordsPerMinuteTest("wordsPerMinute: with errors, 2 minutes", 12, 2, 2, 5);
+        wordsPerMinuteTest("wordsPerMinute: more errors than words", 12, 22, 1, 0);
     });
 })(jQuery);

@@ -40,6 +40,10 @@ var tt = tt || {};
         return differences;
     };
     
+    tt.typingTest.wordsPerMinute = function (numWords, numErrors, numMinutes) {
+        return Math.max((numWords - numErrors) / numMinutes, 0);
+    };
+    
     fluid.defaults("tt.typingTest", {
         
     });
