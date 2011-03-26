@@ -23,6 +23,13 @@ in compliance with this License.
         });
     };
     
+    var compareStringArraysTest = function (testName, baseArray, comparisonArray, expectedComparison) {
+        ttTests.test(testName, function () {
+            var actualComparison = tt.typingTest.compareStringArrays(baseArray, comparisonArray);
+            jqUnit.assertDeepEq("Arrays diffed correctly", expectedComparison, actualComparison);
+        });
+    };
+    
     $(document).ready(function () {
     
         ttTests.test("Initialization", function () {
@@ -33,5 +40,17 @@ in compliance with this License.
         stringToArrayTest("stringToArray: string separated by single tab", "jkl\tmno", ["jkl", "mno"]);
         stringToArrayTest("stringToArray: string separated by multiple spaces", "pqr  stu", ["pqr", "", "stu"]);
         
+        compareStringArraysTest("compareStringArrays: compare equivalent arrays", ["abc", "def"], ["abc", "def"], []);
+        compareStringArraysTest("compareStringArrays: base array longer", ["abc", "def", "ghi"], ["abc", "def"], []);
+        compareStringArraysTest("compareStringArrays: comparison array longer", ["abc", "def"], ["abc", "def", "ghi"], [{
+            position: 2,
+            expected: undefined,
+            actual: "ghi"
+        }]);
+        compareStringArraysTest("compareStringArrays: comparison array different", ["abc", "def"], ["abc", "ghi"], [{
+            position: 1,
+            expected: "def",
+            actual: "ghi"
+        }]);
     });
 })(jQuery);

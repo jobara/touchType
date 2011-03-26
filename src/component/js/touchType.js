@@ -21,6 +21,25 @@ var tt = tt || {};
         return str.split(/\s/);
     };
     
+    tt.typingTest.compareStringArrays = function (baseArray, comparisonArray) {
+        var differences = [];
+        
+        for (var i = 0; i < comparisonArray.length; i++) {
+            var baseString = baseArray[i];
+            var comparisonString = comparisonArray[i];
+            
+            if (baseString !== comparisonString) {
+                differences.push({
+                    position: i,
+                    expected: baseString,
+                    actual: comparisonString
+                });
+            }
+        }
+        
+        return differences;
+    };
+    
     fluid.defaults("tt.typingTest", {
         
     });
