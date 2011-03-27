@@ -14,5 +14,5 @@
 
   <license href="http://www.opensource.org/licenses/mit-license.php">MIT License</license>
 
-  <content src="index.html" />
+  <content src="html/bb-touchType.html" />
 </widget>
