@@ -6,7 +6,7 @@ in compliance with this License.
 */
 
 // Declare Dependencies
-/*global tt, jQuery*/
+/*global setTimeout, clearTimout, tt, jQuery*/
 
 var tt = tt || {};
 
@@ -27,7 +27,7 @@ var tt = tt || {};
     };
     
     var startTimer = function (that) {
-        setTimeout(that.events.afterTimeFinished.fire, 60000);
+        return setTimeout(that.events.afterTimeFinished.fire, 60000);
     };
     
     var calculateWPM = function (that) {
@@ -48,6 +48,12 @@ var tt = tt || {};
         });
     };
     
+    var bindCancelEvent = function (that) {
+        that.locate("input").bind("blur.tt-cancel", function (event) {
+            that.cancel();
+        });
+    };
+    
     var bindEvents = function (that) {
         bindStartEvent(that);
     };
@@ -59,6 +65,7 @@ var tt = tt || {};
         
         that.events.afterStarted.addListener(function () {
             that.locate("input").unbind("keyup.tt-start");
+            bindCancelEvent(that);
             that.timerID = startTimer(that);
         });
         
@@ -69,6 +76,14 @@ var tt = tt || {};
         });
     };
     
+    var resetTest = function (that) {
+        var textInput = that.locate("input");
+        textInput.val("");
+        textInput.removeAttr("disabled");
+        textInput.unbind("blur.tt-cancel");
+        bindStartEvent(that);
+    };
+    
     var setup = function (that) {
         bindEvents(that);
         addListeners(that);
@@ -77,6 +92,11 @@ var tt = tt || {};
     
     tt.typingTest = function (container, options) {
         var that = fluid.initView("tt.typingTest", container, options);
+        
+        that.cancel = function () {
+            clearTimeout(that.timerID);
+            resetTest(that);
+        };
         
         setup(that);
         
