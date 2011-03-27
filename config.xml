@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<widget xmlns="http://www.w3.org/ns/widgets"
+        xmlns:rim="http://www.blackberry.com/ns/widgets"
+        version="1.0.0">
+
+  <name>TouchType</name>
+
+  <description>Tests a user's typing speed.</description>
+
+  <author href="http://jobara.github.com/touchType/" rim:copyright="2011" email="infielder@gmail.com">
+      Justin Obara
+  </author>
+
+  <license href="http://www.opensource.org/licenses/mit-license.php">MIT License</license>
+
+  <content src="index.html" />
+</widget>
