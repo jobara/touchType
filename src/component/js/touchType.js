@@ -45,6 +45,9 @@ var tt = tt || {};
     };
     
     fluid.defaults("tt.typingTest", {
-        
+        selectors: {
+            sampleText: ".tt-typingTest-sampleText",
+            input: ".tt-typingTest-input"
+        }
     });
 })(jQuery);
