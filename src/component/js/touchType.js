@@ -21,17 +21,55 @@ var tt = tt || {};
     };
     
     var renderText = function (that, text) {
-        var sampleText = that.locate("sampleText");
-        sampleText.text(text);
+        that.sampleText = text;
+        var sampleTextDisplay = that.locate("sampleText");
+        sampleTextDisplay.text(that.sampleText);
+    };
+    
+    var startTimer = function (that) {
+        setTimeout(that.events.afterTimeFinished.fire, 60000);
+    };
+    
+    var calculateWPM = function (that) {
+        var sampleText = tt.typingTest.stringToArray(that.sampleText);
+        var typedText = tt.typingTest.stringToArray(that.locate("input").val());
+        var errors = tt.typingTest.compareStringArrays(sampleText, typedText);
+        
+        return tt.typingTest.wordsPerMinute(typedText.length, errors.length, 1);
+    };
+    
+    var displayWPM = function (that, WPM) {
+        that.locate("WPMScore").text(WPM);
+    };
+    
+    var bindStartEvent = function (that) {
+        that.locate("input").bind("keyup.tt-start", function (event) {
+            that.events.afterStarted.fire(event.which);
+        });
+    };
+    
+    var bindEvents = function (that) {
+        bindStartEvent(that);
     };
     
     var addListeners = function (that) {
         that.events.afterTextFetched.addListener(function (text) {
             renderText(that, text);
         });
+        
+        that.events.afterStarted.addListener(function () {
+            that.locate("input").unbind("keyup.tt-start");
+            that.timerID = startTimer(that);
+        });
+        
+        that.events.afterTimeFinished.addListener(function () {
+            var WPM = calculateWPM(that);
+            displayWPM(that, WPM);
+        });
     };
     
     var setup = function (that) {
+        bindEvents(that);
         addListeners(that);
         fetchText(that, "../text/Macbeth.txt");
     };
@@ -74,11 +112,14 @@ var tt = tt || {};
     fluid.defaults("tt.typingTest", {
         selectors: {
             sampleText: ".tt-typingTest-sampleText",
-            input: ".tt-typingTest-input"
+            input: ".tt-typingTest-input",
+            WPMScore: ".tt-typingTest-WMPScore"
         },
         
         events: {
-            afterTextFetched: null
+            afterTextFetched: null,
+            afterStarted: null,
+            afterTimeFinished: null
         }
     });
 })(jQuery);
