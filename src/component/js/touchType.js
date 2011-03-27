@@ -73,6 +73,8 @@ var tt = tt || {};
             that.locate("input").attr("disabled", true);
             var WPM = calculateWPM(that);
             displayWPM(that, WPM);
+            alert(WPM);
+            that.cancel();
         });
     };
     
