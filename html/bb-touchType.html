@@ -8,19 +8,17 @@
 	
 	<link rel="stylesheet" type="text/css" media="screen" href="../css/bb-touchType.css" />
 	
-	<script type="text/javascript" src="../../lib/infusion/js/MyInfusion.js"></script>
+	<script type="text/javascript" src="../lib/infusion/js/MyInfusion.js"></script>
 	<script type="text/javascript" src="../js/touchType.js"></script>
+	<script type="text/javascript" src="../js/bb-touchType.js"></script>
 </head>
     <body>
         <div id="typingTest">
-            <span>
-                WPM: <span class="tt-typingTest-WMPScore"></span>
-            </span>
-            <p class="tt-typingTest-sampleText"></p>
             <input class="tt-typingTest-input" type="text" />
+            <p class="tt-typingTest-sampleText"></p>
         </div>
         <script>
-            tt.typingTest("#typingTest");
+            bb_tt.launch();
         </script>
     </body>
 </html>
