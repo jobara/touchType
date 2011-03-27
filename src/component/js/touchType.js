@@ -63,6 +63,7 @@ var tt = tt || {};
         });
         
         that.events.afterTimeFinished.addListener(function () {
+            that.locate("input").attr("disabled", true);
             var WPM = calculateWPM(that);
             displayWPM(that, WPM);
         });
