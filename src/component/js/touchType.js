@@ -11,8 +11,35 @@ in compliance with this License.
 var tt = tt || {};
 
 (function ($) {
+    
+    var fetchText = function (that, pathToFile) {
+        $.ajax({
+            url: pathToFile,
+            dataType: "text",
+            success: that.events.afterTextFetched.fire
+        });
+    };
+    
+    var renderText = function (that, text) {
+        var sampleText = that.locate("sampleText");
+        sampleText.text(text);
+    };
+    
+    var addListeners = function (that) {
+        that.events.afterTextFetched.addListener(function (text) {
+            renderText(that, text);
+        });
+    };
+    
+    var setup = function (that) {
+        addListeners(that);
+        fetchText(that, "../text/Macbeth.txt");
+    };
+    
     tt.typingTest = function (container, options) {
         var that = fluid.initView("tt.typingTest", container, options);
+        
+        setup(that);
         
         return that;
     };
@@ -48,6 +75,10 @@ var tt = tt || {};
         selectors: {
             sampleText: ".tt-typingTest-sampleText",
             input: ".tt-typingTest-input"
+        },
+        
+        events: {
+            afterTextFetched: null
         }
     });
 })(jQuery);
