@@ -71,7 +71,7 @@ var tt = tt || {};
     var setup = function (that) {
         bindEvents(that);
         addListeners(that);
-        fetchText(that, "../text/Macbeth.txt");
+        fetchText(that, that.options.texts[0].url);
     };
     
     tt.typingTest = function (container, options) {
@@ -120,6 +120,21 @@ var tt = tt || {};
             afterTextFetched: null,
             afterStarted: null,
             afterTimeFinished: null
-        }
+        },
+        
+        texts: [
+            {
+                name: "Macbeth",
+                url: "../text/Macbeth.txt"
+            },
+            {
+                name: "A Tale of Two Cities",
+                url: "../text/A_Tale_of_Two_Cities.txt"
+            },
+            {
+                name: "The Wonderful Wizard of Oz",
+                url: "../text/The_Wonderful_Wizard_of_Oz.txt"
+            }
+        ]
     });
 })(jQuery);

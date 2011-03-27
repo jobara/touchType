@@ -11,9 +11,16 @@ in compliance with this License.
 (function ($) {
     var ttTests = new jqUnit.TestCase("touchType Tests");
     
+    var textObj = {
+        name: "Macbeth",
+        url: "../../../component/text/Macbeth.txt"
+    }
     
     var createTypingTest = function (options) {
-        return tt.typingTest("#typingTest", options);
+        var mergedOptions = fluid.merge("replace", {
+            texts: [textObj]
+        }, options);
+        return tt.typingTest("#typingTest", mergedOptions);
     };
     
     var stringToArrayTest = function (testName, testString, expectedArray) {
@@ -39,8 +46,20 @@ in compliance with this License.
     
     $(document).ready(function () {
     
-        ttTests.test("Initialization", function () {
-            jqUnit.assertTrue("typingTest initialized", createTypingTest());
+        ttTests.asyncTest("Initialization", function () {
+            var typingTest = createTypingTest();
+            var textTest = function (text) {
+                jqUnit.assertEquals("The sample text is set correctly", text, typingTest.sampleText);
+                start();
+            };
+            
+            jqUnit.assertTrue("typingTest initialized", typingTest);
+            
+            $.ajax({
+                url: textObj.url,
+                dataType: "text",
+                success: textTest
+            });
         });
         
         stringToArrayTest("stringToArray: string separated by single space", "abc def ghi", ["abc", "def", "ghi"]);
