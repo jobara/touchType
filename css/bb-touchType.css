@@ -1,0 +1,20 @@
+.tts-typingTest {
+    height: 50%;
+    overflow: auto;
+}
+
+.tts-typingTest-input {
+    width: 98%;
+}
+
+.tts-typingTest-text {
+    background: #d9d1bc;
+    width: 97%;
+    -webkit-box-shadow: 10px 10px 5px #262625;
+    border-radius: 15px;
+    padding: 5px;
+}
+
+html {
+    background: #1f3623;
+}
