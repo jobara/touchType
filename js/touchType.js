@@ -30,12 +30,17 @@ var tt = tt || {};
         return setTimeout(that.events.afterTimeFinished.fire, 60000);
     };
     
-    var calculateWPM = function (that) {
+    var calculateWPMStats = function (that) {
         var sampleText = tt.typingTest.stringToArray(that.sampleText);
         var typedText = tt.typingTest.stringToArray(that.locate("input").val());
         var errors = tt.typingTest.compareStringArrays(sampleText, typedText);
+        var adjustedWPM = tt.typingTest.wordsPerMinute(typedText.length, errors.length, 1);
         
-        return tt.typingTest.wordsPerMinute(typedText.length, errors.length, 1);
+        return {
+            WPM: typedText.length,
+            errors: errors.length,
+            adjustedWPM: adjustedWPM
+        };
     };
     
     var displayWPM = function (that, WPM) {
@@ -71,9 +76,9 @@ var tt = tt || {};
         
         that.events.afterTimeFinished.addListener(function () {
             that.locate("input").attr("disabled", true);
-            var WPM = calculateWPM(that);
-            displayWPM(that, WPM);
-            alert(WPM);
+            var WPMStats = calculateWPMStats(that);
+            displayWPM(that, WPMStats.adjustedWPM);
+            that.options.notification(WPMStats);
             that.cancel();
         });
     };
@@ -132,6 +137,10 @@ var tt = tt || {};
         return Math.max((numWords - numErrors) / numMinutes, 0);
     };
     
+    tt.typingTest.defaultNotification = function (WPMStats) {
+        alert("Your WPM is " + WPMStats.adjustedWPM + "\n\n" + "WPM: " + WPMStats.WPM + "\nErrors: " + WPMStats.errors + "\nAdjusted WPM: " + WPMStats.adjustedWPM);
+    };
+    
     fluid.defaults("tt.typingTest", {
         selectors: {
             sampleText: ".tt-typingTest-sampleText",
@@ -144,6 +153,8 @@ var tt = tt || {};
             afterStarted: null,
             afterTimeFinished: null
         },
+        
+        notification: tt.typingTest.defaultNotification,
         
         texts: [
             {
