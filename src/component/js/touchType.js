@@ -138,7 +138,7 @@ var tt = tt || {};
     };
     
     tt.typingTest.defaultNotification = function (WPMStats) {
-        alert("Your WPM is " + WPMStats.adjustedWPM + "\n\n" + "WPM: " + WPMStats.WPM + "\nErrors: " + WPMStats.errors + "\nAdjustedWPM: " + WPMStats.adjustedWPM);
+        alert("Your WPM is " + WPMStats.adjustedWPM + "\n\n" + "WPM: " + WPMStats.WPM + "\nErrors: " + WPMStats.errors + "\nAdjusted WPM: " + WPMStats.adjustedWPM);
     };
     
     fluid.defaults("tt.typingTest", {
