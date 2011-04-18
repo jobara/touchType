@@ -96,19 +96,8 @@ var tt = tt || {};
         addListeners(that);
         fetchText(that, that.options.texts[0].url);
     };
-    
-    tt.typingTest = function (container, options) {
-        var that = fluid.initView("tt.typingTest", container, options);
-        
-        that.cancel = function () {
-            clearTimeout(that.timerID);
-            resetTest(that);
-        };
-        
-        setup(that);
-        
-        return that;
-    };
+
+    fluid.registerNamespace("tt.typingTest");
     
     tt.typingTest.stringToArray = function (str) {
         return str.split(/\s/);
@@ -141,7 +130,21 @@ var tt = tt || {};
         alert("Your WPM is " + WPMStats.adjustedWPM + "\n\n" + "WPM: " + WPMStats.WPM + "\nErrors: " + WPMStats.errors + "\nAdjusted WPM: " + WPMStats.adjustedWPM);
     };
     
+    tt.typingTest.preInit = function (that) {
+        that.cancel = function () {
+            clearTimeout(that.timerID);
+            resetTest(that);
+        };
+    };
+    
+    tt.typingTest.finalInit = function (that) {
+        setup(that);
+    };
+    
     fluid.defaults("tt.typingTest", {
+        gradeNames: ["fluid.viewComponent", "autoInit"],
+        preInitFunction: "tt.typingTest.preInit",
+        finalInitFunction: "tt.typingTest.finalInit",
         selectors: {
             sampleText: ".tt-typingTest-sampleText",
             input: ".tt-typingTest-input",
