@@ -31,10 +31,10 @@ var tt = tt || {};
     };
     
     var calculateWPMStats = function (that) {
-        var sampleText = tt.typingTest.stringToArray(that.sampleText);
-        var typedText = tt.typingTest.stringToArray(that.locate("input").val());
-        var errors = tt.typingTest.compareStringArrays(sampleText, typedText);
-        var adjustedWPM = tt.typingTest.wordsPerMinute(typedText.length, errors.length, 1);
+        var sampleText = that.toArray(that.sampleText);
+        var typedText = that.toArray(that.locate("input").val());
+        var errors = that.compare(sampleText, typedText);
+        var adjustedWPM = that.calculateWPM(typedText.length, errors.length, 1);
         
         return {
             WPM: typedText.length,
@@ -78,7 +78,7 @@ var tt = tt || {};
             that.locate("input").attr("disabled", true);
             var WPMStats = calculateWPMStats(that);
             displayWPM(that, WPMStats.adjustedWPM);
-            that.options.notification(WPMStats);
+            that.notify(WPMStats);
             that.cancel();
         });
     };
@@ -145,6 +145,14 @@ var tt = tt || {};
         gradeNames: ["fluid.viewComponent", "autoInit"],
         preInitFunction: "tt.typingTest.preInit",
         finalInitFunction: "tt.typingTest.finalInit",
+        
+        invokers: {
+            notify: "tt.typingTest.defaultNotification",
+            toArray: "tt.typingTest.stringToArray",
+            compare: "tt.typingTest.compareStringArrays",
+            calculateWPM: "tt.typingTest.wordsPerMinute"
+        },
+        
         selectors: {
             sampleText: ".tt-typingTest-sampleText",
             input: ".tt-typingTest-input",
@@ -156,8 +164,6 @@ var tt = tt || {};
             afterStarted: null,
             afterTimeFinished: null
         },
-        
-        notification: tt.typingTest.defaultNotification,
         
         texts: [
             {
