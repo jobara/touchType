@@ -58,10 +58,6 @@ var tt = tt || {};
     };
     
     var addListeners = function (that) {
-        that.events.afterTextFetched.addListener(function (text) {
-            that.renderText(text);
-        });
-        
         that.events.afterStarted.addListener(function () {
             that.locate("input").unbind("keyup.tt-start");
             bindCancelEvent(that);
@@ -156,6 +152,10 @@ var tt = tt || {};
             sampleText: ".tt-typingTest-sampleText",
             input: ".tt-typingTest-input",
             WPMScore: ".tt-typingTest-WMPScore"
+        },
+        
+        listeners: {
+            afterTextFetched: "{tt.typingTest}.renderText"
         },
         
         events: {
