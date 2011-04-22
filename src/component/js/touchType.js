@@ -83,14 +83,6 @@ var tt = tt || {};
         });
     };
     
-    var resetTest = function (that) {
-        var textInput = that.locate("input");
-        textInput.val("");
-        textInput.removeAttr("disabled");
-        textInput.unbind("blur.tt-cancel");
-        bindStartEvent(that);
-    };
-    
     var setup = function (that) {
         bindEvents(that);
         addListeners(that);
@@ -131,9 +123,17 @@ var tt = tt || {};
     };
     
     tt.typingTest.preInit = function (that) {
+        that.resetTest = function () {
+            var textInput = that.locate("input");
+            textInput.val("");
+            textInput.removeAttr("disabled");
+            textInput.unbind("blur.tt-cancel");
+            bindStartEvent(that);
+        };
+        
         that.cancel = function () {
             clearTimeout(that.timerID);
-            resetTest(that);
+            that.resetTest();
         };
     };
     
