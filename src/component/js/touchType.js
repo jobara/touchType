@@ -20,12 +20,6 @@ var tt = tt || {};
         });
     };
     
-    // var renderText = function (that, text) {
-    //     that.sampleText = text;
-    //     var sampleTextDisplay = that.locate("sampleText");
-    //     sampleTextDisplay.text(that.sampleText);
-    // };
-    
     var startTimer = function (that) {
         return setTimeout(that.events.afterTimeFinished.fire, 60000);
     };
