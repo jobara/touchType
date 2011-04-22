@@ -20,11 +20,11 @@ var tt = tt || {};
         });
     };
     
-    var renderText = function (that, text) {
-        that.sampleText = text;
-        var sampleTextDisplay = that.locate("sampleText");
-        sampleTextDisplay.text(that.sampleText);
-    };
+    // var renderText = function (that, text) {
+    //     that.sampleText = text;
+    //     var sampleTextDisplay = that.locate("sampleText");
+    //     sampleTextDisplay.text(that.sampleText);
+    // };
     
     var startTimer = function (that) {
         return setTimeout(that.events.afterTimeFinished.fire, 60000);
@@ -65,7 +65,7 @@ var tt = tt || {};
     
     var addListeners = function (that) {
         that.events.afterTextFetched.addListener(function (text) {
-            renderText(that, text);
+            that.renderText(text);
         });
         
         that.events.afterStarted.addListener(function () {
@@ -134,6 +134,11 @@ var tt = tt || {};
         that.cancel = function () {
             clearTimeout(that.timerID);
             that.resetTest();
+        };
+        
+        that.renderText = function (text) {
+            that.sampleText = text || "";
+            that.locate("sampleText").text(that.sampleText);
         };
     };
     
