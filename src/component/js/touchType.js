@@ -58,12 +58,6 @@ var tt = tt || {};
     };
     
     var addListeners = function (that) {
-        that.events.afterStarted.addListener(function () {
-            that.locate("input").unbind("keyup.tt-start");
-            bindCancelEvent(that);
-            that.timerID = startTimer(that);
-        });
-        
         that.events.afterTimeFinished.addListener(function () {
             that.locate("input").attr("disabled", true);
             var WPMStats = calculateWPMStats(that);
@@ -130,6 +124,12 @@ var tt = tt || {};
             that.sampleText = text || "";
             that.locate("sampleText").text(that.sampleText);
         };
+        
+        that.start = function () {
+            that.locate("input").unbind("keyup.tt-start");
+            bindCancelEvent(that);
+            that.timerID = startTimer(that);
+        };
     };
     
     tt.typingTest.finalInit = function (that) {
@@ -155,7 +155,8 @@ var tt = tt || {};
         },
         
         listeners: {
-            afterTextFetched: "{tt.typingTest}.renderText"
+            afterTextFetched: "{tt.typingTest}.renderText",
+            afterStarted: "{tt.typingTest}.start"
         },
         
         events: {
