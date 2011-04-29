@@ -6,35 +6,21 @@ in compliance with this License.
 */
 
 // Declare Dependencies
-/*global setTimeout, clearTimout, tt, jQuery*/
+/*global alert, setTimeout, clearTimout, tt:true, fluid, jQuery*/
 
 var tt = tt || {};
 
 (function ($) {
-    
-    var fetchText = function (that, pathToFile) {
-        $.ajax({
-            url: pathToFile,
-            dataType: "text",
-            success: that.events.afterTextFetched.fire
-        });
-    };
-    
-    var renderText = function (that, text) {
-        that.sampleText = text;
-        var sampleTextDisplay = that.locate("sampleText");
-        sampleTextDisplay.text(that.sampleText);
-    };
     
     var startTimer = function (that) {
         return setTimeout(that.events.afterTimeFinished.fire, 60000);
     };
     
     var calculateWPMStats = function (that) {
-        var sampleText = tt.typingTest.stringToArray(that.sampleText);
-        var typedText = tt.typingTest.stringToArray(that.locate("input").val());
-        var errors = tt.typingTest.compareStringArrays(sampleText, typedText);
-        var adjustedWPM = tt.typingTest.wordsPerMinute(typedText.length, errors.length, 1);
+        var sampleText = that.toArray(that.sampleText);
+        var typedText = that.toArray(that.locate("input").val());
+        var errors = that.compare(sampleText, typedText);
+        var adjustedWPM = that.calculateWPM(typedText.length, errors.length, 1);
         
         return {
             WPM: typedText.length,
@@ -59,56 +45,12 @@ var tt = tt || {};
         });
     };
     
-    var bindEvents = function (that) {
-        bindStartEvent(that);
-    };
-    
-    var addListeners = function (that) {
-        that.events.afterTextFetched.addListener(function (text) {
-            renderText(that, text);
-        });
-        
-        that.events.afterStarted.addListener(function () {
-            that.locate("input").unbind("keyup.tt-start");
-            bindCancelEvent(that);
-            that.timerID = startTimer(that);
-        });
-        
-        that.events.afterTimeFinished.addListener(function () {
-            that.locate("input").attr("disabled", true);
-            var WPMStats = calculateWPMStats(that);
-            displayWPM(that, WPMStats.adjustedWPM);
-            that.options.notification(WPMStats);
-            that.cancel();
-        });
-    };
-    
-    var resetTest = function (that) {
-        var textInput = that.locate("input");
-        textInput.val("");
-        textInput.removeAttr("disabled");
-        textInput.unbind("blur.tt-cancel");
-        bindStartEvent(that);
-    };
-    
     var setup = function (that) {
-        bindEvents(that);
-        addListeners(that);
-        fetchText(that, that.options.texts[0].url);
+        bindStartEvent(that);
+        that.fetchText(that.options.texts[0].url);
     };
-    
-    tt.typingTest = function (container, options) {
-        var that = fluid.initView("tt.typingTest", container, options);
-        
-        that.cancel = function () {
-            clearTimeout(that.timerID);
-            resetTest(that);
-        };
-        
-        setup(that);
-        
-        return that;
-    };
+
+    fluid.registerNamespace("tt.typingTest");
     
     tt.typingTest.stringToArray = function (str) {
         return str.split(/\s/);
@@ -141,11 +83,80 @@ var tt = tt || {};
         alert("Your WPM is " + WPMStats.adjustedWPM + "\n\n" + "WPM: " + WPMStats.WPM + "\nErrors: " + WPMStats.errors + "\nAdjusted WPM: " + WPMStats.adjustedWPM);
     };
     
+    tt.typingTest.getText = function (pathToFile, success, error) {
+        $.ajax({
+            url: pathToFile,
+            dataType: "text",
+            success: success,
+            error: error
+        });
+    };
+    
+    tt.typingTest.preInit = function (that) {
+        that.resetTest = function () {
+            var textInput = that.locate("input");
+            textInput.val("");
+            textInput.removeAttr("disabled");
+            textInput.unbind("blur.tt-cancel");
+            bindStartEvent(that);
+        };
+        
+        that.cancel = function () {
+            clearTimeout(that.timerID);
+            that.resetTest();
+        };
+        
+        that.fetchText = function (pathToFile) {
+            that.getText(pathToFile, that.events.afterTextFetched.fire);
+        };
+        
+        that.renderText = function (text) {
+            that.sampleText = text || "";
+            that.locate("sampleText").text(that.sampleText);
+        };
+        
+        that.start = function () {
+            that.locate("input").unbind("keyup.tt-start");
+            bindCancelEvent(that);
+            that.timerID = startTimer(that);
+        };
+        
+        that.finish = function () {
+            that.locate("input").attr("disabled", true);
+            var WPMStats = calculateWPMStats(that);
+            displayWPM(that, WPMStats.adjustedWPM);
+            that.notify(WPMStats);
+            that.cancel();
+        };
+    };
+    
+    tt.typingTest.finalInit = function (that) {
+        setup(that);
+    };
+    
     fluid.defaults("tt.typingTest", {
+        gradeNames: ["fluid.viewComponent", "autoInit"],
+        preInitFunction: "tt.typingTest.preInit",
+        finalInitFunction: "tt.typingTest.finalInit",
+        
+        invokers: {
+            notify: "tt.typingTest.defaultNotification",
+            toArray: "tt.typingTest.stringToArray",
+            compare: "tt.typingTest.compareStringArrays",
+            calculateWPM: "tt.typingTest.wordsPerMinute",
+            getText: "tt.typingTest.getText"
+        },
+        
         selectors: {
             sampleText: ".tt-typingTest-sampleText",
             input: ".tt-typingTest-input",
             WPMScore: ".tt-typingTest-WMPScore"
+        },
+        
+        listeners: {
+            afterTextFetched: "{tt.typingTest}.renderText",
+            afterStarted: "{tt.typingTest}.start",
+            afterTimeFinished: "{tt.typingTest}.finish"
         },
         
         events: {
@@ -153,8 +164,6 @@ var tt = tt || {};
             afterStarted: null,
             afterTimeFinished: null
         },
-        
-        notification: tt.typingTest.defaultNotification,
         
         texts: [
             {
