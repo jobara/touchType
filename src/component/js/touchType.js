@@ -113,6 +113,7 @@ var tt = tt || {};
         that.renderText = function (text) {
             that.sampleText = text || "";
             that.locate("sampleText").text(that.sampleText);
+            that.events.afterTextRendered.fire(that.sampleText);
         };
         
         that.start = function () {
@@ -161,6 +162,7 @@ var tt = tt || {};
         
         events: {
             afterTextFetched: null,
+            afterTextRendered: null,
             afterStarted: null,
             afterTimeFinished: null
         },
