@@ -6,7 +6,7 @@ in compliance with this License.
 */
 
 // Declare dependencies
-/*global tt, jQuery, jqUnit*/
+/*global tt, fluid, jQuery, jqUnit, start*/
 
 (function ($) {
     var ttTests = new jqUnit.TestCase("touchType Tests");
@@ -14,7 +14,7 @@ in compliance with this License.
     var textObj = {
         name: "Macbeth",
         url: "../../../component/text/Macbeth.txt"
-    }
+    };
     
     var createTypingTest = function (options) {
         var mergedOptions = fluid.merge("replace", {
