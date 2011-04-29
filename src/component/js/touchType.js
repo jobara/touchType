@@ -12,14 +12,6 @@ var tt = tt || {};
 
 (function ($) {
     
-    var fetchText = function (that, pathToFile) {
-        $.ajax({
-            url: pathToFile,
-            dataType: "text",
-            success: that.events.afterTextFetched.fire
-        });
-    };
-    
     var startTimer = function (that) {
         return setTimeout(that.events.afterTimeFinished.fire, 60000);
     };
@@ -57,20 +49,9 @@ var tt = tt || {};
         bindStartEvent(that);
     };
     
-    var addListeners = function (that) {
-        that.events.afterTimeFinished.addListener(function () {
-            that.locate("input").attr("disabled", true);
-            var WPMStats = calculateWPMStats(that);
-            displayWPM(that, WPMStats.adjustedWPM);
-            that.notify(WPMStats);
-            that.cancel();
-        });
-    };
-    
     var setup = function (that) {
         bindEvents(that);
-        addListeners(that);
-        fetchText(that, that.options.texts[0].url);
+        that.fetchText(that.options.texts[0].url);
     };
 
     fluid.registerNamespace("tt.typingTest");
@@ -106,6 +87,15 @@ var tt = tt || {};
         alert("Your WPM is " + WPMStats.adjustedWPM + "\n\n" + "WPM: " + WPMStats.WPM + "\nErrors: " + WPMStats.errors + "\nAdjusted WPM: " + WPMStats.adjustedWPM);
     };
     
+    tt.typingTest.getText = function (pathToFile, success, error) {
+        $.ajax({
+            url: pathToFile,
+            dataType: "text",
+            success: success,
+            error: error
+        });
+    };
+    
     tt.typingTest.preInit = function (that) {
         that.resetTest = function () {
             var textInput = that.locate("input");
@@ -120,6 +110,10 @@ var tt = tt || {};
             that.resetTest();
         };
         
+        that.fetchText = function (pathToFile) {
+            that.getText(pathToFile, that.events.afterTextFetched.fire);
+        };
+        
         that.renderText = function (text) {
             that.sampleText = text || "";
             that.locate("sampleText").text(that.sampleText);
@@ -129,6 +123,14 @@ var tt = tt || {};
             that.locate("input").unbind("keyup.tt-start");
             bindCancelEvent(that);
             that.timerID = startTimer(that);
+        };
+        
+        that.finish = function () {
+            that.locate("input").attr("disabled", true);
+            var WPMStats = calculateWPMStats(that);
+            displayWPM(that, WPMStats.adjustedWPM);
+            that.notify(WPMStats);
+            that.cancel();
         };
     };
     
@@ -145,7 +147,8 @@ var tt = tt || {};
             notify: "tt.typingTest.defaultNotification",
             toArray: "tt.typingTest.stringToArray",
             compare: "tt.typingTest.compareStringArrays",
-            calculateWPM: "tt.typingTest.wordsPerMinute"
+            calculateWPM: "tt.typingTest.wordsPerMinute",
+            getText: "tt.typingTest.getText"
         },
         
         selectors: {
@@ -156,7 +159,8 @@ var tt = tt || {};
         
         listeners: {
             afterTextFetched: "{tt.typingTest}.renderText",
-            afterStarted: "{tt.typingTest}.start"
+            afterStarted: "{tt.typingTest}.start",
+            afterTimeFinished: "{tt.typingTest}.finish"
         },
         
         events: {
