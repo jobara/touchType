@@ -13,7 +13,7 @@ var tt = tt || {};
 (function ($) {
     
     var startTimer = function (that) {
-        return setTimeout(that.events.afterTimeFinished.fire, 60000);
+        return setTimeout(that.events.onFinish.fire, 60000);
     };
     
     var calculateWPMStats = function (that) {
@@ -35,13 +35,13 @@ var tt = tt || {};
     
     var bindStartEvent = function (that) {
         that.locate("input").bind("keyup.tt-start", function (event) {
-            that.events.afterStarted.fire(event.which);
+            that.events.onStart.fire(event.which);
         });
     };
     
     var bindCancelEvent = function (that) {
         that.locate("input").bind("blur.tt-cancel", function (event) {
-            that.cancel();
+            that.events.onCancel.fire();
         });
     };
     
@@ -94,6 +94,7 @@ var tt = tt || {};
     
     tt.typingTest.preInit = function (that) {
         that.resetTest = function () {
+            clearTimeout(that.timerID || null);
             var textInput = that.locate("input");
             textInput.val("");
             textInput.removeAttr("disabled");
@@ -102,8 +103,8 @@ var tt = tt || {};
         };
         
         that.cancel = function () {
-            clearTimeout(that.timerID);
             that.resetTest();
+            that.events.afterCancelled.fire();
         };
         
         that.fetchText = function (pathToFile) {
@@ -119,6 +120,7 @@ var tt = tt || {};
             that.locate("input").unbind("keyup.tt-start");
             bindCancelEvent(that);
             that.timerID = startTimer(that);
+            that.events.afterStarted.fire();
         };
         
         that.finish = function () {
@@ -126,7 +128,8 @@ var tt = tt || {};
             var WPMStats = calculateWPMStats(that);
             displayWPM(that, WPMStats.adjustedWPM);
             that.notify(WPMStats);
-            that.cancel();
+            that.resetTest();
+            that.events.afterFinished.fire();
         };
     };
     
@@ -155,14 +158,19 @@ var tt = tt || {};
         
         listeners: {
             afterTextFetched: "{tt.typingTest}.renderText",
-            afterStarted: "{tt.typingTest}.start",
-            afterTimeFinished: "{tt.typingTest}.finish"
+            onStart: "{tt.typingTest}.start",
+            onFinish: "{tt.typingTest}.finish",
+            onCancel: "{tt.typingTest}.cancel"
         },
         
         events: {
             afterTextFetched: null,
+            onStart: "preventable",
             afterStarted: null,
-            afterTimeFinished: null
+            onFinish: "preventable",
+            afterFinished: null,
+            onCancel: "preventable",
+            afterCancelled: null
         },
         
         texts: [
