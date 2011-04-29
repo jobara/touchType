@@ -45,12 +45,8 @@ var tt = tt || {};
         });
     };
     
-    var bindEvents = function (that) {
-        bindStartEvent(that);
-    };
-    
     var setup = function (that) {
-        bindEvents(that);
+        bindStartEvent(that);
         that.fetchText(that.options.texts[0].url);
     };
 
