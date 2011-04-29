@@ -6,7 +6,7 @@ in compliance with this License.
 */
 
 // Declare Dependencies
-/*global setTimeout, clearTimout, tt, jQuery*/
+/*global alert, setTimeout, clearTimout, tt:true, fluid, jQuery*/
 
 var tt = tt || {};
 
