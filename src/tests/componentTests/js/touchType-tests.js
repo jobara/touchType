@@ -44,6 +44,14 @@ in compliance with this License.
         });
     };
     
+    var rendetTextTest = function (testName, testText) {
+        ttTests.test(testName, function () {
+            var typingTest = createTypingTest();
+            typingTest.renderText(testText);
+            jqUnit.assertEquals("The sample text should be rendered", testText || "", typingTest.locate("sampleText").text());
+        });
+    };
+    
     $(document).ready(function () {
     
         ttTests.asyncTest("Initialization", function () {
@@ -97,5 +105,8 @@ in compliance with this License.
             jqUnit.assertEquals("The input should have an empty value", "", input.val());
             jqUnit.assertFalse("There should not be a 'disabled' attribute on the input", input.attr("disabled"));
         });
+        
+        rendetTextTest("that.renderText: with text passed in", "TEST TEXT");
+        rendetTextTest("that.renderText: with text passed in");
     });
 })(jQuery);
