@@ -84,5 +84,18 @@ in compliance with this License.
         wordsPerMinuteTest("wordsPerMinute: with errors", 12, 2, 1, 10);
         wordsPerMinuteTest("wordsPerMinute: with errors, 2 minutes", 12, 2, 2, 5);
         wordsPerMinuteTest("wordsPerMinute: more errors than words", 12, 22, 1, 0);
+        
+        ttTests.test("that.resetTest", function () {
+            var typingTest = createTypingTest();
+            var input = typingTest.locate("input");
+            
+            input.val("test");
+            input.attr("disabled", true);
+            
+            typingTest.resetTest();
+            
+            jqUnit.assertEquals("The input should have an empty value", "", input.val());
+            jqUnit.assertFalse("There should not be a 'disabled' attribute on the input", input.attr("disabled"));
+        });
     });
 })(jQuery);
