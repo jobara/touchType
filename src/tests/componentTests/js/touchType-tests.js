@@ -9,6 +9,13 @@ in compliance with this License.
 /*global tt, fluid, jQuery, jqUnit, start*/
 
 (function ($) {
+    
+    fluid.staticEnvironment.unitTest = fluid.typeTag("tt.typingTest.unitTest");
+    
+    fluid.demands("tt.typingTest.defaultNotification", "tt.typingTest.unitTest", {
+        funcName: "fluid.emptySubcomponent"
+    });
+    
     var ttTests = new jqUnit.TestCase("touchType Tests");
     
     var textObj = {
@@ -108,5 +115,13 @@ in compliance with this License.
         
         rendetTextTest("that.renderText: with text passed in", "TEST TEXT");
         rendetTextTest("that.renderText: with text passed in");
+        
+        ttTests.test("that.start", function () {
+            var typingTest = createTypingTest();
+            
+            typingTest.start();
+            
+            jqUnit.assertTrue("The timerID should be set", typingTest.timerID);
+        });
     });
 })(jQuery);
