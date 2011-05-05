@@ -59,6 +59,23 @@ in compliance with this License.
         });
     };
     
+    var eventTest = function (testName, eventToTest, instanceFunc) {
+        ttTests.asyncTest(testName, function () {
+            var eventFired = false;
+            var listeners = {};
+            
+            listeners[eventToTest] = function () {
+                eventFired = true;
+                start();
+            }
+            
+            var typingTest = createTypingTest({listeners: listeners});
+            
+            typingTest[instanceFunc]();
+            jqUnit.assertTrue("The " + eventToTest + " event should have fired", eventFired);
+        });
+    };
+    
     $(document).ready(function () {
     
         ttTests.asyncTest("Initialization", function () {
@@ -116,12 +133,31 @@ in compliance with this License.
         rendetTextTest("that.renderText: with text passed in", "TEST TEXT");
         rendetTextTest("that.renderText: with text passed in");
         
-        ttTests.test("that.start", function () {
+        ttTests.test("that.start: timerID", function () {
             var typingTest = createTypingTest();
             
             typingTest.start();
-            
             jqUnit.assertTrue("The timerID should be set", typingTest.timerID);
+        });
+        
+        eventTest("that.start: afterStarted event", "afterStarted", "start");
+        eventTest("that.cancel: afterCancelled event", "afterCancelled", "cancel");
+        
+        ttTests.asyncTest("that.finish", function () {
+            var eventFired = false;
+            var typingTest = createTypingTest({
+                listeners: {
+                    afterFinished: function () {
+                        eventFired = true;
+                        start();
+                    }
+                }
+            });
+            
+            typingTest.sampleText = "sample text";
+            typingTest.finish();
+            
+            jqUnit.assertTrue("The afterFinished event should have fired", eventFired);
         });
     });
 })(jQuery);
