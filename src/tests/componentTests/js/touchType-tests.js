@@ -9,6 +9,13 @@ in compliance with this License.
 /*global tt, fluid, jQuery, jqUnit, start*/
 
 (function ($) {
+    
+    fluid.staticEnvironment.unitTest = fluid.typeTag("tt.typingTest.unitTest");
+    
+    fluid.demands("tt.typingTest.defaultNotification", "tt.typingTest.unitTest", {
+        funcName: "fluid.emptySubcomponent"
+    });
+    
     var ttTests = new jqUnit.TestCase("touchType Tests");
     
     var textObj = {
@@ -41,6 +48,31 @@ in compliance with this License.
         ttTests.test(testName, function () {
             var actualWPM = tt.typingTest.wordsPerMinute(numWords, numErrors, numMinutes);
             jqUnit.assertEquals("WPM calculated correctly", expectedWPM, actualWPM);
+        });
+    };
+    
+    var rendetTextTest = function (testName, testText) {
+        ttTests.test(testName, function () {
+            var typingTest = createTypingTest();
+            typingTest.renderText(testText);
+            jqUnit.assertEquals("The sample text should be rendered", testText || "", typingTest.locate("sampleText").text());
+        });
+    };
+    
+    var eventTest = function (testName, eventToTest, instanceFunc) {
+        ttTests.asyncTest(testName, function () {
+            var eventFired = false;
+            var listeners = {};
+            
+            listeners[eventToTest] = function () {
+                eventFired = true;
+                start();
+            }
+            
+            var typingTest = createTypingTest({listeners: listeners});
+            
+            typingTest[instanceFunc]();
+            jqUnit.assertTrue("The " + eventToTest + " event should have fired", eventFired);
         });
     };
     
@@ -84,5 +116,48 @@ in compliance with this License.
         wordsPerMinuteTest("wordsPerMinute: with errors", 12, 2, 1, 10);
         wordsPerMinuteTest("wordsPerMinute: with errors, 2 minutes", 12, 2, 2, 5);
         wordsPerMinuteTest("wordsPerMinute: more errors than words", 12, 22, 1, 0);
+        
+        ttTests.test("that.resetTest", function () {
+            var typingTest = createTypingTest();
+            var input = typingTest.locate("input");
+            
+            input.val("test");
+            input.attr("disabled", true);
+            
+            typingTest.resetTest();
+            
+            jqUnit.assertEquals("The input should have an empty value", "", input.val());
+            jqUnit.assertFalse("There should not be a 'disabled' attribute on the input", input.attr("disabled"));
+        });
+        
+        rendetTextTest("that.renderText: with text passed in", "TEST TEXT");
+        rendetTextTest("that.renderText: with text passed in");
+        
+        ttTests.test("that.start: timerID", function () {
+            var typingTest = createTypingTest();
+            
+            typingTest.start();
+            jqUnit.assertTrue("The timerID should be set", typingTest.timerID);
+        });
+        
+        eventTest("that.start: afterStarted event", "afterStarted", "start");
+        eventTest("that.cancel: afterCancelled event", "afterCancelled", "cancel");
+        
+        ttTests.asyncTest("that.finish", function () {
+            var eventFired = false;
+            var typingTest = createTypingTest({
+                listeners: {
+                    afterFinished: function () {
+                        eventFired = true;
+                        start();
+                    }
+                }
+            });
+            
+            typingTest.sampleText = "sample text";
+            typingTest.finish();
+            
+            jqUnit.assertTrue("The afterFinished event should have fired", eventFired);
+        });
     });
 })(jQuery);
