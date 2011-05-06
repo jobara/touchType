@@ -16,6 +16,16 @@ in compliance with this License.
         funcName: "fluid.emptySubcomponent"
     });
     
+    var sampleText = "Sample Text";
+    
+    tt.unitTestGetText = function (pathToFile, success, error) {
+        success(sampleText);
+    };
+    
+    fluid.demands("tt.typingTest.getText", "tt.typingTest.unitTest", {
+        funcName: "tt.unitTestGetText"
+    });
+    
     var ttTests = new jqUnit.TestCase("touchType Tests");
     
     var textObj = {
@@ -67,7 +77,7 @@ in compliance with this License.
             listeners[eventToTest] = function () {
                 eventFired = true;
                 start();
-            }
+            };
             
             var typingTest = createTypingTest({listeners: listeners});
             
@@ -79,20 +89,21 @@ in compliance with this License.
     $(document).ready(function () {
     
         ttTests.asyncTest("Initialization", function () {
-            var typingTest = createTypingTest();
+            var typingTest;
+                           
             var textTest = function (text) {
-                jqUnit.assertEquals("The sample text is set correctly", text, typingTest.sampleText);
+                jqUnit.assertEquals("The sample text is set correctly", sampleText, text);
                 start();
             };
-            
-            jqUnit.assertTrue("typingTest initialized", typingTest);
-            
-            $.ajax({
-                url: textObj.url,
-                dataType: "text",
-                success: textTest
-            });
-        });
+                           
+            typingTest = createTypingTest({
+                listeners: {
+                    afterTextRendered: textTest
+                }
+           });
+           
+           jqUnit.assertTrue("typingTest initialized", typingTest);
+       });
         
         stringToArrayTest("stringToArray: string separated by single space", "abc def ghi", ["abc", "def", "ghi"]);
         stringToArrayTest("stringToArray: string separated by single tab", "jkl\tmno", ["jkl", "mno"]);

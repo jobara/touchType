@@ -7282,6 +7282,15 @@ var fluid = fluid || fluid_1_4;
             softFailure.shift();
         }
     };
+    
+    // TODO: rescued from kettleCouchDB.js - clean up in time
+    fluid.expect = function (name, members, target) {
+        fluid.transform($.makeArray(members), function (key) {
+            if (typeof target[key] === "undefined") {
+                fluid.fail(name + " missing required parameter " + key);
+            }
+        });
+    };
 
     // Logging
         
@@ -7558,6 +7567,18 @@ var fluid = fluid || fluid_1_4;
             togo.push(key);
         });
         return togo;
+    };
+    
+    /** 
+     * Searches through the supplied object, and returns <code>true</code> if the supplied value
+     * can be found 
+     */
+    fluid.contains = function(obj, value) {
+        return obj? fluid.find(obj, function (thisValue, key) {
+            if (value === thisValue) {
+                return true;
+            }
+        }): undefined;
     };
     
     /** 
@@ -7942,6 +7963,9 @@ var fluid = fluid || fluid_1_4;
                     if (preventable && ret === false) {
                         return false;
                     }
+                    if (unicast) {
+                        return ret;
+                    }
                 } catch (e) {
                     fluid.log("FireEvent received exception " + e.message + " e " + e + " firing to listener " + i);
                     throw (e);       
@@ -8023,6 +8047,7 @@ var fluid = fluid || fluid_1_4;
                     key = key.substring(0, keydot);
                 }
                 if (!events[key]) {
+                    fluid.fail("Listener registered for event " + key + " which is not defined for this component");
                     events[key] = fluid.event.getEventFirer();
                 }
                 firer = events[key];
@@ -8072,6 +8097,13 @@ var fluid = fluid || fluid_1_4;
         fluid.mergeListeners(that, that.events, listeners);
     };
     
+    fluid.mergeListenersPolicy = function (target, source) {
+        var togo = target || {};
+        fluid.each(source, function(listeners, key) {
+            togo[key] = fluid.makeArray(source[key]).concat(fluid.makeArray(listeners));
+        });
+        return togo;
+    };
     
     /*** DEFAULTS AND OPTIONS MERGING SYSTEM ***/
     
@@ -8161,7 +8193,7 @@ var fluid = fluid || fluid_1_4;
     
         
     fluid.hasGrade = function (options, gradeName) {
-        return !options || !options.gradeNames ? false : $.inArray(gradeName, options.gradeNames) !== -1;
+        return !options || !options.gradeNames ? false : fluid.contains(options.gradeNames, gradeName);
     };
     
      /**
@@ -8225,7 +8257,7 @@ var fluid = fluid || fluid_1_4;
     fluid.defaults("fluid.eventedComponent", {
         gradeNames: ["fluid.littleComponent"],
         mergePolicy: {
-            listeners: "noexpand"
+            listeners: "fluid.mergeListenersPolicy"
         }
     });
     
@@ -8350,6 +8382,17 @@ var fluid = fluid || fluid_1_4;
         return target;     
     };
 
+    // unsupported, NON-API function
+    fluid.transformOptions = function (mergeArgs) {
+        var transRec = mergeArgs[1].transformOptions;
+        fluid.expect("Options transformation record", ["transformer", "config"], transRec);
+        var transFunc = fluid.getGlobalValue(transRec.transformer);
+        var togo = fluid.transform(mergeArgs, function(value, key) {
+            return key === 0? value : transFunc.call(null, value, transRec.config);
+        });
+        return togo;
+    };
+
     /**
      * Merges the component's declared defaults, as obtained from fluid.defaults(),
      * with the user's specified overrides.
@@ -8378,6 +8421,9 @@ var fluid = fluid || fluid_1_4;
             extraArgs = fluid.expandComponentOptions(defaults, userOptions, that);
         } else {
             extraArgs = [defaults, userOptions];
+        }
+        if (extraArgs[1] && extraArgs[1].transformOptions) {
+            extraArgs = fluid.transformOptions(extraArgs);
         }
         mergeArgs = mergeArgs.concat(extraArgs);
         that.options = fluid.merge.apply(null, mergeArgs);
@@ -8426,6 +8472,14 @@ var fluid = fluid || fluid_1_4;
             typeName: name,
             id: fluid.allocateGuid()
         };
+    };
+    
+    /** A combined "component and grade name" which allows type tags to be declaratively constructed
+     * from options material */
+    
+    fluid.typeFount = function (options) {
+        var that = fluid.initLittleComponent("fluid.typeFount", options);
+        return that.options.targetTypeName? fluid.typeTag(that.options.targetTypeName) : null;
     };
     
     /**
@@ -10797,7 +10851,7 @@ https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
 /*global fluid_1_4:true, jQuery*/
 
 // JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
+/*jslint white: true, elsecatch: true, operator: true, jslintok: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
 
 var fluid_1_4 = fluid_1_4 || {};
 
@@ -10840,7 +10894,7 @@ var fluid_1_4 = fluid_1_4 || {};
         options = options || {
             visited: {},
             flat: true
-        }
+        };
         var up = 0;
         for (var i = thatStack.length - 1; i >= 0; --i) {
             var that = thatStack[i];
@@ -11068,19 +11122,19 @@ var fluid_1_4 = fluid_1_4 || {};
     }
     
     function upgradeMergeOptions(demandspec) {
-         mergeToMergeAll(demandspec);
-         if (demandspec.mergeAllOptions) {
-             if (demandspec.options) {
-                 fluid.fail("demandspec " + JSON.stringify(demandspec) 
-                 + " is invalid - cannot specify literal options together with mergeOptions or mergeAllOptions"); 
-             }
-             demandspec.options = {
-                 mergeAllOptions: demandspec.mergeAllOptions
-             };
-         }
-         if (demandspec.options) {
-             delete demandspec.options.mergeOptions;
-         }
+        mergeToMergeAll(demandspec);
+        if (demandspec.mergeAllOptions) {
+            if (demandspec.options) {
+                fluid.fail("demandspec " + JSON.stringify(demandspec) 
+                    + " is invalid - cannot specify literal options together with mergeOptions or mergeAllOptions"); 
+            }
+            demandspec.options = {
+                mergeAllOptions: demandspec.mergeAllOptions
+            };
+        }
+        if (demandspec.options) {
+            delete demandspec.options.mergeOptions;
+        }
     }
     
     /** Given a concrete argument list and/or options, determine the final concrete
@@ -11185,7 +11239,9 @@ var fluid_1_4 = fluid_1_4 || {};
         if (aliasName) {
             aliasTable[demandingName] = aliasName;
         }
-        else return aliasTable[demandingName];
+        else {
+            return aliasTable[demandingName];
+        }
     };
    
     var dependentStore = {};
@@ -11230,10 +11286,15 @@ outer:  for (var i = 0; i < exist.length; ++i) {
         var p1 = speca.uncess - specb.uncess;
         return p1 === 0? specb.intersect - speca.intersect : p1;
     };
-
+    
     // unsupported, non-API function
-    fluid.locateDemands = function(instantiator, parentThat, demandingNames) {
-        var demandLogging = fluid.isLogging() && demandingNames[0] !== "fluid.threadLocal";
+    fluid.isDemandLogging = function(demandingNames) {
+        return fluid.isLogging() && demandingNames[0] !== "fluid.threadLocal";
+    };
+    
+    // unsupported, non-API function
+    fluid.locateAllDemands = function(instantiator, parentThat, demandingNames) {
+        var demandLogging = fluid.isDemandLogging(demandingNames);
         if (demandLogging) {
             fluid.log("Resolving demands for function names " + JSON.stringify(demandingNames) + " in context of " +
                 (parentThat? "component " + parentThat.typeName : "no component"));
@@ -11254,7 +11315,7 @@ outer:  for (var i = 0; i < exist.length; ++i) {
             var rec = dependentStore[demandingNames[i]] || [];
             for (var j = 0; j < rec.length; ++j) {
                 var spec = rec[j];
-                var record = {spec: spec.spec, intersect: 0, uncess: 0};
+                var record = {spec: spec, intersect: 0, uncess: 0};
                 for (var k = 0; k < spec.contexts.length; ++k) {
                     record[contextNames[spec.contexts[k]]? "intersect" : "uncess"] += 2;
                 }
@@ -11266,8 +11327,14 @@ outer:  for (var i = 0; i < exist.length; ++i) {
             }
         }
         matches.sort(fluid.compareDemands);
-        var demandspec = matches.length === 0 || matches[0].intersect === 0? null : matches[0].spec;
-        if (demandLogging) {
+        return matches;   
+    };
+
+    // unsupported, non-API function
+    fluid.locateDemands = function(instantiator, parentThat, demandingNames) {
+        var matches = fluid.locateAllDemands(instantiator, parentThat, demandingNames);
+        var demandspec = matches.length === 0 || matches[0].intersect === 0? null : matches[0].spec.spec;
+        if (fluid.isDemandLogging(demandingNames)) {
             fluid.log(demandspec? "Located " + matches.length + " potential match" + (matches.length === 1? "" : "es") + ", selected best match with " + matches[0].intersect 
                 + " matched context names: " + JSON.stringify(demandspec) : "No matches found for demands, using direct implementation");
         }  
@@ -11289,13 +11356,14 @@ outer:  for (var i = 0; i < exist.length; ++i) {
         var aliasTo = fluid.alias(newFuncName);
         
         if (aliasTo) {
+            newFuncName = aliasTo;
             fluid.log("Following redirect from function name " + newFuncName + " to " + aliasTo);
             var demandspec2 = fluid.locateDemands(instantiator, parentThat, [aliasTo]);
             if (demandspec2) {
                 fluid.each(demandspec2, function(value, key) {
                     if (localRecordExpected.test(key)) {
                         fluid.fail("Error in demands block " + JSON.stringify(demandspec2) + " - content with key \"" + key 
-                        + "\" is not supported since this demands block was resolved via an alias from \"" + newFuncName + "\"");
+                            + "\" is not supported since this demands block was resolved via an alias from \"" + newFuncName + "\"");
                     }  
                 });
                 if (demandspec2.funcName) {
@@ -11383,7 +11451,7 @@ outer:  for (var i = 0; i < exist.length; ++i) {
                 if (!origin) {
                     fluid.fail("Error in event specification - could not resolve base event reference " + event + " to an event firer");
                 }
-                var firer = {};
+                var firer = {}; // jslint:ok - already defined
                 fluid.each(["fire", "removeListener"], function(method) {
                     firer[method] = function() {origin[method].apply(null, arguments);};
                 });
@@ -11406,7 +11474,7 @@ outer:  for (var i = 0; i < exist.length; ++i) {
     // unsupported, non-API function
     fluid.expander.preserveFromExpansion = function(options) {
         var preserve = {};
-        var preserveList = ["mergePolicy", "mergeAllOptions", "components", "invokers", "events"];
+        var preserveList = ["mergePolicy", "mergeAllOptions", "components", "invokers", "events", "listeners"];
         fluid.each(options.mergePolicy, function(value, key) {
             if (fluid.mergePolicyIs(value, "noexpand")) {
                 preserveList.push(key);
@@ -11457,6 +11525,15 @@ outer:  for (var i = 0; i < exist.length; ++i) {
         });
     };
     
+    fluid.locateTransformationRecord = function(that) {
+        return fluid.withInstantiator(that, function(instantiator) {
+            var matches = fluid.locateAllDemands(instantiator, that, ["fluid.transformOptions"]);
+            return fluid.find(matches, function(match) {
+                return match.uncess === 0 && fluid.contains(match.spec.contexts, that.typeName)? match.spec.spec : undefined;
+            });
+        });
+    };
+    
     // unsupported, non-API function
     fluid.expandComponentOptions = function(defaults, userOptions, that) {
         defaults = fluid.expandOptions(fluid.copy(defaults), that);
@@ -11487,6 +11564,10 @@ outer:  for (var i = 0; i < exist.length; ++i) {
             // Avoid use of expandOptions in simple case to avoid infinite recursion when constructing instantiator
             return path === "{directOptions}"? localRecord.directOptions : fluid.expandOptions(path, that, localRecord, {direct: true}); 
         });
+        var transRec = fluid.locateTransformationRecord(that);
+        if (transRec) {
+            togo[0].transformOptions = transRec.options;
+        }
         return [defaults].concat(togo);
     };
     
@@ -11585,13 +11666,21 @@ outer:  for (var i = 0; i < exist.length; ++i) {
         });
     };
     
+    // unsupported, non-API function
+    fluid.priorityForComponent = function(component) {
+        return component.priority? component.priority : 
+            (component.type === "fluid.typeFount" || fluid.hasGrade(fluid.defaults(component.type), "fluid.typeFount"))?
+            "first" : undefined;  
+    };
+    
     fluid.initDependents = function(that) {
         var options = that.options;
         var components = options.components || {};
         var componentSort = {};
         fluid.each(components, function(component, name) {
             if (!component.createOnEvent) {
-                componentSort[name] = {key: name, priority: fluid.event.mapPriority(component.priority)};
+                var priority = fluid.priorityForComponent(component);
+                componentSort[name] = {key: name, priority: fluid.event.mapPriority(priority)};
             }
             else {
                 fluid.bindDeferredComponent(that, name, component);
@@ -11635,17 +11724,42 @@ outer:  for (var i = 0; i < exist.length; ++i) {
         return fluid.invokeGlobalFunction(demands.funcName, arguments);
     };
 
-    fluid.withEnvironment = function(envAdd, func) {
+    function applyLocalChange(applier, type, path, value) {
+        var change = {
+            type: type,
+            path: path,
+            value: value
+        };
+        applier.fireChangeRequest(change);
+    }
+
+    // unsupported, non-API function
+    fluid.withEnvironment = function(envAdd, func, prefix) {
+        prefix = prefix || "";
         var root = fluid.threadLocal();
+        var applier = fluid.makeChangeApplier(root, {thin: true});
         try {
+            for (var key in envAdd) {
+                applyLocalChange(applier, "ADD", fluid.model.composePath(prefix, key), envAdd[key]);
+            }
             $.extend(root, envAdd);
             return func();
         }
         finally {
             for (var key in envAdd) {
-                delete root[key];
+              // TODO: This could be much better through i) refactoring the ChangeApplier so we could naturally use "rollback" semantics 
+              // and/or implementing this material using some form of "prototype chain"
+                applyLocalChange(applier, "DELETE", fluid.model.composePath(prefix, key));
             }
         }
+    };
+    
+    // unsupported, non-API function  
+    fluid.makeEnvironmentFetcher = function(prefix, directModel) {
+        return function(parsed) {
+            var env = fluid.get(fluid.threadLocal(), prefix);
+            return fluid.fetchContextReference(parsed, directModel, env);
+        };
     };
     
     // unsupported, non-API function  
@@ -11674,31 +11788,6 @@ outer:  for (var i = 0; i < exist.length; ++i) {
             return fluid.parseContextReference(EL, 0);
         }
         return EL? {path: EL} : EL;
-    };
-
-    /* An EL extraction utility suitable for context expressions which occur in 
-     * expanding component trees. It assumes that any context expressions refer
-     * to EL paths that are to be referred to the "true (direct) model" - since
-     * the context during expansion may not agree with the context during rendering.
-     * It satisfies the same contract as fluid.extractEL, in that it will either return
-     * an EL path, or undefined if the string value supplied cannot be interpreted
-     * as an EL path with respect to the supplied options.
-     */
-    // unsupported, non-API function
-    fluid.extractContextualPath = function (string, options, env) {
-        var parsed = fluid.extractELWithContext(string, options);
-        if (parsed) {
-            if (parsed.context) {
-                var fetched = env[parsed.context];
-                if (typeof(fetched) !== "string") {
-                    fluid.fail("Could not look up context path named " + parsed.context + " to string value");
-                }
-                return fluid.model.composePath(fetched, parsed.path);
-            }
-            else {
-                return parsed.path;
-            }
-        }
     };
 
     fluid.parseContextReference = function(reference, index, delimiter) {
@@ -11793,20 +11882,10 @@ outer:  for (var i = 0; i < exist.length; ++i) {
         bareContextRefs: true
     });
     
-    fluid.environmentFetcher = function(directModel) {
-        var env = fluid.threadLocal();
-        return function(parsed) {
-            return fluid.fetchContextReference(parsed, directModel, env);
-        };
-    };
-    
-    fluid.resolveEnvironment = function(obj, directModel, userOptions) {
-        directModel = directModel || {};
-        var options = fluid.merge(null, fluid.defaults("fluid.resolveEnvironment"), userOptions);
+    fluid.resolveEnvironment = function(obj, options) {
+        var options = fluid.merge(null, fluid.defaults("fluid.resolveEnvironment"), options);
         options.seenIds = {};
-        if (!options.fetcher) {
-            options.fetcher = fluid.environmentFetcher(directModel);
-        }
+        
         return resolveEnvironmentImpl(obj, options);
     };
 
@@ -11850,7 +11929,7 @@ outer:  for (var i = 0; i < exist.length; ++i) {
                 if (key === "expander" && !(options.expandOnly && options.expandOnly[value.type])) {
                     expander = fluid.getGlobalValue(value.type);  
                     if (expander) {
-                        return expander.call(null, togo, obj, recurse);
+                        return expander.call(null, togo, obj, recurse, options);
                     }
                 }
                 if (key !== "expander" || !expander) {
@@ -11865,7 +11944,7 @@ outer:  for (var i = 0; i < exist.length; ++i) {
     fluid.expander.expandLight = function (source, expandOptions) {
         var options = $.extend({}, expandOptions);
         options.filter = fluid.expander.lightFilter;
-        return fluid.resolveEnvironment(source, options.model, options);       
+        return fluid.resolveEnvironment(source, options);       
     };
           
 })(jQuery, fluid_1_4);
@@ -12193,12 +12272,12 @@ var fluid_1_4 = fluid_1_4 || {};
         }};
     };
     
-    fluid.expander.deferredFetcher = function(target, source) {
+    fluid.expander.deferredFetcher = function(target, source, recurse, expandOptions) {
         var expander = source.expander;
         var spec = fluid.copy(expander);
         // fetch the "global" collector specified in the external environment to receive
         // this resourceSpec
-        var collector = fluid.resolveEnvironment(expander.resourceSpecCollector);
+        var collector = fluid.resolveEnvironment(expander.resourceSpecCollector, expandOptions);
         delete spec.type;
         delete spec.resourceSpecCollector;
         delete spec.fetchKey;
@@ -13538,6 +13617,7 @@ fluid_1_4 = fluid_1_4 || {};
         var decoratorQueue = [];
         
         var renderedbindings = {}; // map of fullID to true for UISelects which have already had bindings written
+        var usedIDs = {};
         
         var that = {};
         
@@ -13911,7 +13991,7 @@ fluid_1_4 = fluid_1_4 || {};
             
             var count = 1;
             var baseid = attrcopy.id;
-            while (renderOptions.document.getElementById(attrcopy.id)) {
+            while (renderOptions.document.getElementById(attrcopy.id) || usedIDs[attrcopy.id]) {
                 attrcopy.id = baseid + "-" + (count++); 
             }
             component.finalID = attrcopy.id;
@@ -13973,8 +14053,11 @@ fluid_1_4 = fluid_1_4 || {};
                 if (type === "$") {type = decorator.type = "jQuery";}
                 if (type === "jQuery" || type === "event" || type === "fluid") {
                     var id = adjustForID(attrcopy, torender, true, finalID);
-                    decorator.id = id;
-                    decoratorQueue[decoratorQueue.length] = decorator;
+                    if (decorator.ids === undefined) {
+                        decorator.ids = [];
+                        decoratorQueue[decoratorQueue.length] = decorator; 
+                    }
+                    decorator.ids.push(id);
                 }
                 // honour these remaining types immediately
                 else if (type === "attrs") {
@@ -14247,6 +14330,9 @@ fluid_1_4 = fluid_1_4 || {};
                     out += rendered;
                     closeTag();
                 }
+            }
+            if (attrcopy.id !== undefined) {
+                usedIDs[attrcopy.id] = true;
             }
         }
              
@@ -14573,28 +14659,34 @@ fluid_1_4 = fluid_1_4 || {};
         function processDecoratorQueue() {
             for (var i = 0; i < decoratorQueue.length; ++i) {
                 var decorator = decoratorQueue[i];
-                var node = fluid.byId(decorator.id, renderOptions.document);
-                if (!node) {
-                    fluid.fail("Error during rendering - component with id " + decorator.id 
-                        + " which has a queued decorator was not found in the output markup");
-                }
-                if (decorator.type === "jQuery") {
-                    var jnode = $(node);
-                    jnode[decorator.func].apply(jnode, $.makeArray(decorator.args));
-                }
-                else if (decorator.type === "fluid") {
-                    var args = decorator.args;
-                    if (!args) {
-                        if (!decorator.container) {
-                            decorator.container = node;
-                        }
-                        args = [decorator.container, decorator.options];
+                for (var j = 0; j < decorator.ids.length; ++ j) {
+                    var id = decorator.ids[j];
+                    var node = fluid.byId(id, renderOptions.document);
+                    if (!node) {
+                        fluid.fail("Error during rendering - component with id " + id 
+                            + " which has a queued decorator was not found in the output markup");
                     }
-                    var that = renderer.invokeFluidDecorator(decorator.func, args, decorator.id, i, options);
-                    decorator.that = that;
-                }
-                else if (decorator.type === "event") {
-                    node[decorator.event] = decorator.handler; 
+                    if (decorator.type === "jQuery") {
+                        var jnode = $(node);
+                        jnode[decorator.func].apply(jnode, $.makeArray(decorator.args));
+                    }
+                    else if (decorator.type === "fluid") {
+                        var args = decorator.args;
+                        if (!args) {
+                            if (!decorator.container) {
+                                decorator.container = $(node);
+                            }
+                            else {
+                                decorator.container.push(node);
+                            }
+                            args = [node, decorator.options];
+                        }
+                        var that = renderer.invokeFluidDecorator(decorator.func, args, id, i, options);
+                        decorator.that = that;
+                    }
+                    else if (decorator.type === "event") {
+                        node[decorator.event] = decorator.handler; 
+                    }
                 }
             }
         }
@@ -14804,7 +14896,7 @@ https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
 /*global fluid_1_4:true, jQuery*/
 
 // JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
+/*jslint white: true, funcinvoke: true, elsecatch: true, operator: true, jslintok:true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
 
 fluid_1_4 = fluid_1_4 || {};
 
@@ -14812,16 +14904,7 @@ fluid_1_4 = fluid_1_4 || {};
 
     if (!fluid.renderer) {
         fluid.fail("fluidRenderer.js is a necessary dependency of RendererUtilities");
-        }
-
-    // TODO: rescued from kettleCouchDB.js - clean up in time
-    fluid.expect = function (name, members, target) {
-        fluid.transform($.makeArray(members), function (key) {
-            if (typeof target[key] === "undefined") {
-                fluid.fail(name + " missing required parameter " + key);
-            }
-        });
-    };
+    }
     
     /** Returns an array of size count, filled with increasing integers, 
      *  starting at 0 or at the index specified by first. 
@@ -14830,7 +14913,7 @@ fluid_1_4 = fluid_1_4 || {};
     fluid.iota = function (count, first) {
         first = first || 0;
         var togo = [];
-        for (var i = 0; i < count; ++ i) {
+        for (var i = 0; i < count; ++i) {
             togo[togo.length] = first++;
         }
         return togo;
@@ -14846,7 +14929,7 @@ fluid_1_4 = fluid_1_4 || {};
 
     fluid.renderer.clearDecorators = function(instantiator, that) {
         fluid.renderer.visitDecorators(that, function(component, name) {
-                instantiator.clearComponent(that, name);
+            instantiator.clearComponent(that, name);
         });
     };
     
@@ -14875,7 +14958,7 @@ fluid_1_4 = fluid_1_4 || {};
     /** "Renderer component" infrastructure **/
   // TODO: fix this up with IoC and improved handling of templateSource as well as better 
   // options layout (model appears in both rOpts and eOpts)
-    fluid.renderer.createRendererFunction = function (container, selectors, options, baseObject, fossils) {
+    fluid.renderer.createRendererSubcomponent = function (container, selectors, options, baseObject, fossils) {
         options = options || {};
         var source = options.templateSource ? options.templateSource : {node: $(container)};
         var rendererOptions = fluid.renderer.modeliseOptions(options.rendererOptions, null, baseObject);
@@ -14883,27 +14966,29 @@ fluid_1_4 = fluid_1_4 || {};
         
         var expanderOptions = fluid.renderer.modeliseOptions(options.expanderOptions, {ELstyle: "${}"}, baseObject);
         fluid.renderer.reverseMerge(expanderOptions, options, ["resolverGetConfig", "resolverSetConfig"]);
-        var expander = options.noexpand ? null : fluid.renderer.makeProtoExpander(expanderOptions);
+        var that = {};
+        if (!options.noexpand) {
+            that.expander = fluid.renderer.makeProtoExpander(expanderOptions);
+        }
         
         var templates = null;
-        return function (tree) {
-            if (expander) {
-                tree = expander(tree);
-            }
+        that.render = function (tree) {
             var cutpointFn = options.cutpointGenerator || "fluid.renderer.selectorsToCutpoints";
             rendererOptions.cutpoints = rendererOptions.cutpoints || fluid.invokeGlobalFunction(cutpointFn, [selectors, options]);
-            container = typeof (container) === "function" ? container() : $(container);
+            container = typeof(container) === "function" ? container() : $(container);
               
             if (templates) {
                 fluid.clear(rendererOptions.fossils);
                 fluid.reRender(templates, container, tree, rendererOptions);
-            } else {
-                if (typeof (source) === "function") { // TODO: make a better attempt than this at asynchrony
+            } 
+            else {
+                if (typeof(source) === "function") { // TODO: make a better attempt than this at asynchrony
                     source = source();  
                 }
                 templates = fluid.render(source, container, tree, rendererOptions);
             }
         };
+        return that;
     };
     
     fluid.defaults("fluid.rendererComponent", {
@@ -14914,20 +14999,22 @@ fluid_1_4 = fluid_1_4 || {};
         },
         rendererOptions: {
             autoBind: true
+        },
+        events: {
+            prepareModelForRender: null,
+            onRenderTree: null,
+            afterRender: null,
+            produceTree: "unicast"
         }
     });
-    
-    fluid.defaults("fluid.IoCRendererComponent", {
-        gradeNames: ["fluid.rendererComponent"]  
-    });
-    
+
     fluid.initRendererComponent = function (componentName, container, options) {
         var that = fluid.initView(componentName, container, options, {gradeNames: ["fluid.rendererComponent"]});
         
         fluid.fetchResources(that.options.resources); // TODO: deal with asynchrony
         
         var rendererOptions = fluid.renderer.modeliseOptions(that.options.rendererOptions, null, that);
-        if (fluid.hasGrade(that.options, "fluid.IoCRendererComponent")) {
+        if (!that.options.noUpgradeDecorators) {
             fluid.withInstantiator(that, function(currentInst) {
                 rendererOptions.instantiator = currentInst;
                 rendererOptions.parentComponent = that;
@@ -14935,60 +15022,72 @@ fluid_1_4 = fluid_1_4 || {};
         }
         var messageResolver;
         if (!rendererOptions.messageSource && that.options.strings) {
-            messageResolver = fluid.messageResolver(
-                {messageBase: that.options.strings,
-                 resolveFunc: that.options.messageResolverFunction,
-                 parents: fluid.makeArray(that.options.parentBundle)});
+            messageResolver = fluid.messageResolver({
+                messageBase: that.options.strings,
+                resolveFunc: that.options.messageResolverFunction,
+                parents: fluid.makeArray(that.options.parentBundle)
+            });
             rendererOptions.messageSource = {type: "resolver", resolver: messageResolver}; 
         }
         fluid.renderer.reverseMerge(rendererOptions, that.options, ["resolverGetConfig", "resolverSetConfig"]);
 
-        var renderer = {
-            fossils: {},
-            boundPathForNode: function (node) {
-                return fluid.boundPathForNode(node, renderer.fossils);
-            }
-        };
 
-        var rendererFnOptions = $.extend({}, that.options.rendererFnOptions, 
-           {rendererOptions: rendererOptions,
-           repeatingSelectors: that.options.repeatingSelectors,
-           selectorsToIgnore: that.options.selectorsToIgnore});
+        var rendererFnOptions = $.extend({}, that.options.rendererFnOptions, { 
+            rendererOptions: rendererOptions,
+            repeatingSelectors: that.options.repeatingSelectors,
+            selectorsToIgnore: that.options.selectorsToIgnore,
+            expanderOptions: {
+                envAdd: {styles: that.options.styles}
+            }
+        });
            
         if (that.options.resources && that.options.resources.template) {
             rendererFnOptions.templateSource = function () { // TODO: don't obliterate, multitemplates, etc.
                 return that.options.resources.template.resourceText;
             };
         }
+        var produceTree = that.events.produceTree;
+        produceTree.addListener( function() {
+            return that.options.protoTree;
+            }
+        );
+        
         if (that.options.produceTree) {
-            that.produceTree = that.options.produceTree;  
+            produceTree.addListener(that.options.produceTree);
         }
-        if (that.options.protoTree && !that.produceTree) {
-            that.produceTree = function () {
-                return that.options.protoTree;
-            };
-        }
+
         fluid.renderer.reverseMerge(rendererFnOptions, that.options, ["resolverGetConfig", "resolverSetConfig"]);
         if (rendererFnOptions.rendererTargetSelector) {
             container = function () {return that.dom.locate(rendererFnOptions.rendererTargetSelector); };
         }
        
-        var rendererFn = fluid.renderer.createRendererFunction(container, that.options.selectors, rendererFnOptions, that, renderer.fossils);
+        var renderer = {
+            fossils: {},
+            boundPathForNode: function (node) {
+                return fluid.boundPathForNode(node, renderer.fossils);
+            }
+        };
+       
+        var rendererSub = fluid.renderer.createRendererSubcomponent(container, that.options.selectors, rendererFnOptions, that, renderer.fossils);
+        that.renderer = $.extend(renderer, rendererSub);
         
-        that.render = renderer.render = rendererFn;
-        that.renderer = renderer;
         if (messageResolver) {
             that.messageResolver = messageResolver;
         }
 
-        if (that.produceTree) {
-            that.refreshView = renderer.refreshView = function () {
-                if (rendererOptions.instantiator && rendererOptions.parentComponent) {
-                    fluid.renderer.clearDecorators(rendererOptions.instantiator, rendererOptions.parentComponent);
-                }
-                renderer.render(that.produceTree(that));
-            };
-        }
+        that.refreshView = renderer.refreshView = function () {
+            if (rendererOptions.instantiator && rendererOptions.parentComponent) {
+                fluid.renderer.clearDecorators(rendererOptions.instantiator, rendererOptions.parentComponent);
+            }
+            that.events.prepareModelForRender.fire(that.model, that.applier, that);
+            var tree = produceTree.fire(that);
+            if (that.renderer.expander) {
+                tree = that.renderer.expander(tree);
+            }
+            that.events.onRenderTree.fire(that, tree);
+            that.renderer.render(tree);
+            that.events.afterRender.fire(that);
+        };
         
         return that;
     };
@@ -15059,7 +15158,7 @@ fluid_1_4 = fluid_1_4 || {};
             togo[options.inputID] = element;
             togo[options.labelID] = fluid.copy(element); 
             return togo;
-         });
+        });
         var togo = {}; // TODO: JICO needs to support "quoted literal key initialisers" :P
         togo[options.selectID] = selection;
         togo[options.rowID] = {children: rows};
@@ -15086,10 +15185,10 @@ fluid_1_4 = fluid_1_4 || {};
             if (options.valueAs) {
                 envAdd[options.valueAs] = fluid.get(config.model, EL, config.resolverGetConfig);
             }
-            var expandrow = fluid.withEnvironment(envAdd, function () {return config.expander(options.tree); });
+            var expandrow = fluid.withEnvironment(envAdd, function () {return config.expander(options.tree); }, "rendererEnvironment");
             if (fluid.isArrayable(expandrow)) {
                 if (expandrow.length > 0) {
-                    expanded.push( {children: expandrow} );
+                    expanded.push({children: expandrow});
                 }
             }
             else if (expandrow !== fluid.renderer.NO_COMPONENT) {
@@ -15099,7 +15198,7 @@ fluid_1_4 = fluid_1_4 || {};
         var repeatID = options.repeatID;
         if (repeatID.indexOf(":") === -1) {
             repeatID = repeatID + ":";
-            }
+        }
         fluid.each(expanded, function (entry) {entry.ID = repeatID; });
         return expanded;
     };
@@ -15122,6 +15221,31 @@ fluid_1_4 = fluid_1_4 || {};
         return config.expander(tree);
     };
     
+    
+    /* An EL extraction utility suitable for context expressions which occur in 
+     * expanding component trees. It assumes that any context expressions refer
+     * to EL paths that are to be referred to the "true (direct) model" - since
+     * the context during expansion may not agree with the context during rendering.
+     * It satisfies the same contract as fluid.extractEL, in that it will either return
+     * an EL path, or undefined if the string value supplied cannot be interpreted
+     * as an EL path with respect to the supplied options.
+     */
+    // unsupported, non-API function
+    fluid.extractContextualPath = function (string, options, env) {
+        var parsed = fluid.extractELWithContext(string, options);
+        if (parsed) {
+            if (parsed.context) {
+                var fetched = env[parsed.context];
+                if (typeof(fetched) !== "string") {
+                    fluid.fail("Could not look up context path named " + parsed.context + " to string value");
+                }
+                return fluid.model.composePath(fetched, parsed.path);
+            }
+            else {
+                return parsed.path;
+            }
+        }
+    };
 
     /** Create a "protoComponent expander" with the supplied set of options.
      * The returned value will be a function which accepts a "protoComponent tree"
@@ -15145,16 +15269,19 @@ fluid_1_4 = fluid_1_4 || {};
 
     fluid.renderer.makeProtoExpander = function (expandOptions) {
       // shallow copy of options - cheaply avoid destroying model, and all others are primitive
-        var options = $.extend({ELstyle: "${}"}, expandOptions); // shallow copy of options
+        var options = $.extend({
+            ELstyle: "${}"
+        }, expandOptions); // shallow copy of options
+        options.fetcher = fluid.makeEnvironmentFetcher("rendererEnvironment", options.model); 
         var IDescape = options.IDescape || "\\";
         
         function fetchEL(string) {
-            var env = fluid.threadLocal();
+            var env = fluid.threadLocal().rendererEnvironment;
             return fluid.extractContextualPath(string, options, env);
         }
         
         var expandLight = function (source) {
-            return fluid.resolveEnvironment(source, options.model, options); 
+            return fluid.resolveEnvironment(source, options); 
         };
 
         var expandBound = function (value, concrete) {
@@ -15192,6 +15319,9 @@ fluid_1_4 = fluid_1_4 || {};
         };
         
         options.filter = fluid.expander.lightFilter;
+        
+        var expandCond;
+        var expandLeafOrCond;
         
         var expandEntry = function (entry) {
             var comp = [];
@@ -15242,14 +15372,14 @@ fluid_1_4 = fluid_1_4 || {};
         // In all of these cases, the key will be THE PARENT'S KEY
         var expandChildren = function (entry, pusher) {
             var children = entry.children;
-            for (var i = 0; i < children.length; ++ i) {
+            for (var i = 0; i < children.length; ++i) {
                 // each child in this list will lead to a WHOLE FORKED set of children.
                 var target = [];
                 var comp = { children: target};
                 var child = children[i];
-                var childPusher = function (comp) { // linting problem - however, I believe this is ok
+                var childPusher = function (comp) {
                     target[target.length] = comp;
-                };
+                }; // jslint:ok - function in loop 
                 expandLeafOrCond(child, target, childPusher);
                 // Rescue the case of an expanded leaf into single component - TODO: check what sense this makes of the grammar
                 if (comp.children.length === 1 && !comp.children[0].ID) {
@@ -15267,7 +15397,7 @@ fluid_1_4 = fluid_1_4 || {};
         
         // We have reached something which is either a leaf or Cond - either inside
         // a Cond or as an entry in children.
-        var expandLeafOrCond = function (entry, target, pusher) {
+        var expandLeafOrCond = function (entry, target, pusher) { // jslint:ok - forward declaration
             var componentType = fluid.renderer.inferComponentType(entry);
             if (!componentType && (fluid.isPrimitive(entry) || detectBareBound(entry))) {
                 componentType = "UIBound";
@@ -15288,7 +15418,7 @@ fluid_1_4 = fluid_1_4 || {};
         // a Cond can ONLY occur as a direct member of "children". Each "cond" entry may
         // give rise to one or many elements with the SAME key - if "expandSingle" discovers
         // "thing with children" they will all share the same key found in proto. 
-        var expandCond = function (proto, target) {
+        expandCond = function (proto, target) {
             for (var key in proto) {
                 var entry = proto[key];
                 if (key.charAt(0) === IDescape) {
@@ -15301,12 +15431,12 @@ fluid_1_4 = fluid_1_4 || {};
                         if (expanded !== fluid.renderer.NO_COMPONENT) {
                             fluid.each(expanded, function (el) {target[target.length] = el; });
                         }
-                    });
+                    }); // jslint:ok - function in loop
                 } else if (entry) {
                     var condPusher = function (comp) {
                         comp.ID = key;
                         target[target.length] = comp; 
-                    };
+                    }; // jslint:ok - function in loop
 
                     if (entry.children) {
                         if (key.indexOf(":") === -1) {
@@ -15323,11 +15453,3263 @@ fluid_1_4 = fluid_1_4 || {};
                 
         };
         
-        return expandEntry;
+        return function(entry) {
+            var initEnvironment = $.extend({}, options.envAdd);
+            return fluid.withEnvironment({rendererEnvironment: initEnvironment}, function() {
+                return expandEntry(entry);
+            });
+        };
     };
     
 })(jQuery, fluid_1_4);
     /*
+Copyright 2008-2009 University of Toronto
+Copyright 2010-2011 OCAD University
+
+Licensed under the Educational Community License (ECL), Version 2.0 or the New
+BSD license. You may not use this file except in compliance with one these
+Licenses.
+
+You may obtain a copy of the ECL 2.0 License and BSD License at
+https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
+*/
+
+// Declare dependencies
+/*global window, fluid_1_4:true, jQuery, swfobject*/
+
+// JSLint options 
+/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
+
+var fluid_1_4 = fluid_1_4 || {};
+
+(function ($, fluid) {
+    fluid.registerNamespace("fluid.browser");
+    
+    fluid.browser.binaryXHR = function () {
+        var canSendBinary = window.FormData || 
+            (window.XMLHttpRequest && 
+                window.XMLHttpRequest.prototype &&
+                window.XMLHttpRequest.prototype.sendAsBinary);
+        return canSendBinary ? fluid.typeTag("fluid.browser.supportsBinaryXHR") : undefined;
+    };
+    
+    fluid.browser.formData  = function () {
+        return window.FormData ? fluid.typeTag("fluid.browser.supportsFormData") : undefined;
+    };
+    
+    fluid.browser.flash = function () {
+        var hasModernFlash = (typeof(swfobject) !== "undefined") && (swfobject.getFlashPlayerVersion().major > 8);
+        return hasModernFlash ? fluid.typeTag("fluid.browser.supportsFlash") : undefined;
+    };
+    
+    fluid.progressiveChecker = function (options) {
+        var that = fluid.initLittleComponent("fluid.progressiveChecker", options);
+        return fluid.typeTag(fluid.find(that.options.checks, function(check) {
+            if (check.feature) {
+                return check.contextName;
+            }}, that.options.defaultContextName
+        ));
+    };
+    
+    fluid.defaults("fluid.progressiveChecker", {
+        gradeNames: "fluid.typeFount",
+        checks: [], // [{"feature": "{IoC Expression}", "contextName": "context.name"}]
+        defaultContextName: undefined
+    });
+    
+    fluid.progressiveCheckerForComponent = function (options) {
+        var that = fluid.initLittleComponent("fluid.progressiveCheckerForComponent", options);
+        var defaults = fluid.defaults(that.options.componentName);
+        return fluid.progressiveChecker(fluid.expandOptions(defaults.progressiveCheckerOptions, that));  
+    };
+
+    fluid.defaults("fluid.progressiveCheckerForComponent", {
+        gradeNames: "fluid.typeFount"
+    });
+    
+    /**********************************************************
+     * This code runs immediately upon inclusion of this file *
+     **********************************************************/
+    
+    // Use JavaScript to hide any markup that is specifically in place for cases when JavaScript is off.
+    // Note: the use of fl-ProgEnhance-basic is deprecated, and replaced by fl-progEnhance-basic.
+    // It is included here for backward compatibility only.
+    $("head").append("<style type='text/css'>.fl-progEnhance-basic, .fl-ProgEnhance-basic { display: none; } .fl-progEnhance-enhanced, .fl-ProgEnhance-enhanced { display: block; }</style>");
+    
+    // Browser feature detection--adds corresponding type tags to the static environment,
+    // which can be used to define appropriate demands blocks for components using the IoC system.
+    var features = {
+        supportsBinaryXHR: fluid.browser.binaryXHR(),
+        supportsFormData: fluid.browser.formData(),
+        supportsFlash: fluid.browser.flash()
+    };
+    fluid.merge(null, fluid.staticEnvironment, features);
+    
+})(jQuery, fluid_1_4);
+/*
+ * jQuery UI Tooltip @VERSION
+ *
+ * Copyright 2010, AUTHORS.txt
+ * Dual licensed under the MIT or GPL Version 2 licenses.
+ * http://jquery.org/license
+ *
+ * http://docs.jquery.com/UI/Tooltip
+ *
+ * Depends:
+ *	jquery.ui.core.js
+ *	jquery.ui.widget.js
+ *	jquery.ui.position.js
+ */
+(function($) {
+
+var increments = 0;
+
+$.widget("ui.tooltip", {
+	options: {
+		items: "[title]",
+		content: function() {
+			return $(this).attr("title");
+		},
+		position: {
+			my: "left center",
+			at: "right center",
+			offset: "15 0"
+		}
+	},
+	_create: function() {
+		var self = this;
+		this.tooltip = $("<div></div>")
+			.attr("id", "ui-tooltip-" + increments++)
+			.attr("role", "tooltip")
+			.attr("aria-hidden", "true")
+			.addClass("ui-tooltip ui-widget ui-corner-all ui-widget-content")
+			.appendTo(document.body)
+			.hide();
+		this.tooltipContent = $("<div></div>")
+			.addClass("ui-tooltip-content")
+			.appendTo(this.tooltip);
+		this.opacity = this.tooltip.css("opacity");
+		this.element
+			.bind("focus.tooltip mouseover.tooltip", function(event) {
+				self.open( event );
+			})
+			.bind("blur.tooltip mouseout.tooltip", function(event) {
+				self.close( event );
+			});
+	},
+	
+	enable: function() {
+		this.options.disabled = false;
+	},
+	
+	disable: function() {
+		this.options.disabled = true;
+	},
+	
+	destroy: function() {
+		this.tooltip.remove();
+		$.Widget.prototype.destroy.apply(this, arguments);
+	},
+	
+	widget: function() {
+		return this.element.pushStack(this.tooltip.get());
+	},
+	
+	open: function(event) {
+		var target = $(event && event.target || this.element).closest(this.options.items);
+		// already visible? possible when both focus and mouseover events occur
+		if (this.current && this.current[0] == target[0])
+			return;
+		var self = this;
+		this.current = target;
+		this.currentTitle = target.attr("title");
+		var content = this.options.content.call(target[0], function(response) {
+			// IE may instantly serve a cached response, need to give it a chance to finish with _show before that
+			setTimeout(function() {
+				// ignore async responses that come in after the tooltip is already hidden
+				if (self.current == target)
+					self._show(event, target, response);
+			}, 13);
+		});
+		if (content) {
+			self._show(event, target, content);
+		}
+	},
+	
+	_show: function(event, target, content) {
+		if (!content)
+			return;
+		
+		target.attr("title", "");
+		
+		if (this.options.disabled)
+			return;
+			
+		this.tooltipContent.html(content);
+		this.tooltip.css({
+			top: 0,
+			left: 0
+		}).show().position( $.extend({
+			of: target
+		}, this.options.position )).hide();
+		
+		this.tooltip.attr("aria-hidden", "false");
+		target.attr("aria-describedby", this.tooltip.attr("id"));
+
+		this.tooltip.stop(false, true).fadeIn();
+
+		this._trigger( "open", event );
+	},
+	
+	close: function(event) {
+		if (!this.current)
+			return;
+		
+		var current = this.current.attr("title", this.currentTitle);
+		this.current = null;
+		
+		if (this.options.disabled)
+			return;
+		
+		current.removeAttr("aria-describedby");
+		this.tooltip.attr("aria-hidden", "true");
+		
+		this.tooltip.stop(false, true).fadeOut();
+		
+		this._trigger( "close", event );
+	}
+	
+});
+
+})(jQuery);/*
+Copyright 2008-2009 University of Cambridge
+Copyright 2008-2010 University of Toronto
+Copyright 2010 Lucendo Development Ltd.
+
+Licensed under the Educational Community License (ECL), Version 2.0 or the New
+BSD license. You may not use this file except in compliance with one these
+Licenses.
+
+You may obtain a copy of the ECL 2.0 License and BSD License at
+https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
+*/
+
+// Declare dependencies
+/*global fluid_1_4:true, jQuery*/
+
+// JSLint options 
+/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
+
+var fluid_1_4 = fluid_1_4 || {};
+
+(function ($, fluid) {
+    
+  // The three states of the undo component
+    var STATE_INITIAL = "state_initial", 
+        STATE_CHANGED = "state_changed",
+        STATE_REVERTED = "state_reverted";
+  
+    function defaultRenderer(that, targetContainer) {
+        var str = that.options.strings;
+        var markup = "<span class='flc-undo'>" + 
+            "<a href='#' class='flc-undo-undoControl'>" + str.undo + "</a>" + 
+            "<a href='#' class='flc-undo-redoControl'>" + str.redo + "</a>" + 
+            "</span>";
+        var markupNode = $(markup).attr({
+            "role": "region",  
+            "aria-live": "polite", 
+            "aria-relevant": "all"
+        });
+        targetContainer.append(markupNode);
+        return markupNode;
+    }
+    
+    function refreshView(that) {
+        if (that.state === STATE_INITIAL) {
+            that.locate("undoContainer").hide();
+            that.locate("redoContainer").hide();
+        }
+        else if (that.state === STATE_CHANGED) {
+            that.locate("undoContainer").show();
+            that.locate("redoContainer").hide();
+        }
+        else if (that.state === STATE_REVERTED) {
+            that.locate("undoContainer").hide();
+            that.locate("redoContainer").show();          
+        }
+    }
+   
+    
+    var bindHandlers = function (that) { 
+        that.locate("undoControl").click( 
+            function () {
+                if (that.state !== STATE_REVERTED) {
+                    fluid.model.copyModel(that.extremalModel, that.component.model);
+                    that.component.updateModel(that.initialModel, that);
+                    that.state = STATE_REVERTED;
+                    refreshView(that);
+                    that.locate("redoControl").focus();
+                }
+                return false;
+            }
+        );
+        that.locate("redoControl").click( 
+            function () {
+                if (that.state !== STATE_CHANGED) {
+                    that.component.updateModel(that.extremalModel, that);
+                    that.state = STATE_CHANGED;
+                    refreshView(that);
+                    that.locate("undoControl").focus();
+                }
+                return false;
+            }
+        );
+        return {
+            modelChanged: function (newModel, oldModel, source) {
+                if (source !== that) {
+                    that.state = STATE_CHANGED;
+                
+                    fluid.model.copyModel(that.initialModel, oldModel);
+                
+                    refreshView(that);
+                }
+            }
+        };
+    };
+    
+    /**
+     * Decorates a target component with the function of "undoability"
+     * 
+     * @param {Object} component a "model-bearing" standard Fluid component to receive the "undo" functionality
+     * @param {Object} options a collection of options settings
+     */
+    fluid.undoDecorator = function (component, userOptions) {
+        var that = fluid.initLittleComponent("undo", userOptions);
+        that.container = that.options.renderer(that, component.container);
+        fluid.initDomBinder(that);
+        fluid.tabindex(that.locate("undoControl"), 0);
+        fluid.tabindex(that.locate("redoControl"), 0);
+        
+        that.component = component;
+        that.initialModel = {};
+        that.extremalModel = {};
+        fluid.model.copyModel(that.initialModel, component.model);
+        fluid.model.copyModel(that.extremalModel, component.model);
+        
+        that.state = STATE_INITIAL;
+        refreshView(that);
+        var listeners = bindHandlers(that);
+        
+        that.returnedOptions = {
+            listeners: listeners
+        };
+        return that;
+    };
+  
+    fluid.defaults("undo", {  
+        selectors: {
+            undoContainer: ".flc-undo-undoControl",
+            undoControl: ".flc-undo-undoControl",
+            redoContainer: ".flc-undo-redoControl",
+            redoControl: ".flc-undo-redoControl"
+        },
+        
+        strings: {
+            undo: "undo edit",
+            redo: "redo edit"
+        },
+                    
+        renderer: defaultRenderer
+    });
+        
+})(jQuery, fluid_1_4);
+/*
+Copyright 2010 OCAD University
+
+Licensed under the Educational Community License (ECL), Version 2.0 or the New
+BSD license. You may not use this file except in compliance with one these
+Licenses.
+
+You may obtain a copy of the ECL 2.0 License and BSD License at
+https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
+*/
+
+// Declare dependencies
+/*global fluid_1_4:true, jQuery*/
+
+// JSLint options 
+/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
+
+var fluid_1_4 = fluid_1_4 || {};
+
+(function ($, fluid) {
+    
+    var createContentFunc = function (content) {
+        return typeof content === "function" ? content : function () {
+            return content;
+        };
+    };
+
+    var setup = function (that) {
+        that.container.tooltip({
+            content: createContentFunc(that.options.content),
+            position: that.options.position,
+            items: that.options.items,
+            open: function (event) {
+                var tt = $(event.target).tooltip("widget");
+                tt.stop(false, true);
+                tt.hide();
+                if (that.options.delay) {
+                    tt.delay(that.options.delay).fadeIn("default", that.events.afterOpen.fire());
+                } else {
+                    tt.show();
+                    that.events.afterOpen.fire();
+                }
+            },
+            close: function (event) {
+                var tt = $(event.target).tooltip("widget");
+                tt.stop(false, true);
+                tt.hide();
+                tt.clearQueue();
+                that.events.afterClose.fire();
+            } 
+        });
+        
+        that.elm = that.container.tooltip("widget");
+        
+        that.elm.addClass(that.options.styles.tooltip);
+    };
+
+    fluid.tooltip = function (container, options) {
+        var that = fluid.initView("fluid.tooltip", container, options);
+        
+        /**
+         * Updates the contents displayed in the tooltip
+         * 
+         * @param {Object} content, the content to be displayed in the tooltip
+         */
+        that.updateContent = function (content) {
+            that.container.tooltip("option", "content", createContentFunc(content));
+        };
+        
+        /**
+         * Destroys the underlying jquery ui tooltip
+         */
+        that.destroy = function () {
+            that.container.tooltip("destroy");
+        };
+        
+        /**
+         * Manually displays the tooltip
+         */
+        that.open = function () {
+            that.container.tooltip("open");
+        };
+        
+        /**
+         * Manually hides the tooltip
+         */
+        that.close = function () {
+            that.container.tooltip("close");
+        };
+        
+        setup(that);
+        
+        return that;
+    };
+    
+    fluid.defaults("fluid.tooltip", {
+        styles: {
+            tooltip: ""
+        },
+        
+        events: {
+            afterOpen: null,
+            afterClose: null  
+        },
+        
+        content: "",
+        
+        position: {
+            my: "left top",
+            at: "left bottom",
+            offset: "0 5"
+        },
+        
+        items: "*",
+        
+        delay: 300
+    });
+
+})(jQuery, fluid_1_4);
+/*
+Copyright 2008-2009 University of Cambridge
+Copyright 2008-2010 University of Toronto
+Copyright 2008-2009 University of California, Berkeley
+Copyright 2010 OCAD University
+
+Licensed under the Educational Community License (ECL), Version 2.0 or the New
+BSD license. You may not use this file except in compliance with one these
+Licenses.
+
+You may obtain a copy of the ECL 2.0 License and BSD License at
+https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
+*/
+
+// Declare dependencies
+/*global fluid_1_4:true, jQuery*/
+
+// JSLint options 
+/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
+
+var fluid_1_4 = fluid_1_4 || {};
+
+(function ($, fluid) {
+    
+    function sendKey(control, event, virtualCode, charCode) {
+        var kE = document.createEvent("KeyEvents");
+        kE.initKeyEvent(event, 1, 1, null, 0, 0, 0, 0, virtualCode, charCode);
+        control.dispatchEvent(kE);
+    }
+    
+    /** Set the caret position to the end of a text field's value, also taking care
+     * to scroll the field so that this position is visible.
+     * @param {DOM node} control The control to be scrolled (input, or possibly textarea)
+     * @param value The current value of the control
+     */
+    fluid.setCaretToEnd = function (control, value) {
+        var pos = value ? value.length : 0;
+
+        try {
+            control.focus();
+        // see http://www.quirksmode.org/dom/range_intro.html - in Opera, must detect setSelectionRange first, 
+        // since its support for Microsoft TextRange is buggy
+            if (control.setSelectionRange) {
+
+                control.setSelectionRange(pos, pos);
+                if ($.browser.mozilla && pos > 0) {
+                  // ludicrous fix for Firefox failure to scroll to selection position, inspired by
+                  // http://bytes.com/forum/thread496726.html
+                    sendKey(control, "keypress", 92, 92); // type in a junk character
+                    sendKey(control, "keydown", 8, 0); // delete key must be dispatched exactly like this
+                    sendKey(control, "keypress", 8, 0);
+                }
+            }
+
+            else if (control.createTextRange) {
+                var range = control.createTextRange();
+                range.move("character", pos);
+                range.select();
+            }
+        }
+        catch (e) {} 
+    };
+
+    var switchToViewMode = function (that) {
+        that.editContainer.hide();
+        that.displayModeRenderer.show();
+    };
+    
+    var cancel = function (that) {
+        if (that.isEditing()) {
+            // Roll the edit field back to its old value and close it up.
+            // This setTimeout is necessary on Firefox, since any attempt to modify the 
+            // input control value during the stack processing the ESCAPE key will be ignored.
+            setTimeout(function () {
+                that.editView.value(that.model.value);
+            }, 1);
+            switchToViewMode(that);
+            that.events.afterFinishEdit.fire(that.model.value, that.model.value, 
+                that.editField[0], that.viewEl[0]);
+        }
+    };
+    
+    var finish = function (that) {
+        var newValue = that.editView.value();
+        var oldValue = that.model.value;
+
+        var viewNode = that.viewEl[0];
+        var editNode = that.editField[0];
+        var ret = that.events.onFinishEdit.fire(newValue, oldValue, editNode, viewNode);
+        if (ret === false) {
+            return;
+        }
+        
+        that.updateModelValue(newValue);
+        that.events.afterFinishEdit.fire(newValue, oldValue, editNode, viewNode);
+        
+        switchToViewMode(that);
+    };
+    
+    /** 
+     * Do not allow the textEditButton to regain focus upon completion unless
+     * the keypress is enter or esc.
+     */  
+    var bindEditFinish = function (that) {
+        if (that.options.submitOnEnter === undefined) {
+            that.options.submitOnEnter = "textarea" !== fluid.unwrap(that.editField).nodeName.toLowerCase();
+        }
+        function keyCode(evt) {
+            // Fix for handling arrow key presses. See FLUID-760.
+            return evt.keyCode ? evt.keyCode : (evt.which ? evt.which : 0);          
+        }
+        var escHandler = function (evt) {
+            var code = keyCode(evt);
+            if (code === $.ui.keyCode.ESCAPE) {
+                that.textEditButton.focus(0);
+                cancel(that);
+                return false;
+            }
+        };
+        var finishHandler = function (evt) {
+            var code = keyCode(evt);
+            
+            if (code !== $.ui.keyCode.ENTER) {
+                that.textEditButton.blur();
+                return true;
+            }
+            else {
+                finish(that);
+                that.textEditButton.focus(0);
+            }
+            
+            return false;
+        };
+        if (that.options.submitOnEnter) {
+            that.editContainer.keypress(finishHandler);
+        }
+        that.editContainer.keydown(escHandler);
+    };
+
+    var bindBlurHandler = function (that) {
+        if (that.options.blurHandlerBinder) {
+            that.options.blurHandlerBinder(that);
+        }
+        else {
+            var blurHandler = function (evt) {
+                if (that.isEditing()) {
+                    finish(that);
+                }
+                return false;
+            };
+            that.editField.blur(blurHandler);
+        }
+    };
+
+    var initializeEditView = function (that, initial) {
+        if (!that.editInitialized) { 
+            fluid.inlineEdit.renderEditContainer(that, !that.options.lazyEditView || !initial);
+            
+            if (!that.options.lazyEditView || !initial) {
+                that.editView = fluid.initSubcomponent(that, "editView", that.editField);
+                
+                $.extend(true, that.editView, fluid.initSubcomponent(that, "editAccessor", that.editField));
+        
+                bindEditFinish(that);
+                bindBlurHandler(that);
+                that.editView.refreshView(that);
+                that.editInitialized = true;
+            }
+        }
+    };
+    
+    var edit = function (that) {
+        initializeEditView(that, false);
+      
+        var viewEl = that.viewEl;
+        var displayText = that.displayView.value();
+        that.updateModelValue(that.model.value === "" ? "" : displayText);
+        if (that.options.applyEditPadding) {
+            that.editField.width(Math.max(viewEl.width() + that.options.paddings.edit, that.options.paddings.minimumEdit));
+        }
+
+        that.displayModeRenderer.hide();
+        that.editContainer.show();                  
+
+        // Work around for FLUID-726
+        // Without 'setTimeout' the finish handler gets called with the event and the edit field is inactivated.       
+        setTimeout(function () {
+            fluid.setCaretToEnd(that.editField[0], that.editView.value());
+            if (that.options.selectOnEdit) {
+                that.editField[0].select();
+            }
+        }, 0);
+        that.events.afterBeginEdit.fire();
+    };
+
+    var clearEmptyViewStyles = function (textEl, styles, originalViewPadding) {
+        textEl.removeClass(styles.defaultViewStyle);
+        textEl.css('padding-right', originalViewPadding);
+        textEl.removeClass(styles.emptyDefaultViewText);
+    };
+    
+    var showDefaultViewText = function (that) {
+        that.displayView.value(that.options.defaultViewText);
+        that.viewEl.css('padding-right', that.existingPadding);
+        that.viewEl.addClass(that.options.styles.defaultViewStyle);
+    };
+
+    var showNothing = function (that) {
+        that.displayView.value("");
+        
+        // workaround for FLUID-938:
+        // IE can not style an empty inline element, so force element to be display: inline-block
+        if ($.browser.msie) {
+            if (that.viewEl.css('display') === 'inline') {
+                that.viewEl.css('display', "inline-block");
+            }
+        }
+    };
+
+    var showEditedText = function (that) {
+        that.displayView.value(that.model.value);
+        clearEmptyViewStyles(that.viewEl, that.options.styles, that.existingPadding);
+    };
+    
+    var refreshView = function (that, source) {
+        that.displayView.refreshView(that, source);
+        if (that.editView) {
+            that.editView.refreshView(that, source);
+        }
+    };
+    
+    var initModel = function (that, value) {
+        that.model.value = value;
+        that.refreshView();
+    };
+    
+    var updateModelValue = function (that, newValue, source) {
+        var comparator = that.options.modelComparator;
+        var unchanged = comparator ? comparator(that.model.value, newValue) : 
+            that.model.value === newValue;
+        if (!unchanged) {
+            var oldModel = $.extend(true, {}, that.model);
+            that.model.value = newValue;
+            that.events.modelChanged.fire(that.model, oldModel, source);
+            that.refreshView(source);
+        }
+    };
+        
+    var makeIsEditing = function (that) {
+        var isEditing = false;
+
+        that.events.onBeginEdit.addListener(function () {
+            isEditing = true;
+        });
+        that.events.afterFinishEdit.addListener(function () {
+            isEditing = false; 
+        });
+        return function () {
+            return isEditing;
+        };
+    };
+    
+    var makeEditHandler = function (that) {
+        return function () {
+            var prevent = that.events.onBeginEdit.fire();
+            if (prevent === false) {
+                return false;
+            }
+            edit(that);
+            
+            return true;
+        }; 
+    };    
+    
+    // Initialize the tooltip once the document is ready.
+    // For more details, see http://issues.fluidproject.org/browse/FLUID-1030
+    var initTooltips = function (that) {
+        var tooltipOptions = {
+            content: that.options.tooltipText,
+            position: {
+                my: "left top",
+                at: "left bottom",
+                offset: "0 5"
+            },
+            target: "*",
+            delay: that.options.tooltipDelay,
+            styles: {
+                tooltip: that.options.styles.tooltip
+            }     
+        };
+        
+        fluid.tooltip(that.viewEl, tooltipOptions);
+        
+        if (that.textEditButton) {
+            fluid.tooltip(that.textEditButton, tooltipOptions);
+        }
+    };
+    
+    var calculateInitialPadding = function (viewEl) {
+        var padding = viewEl.css("padding-right");
+        return padding ? parseFloat(padding) : 0;
+    };
+    
+    var setupInlineEdit = function (componentContainer, that) {
+        // Hide the edit container to start
+        if (that.editContainer) {
+            that.editContainer.hide();
+        }
+        
+        // Add tooltip handler if required and available
+        if (that.tooltipEnabled()) {
+            initTooltips(that);
+        }
+        
+        // Setup any registered decorators for the component.
+        that.decorators = fluid.initSubcomponents(that, "componentDecorators", 
+            [that, fluid.COMPONENT_OPTIONS]);
+    };
+    
+    /**
+     * Creates a whole list of inline editors.
+     */
+    var setupInlineEdits = function (editables, options) {
+        var editors = [];
+        editables.each(function (idx, editable) {
+            editors.push(fluid.inlineEdit($(editable), options));
+        });
+        
+        return editors;
+    };
+    
+    /**
+     * Instantiates a new Inline Edit component
+     * 
+     * @param {Object} componentContainer a selector, jquery, or a dom element representing the component's container
+     * @param {Object} options a collection of options settings
+     */
+    fluid.inlineEdit = function (componentContainer, userOptions) {   
+        var that = fluid.initView("inlineEdit", componentContainer, userOptions);
+        
+        that.viewEl = fluid.inlineEdit.setupDisplayText(that);
+        
+        that.displayView = fluid.initSubcomponent(that, "displayView", that.viewEl);
+        $.extend(true, that.displayView, fluid.initSubcomponent(that, "displayAccessor", that.viewEl));
+
+        /**
+         * The current value of the inline editable text. The "model" in MVC terms.
+         */
+        that.model = {value: ""};
+       
+        /**
+         * Switches to edit mode.
+         */
+        that.edit = makeEditHandler(that);
+        
+        /**
+         * Determines if the component is currently in edit mode.
+         * 
+         * @return true if edit mode shown, false if view mode is shown
+         */
+        that.isEditing = makeIsEditing(that);
+        
+        /**
+         * Finishes editing, switching back to view mode.
+         */
+        that.finish = function () {
+            finish(that);
+        };
+
+        /**
+         * Cancels the in-progress edit and switches back to view mode.
+         */
+        that.cancel = function () {
+            cancel(that);
+        };
+
+        /**
+         * Determines if the tooltip feature is enabled.
+         * 
+         * @return true if the tooltip feature is turned on, false if not
+         */
+        that.tooltipEnabled = function () {
+            return that.options.useTooltip && $.fn.tooltip;
+        };
+        
+        /**
+         * Updates the state of the inline editor in the DOM, based on changes that may have
+         * happened to the model.
+         * 
+         * @param {Object} source
+         */
+        that.refreshView = function (source) {
+            refreshView(that, source);
+        };
+        
+        /**
+         * Pushes external changes to the model into the inline editor, refreshing its
+         * rendering in the DOM. The modelChanged event will fire.
+         * 
+         * @param {String} newValue The bare value of the model, that is, the string being edited
+         * @param {Object} source An optional "source" (perhaps a DOM element) which triggered this event
+         */
+        that.updateModelValue = function (newValue, source) {
+            updateModelValue(that, newValue, source);
+        };
+        
+        /**
+         * Pushes external changes to the model into the inline editor, refreshing its
+         * rendering in the DOM. The modelChanged event will fire.
+         * 
+         * @param {Object} newValue The full value of the new model, that is, a model object which contains the editable value as the element named "value"
+         * @param {Object} source An optional "source" (perhaps a DOM element) which triggered this event
+         */
+        that.updateModel = function (newModel, source) {
+            updateModelValue(that, newModel.value, source);
+        };
+        
+        that.existingPadding = calculateInitialPadding(that.viewEl);
+        
+        initModel(that, that.displayView.value());
+        
+        that.displayModeRenderer = that.options.displayModeRenderer(that);  
+        initializeEditView(that, true);
+        setupInlineEdit(componentContainer, that);
+        
+        return that;
+    };
+    
+    /**
+     * Set up and style the edit field.  If an edit field is not provided,
+     * default markup is created for the edit field 
+     * 
+     * @param {string} editStyle The default styling for the edit field
+     * @param {Object} editField The edit field markup provided by the integrator
+     * 
+     * @return eField The styled edit field   
+     */
+    fluid.inlineEdit.setupEditField = function (editStyle, editField) {
+        var eField = $(editField);
+        eField = eField.length ? eField : $("<input type='text' class='flc-inlineEdit-edit'/>");
+        eField.addClass(editStyle);
+        return eField;
+    };
+
+    /**
+     * Set up the edit container and append the edit field to the container.  If an edit container
+     * is not provided, default markup is created.
+     * 
+     * @param {Object} displayContainer The display mode container 
+     * @param {Object} editField The edit field that is to be appended to the edit container 
+     * @param {Object} editContainer The edit container markup provided by the integrator   
+     * 
+     * @return eContainer The edit container containing the edit field   
+     */
+    fluid.inlineEdit.setupEditContainer = function (displayContainer, editField, editContainer) {
+        var eContainer = $(editContainer);
+        eContainer = eContainer.length ? eContainer : $("<span></span>");
+        displayContainer.after(eContainer);
+        eContainer.append(editField);
+        
+        return eContainer;
+    };
+    
+    /**
+     * Default renderer for the edit mode view.
+     * 
+     * @return {Object} container The edit container containing the edit field
+     *                  field The styled edit field  
+     */
+    fluid.inlineEdit.defaultEditModeRenderer = function (that) {
+        var editField = fluid.inlineEdit.setupEditField(that.options.styles.edit, that.editField);
+        var editContainer = fluid.inlineEdit.setupEditContainer(that.displayModeRenderer, editField, that.editContainer);
+        var editModeInstruction = fluid.inlineEdit.setupEditModeInstruction(that.options.styles.editModeInstruction, that.options.strings.editModeInstruction);
+        
+        var id = fluid.allocateSimpleId(editModeInstruction);
+        editField.attr("aria-describedby", id);
+
+        fluid.inlineEdit.positionEditModeInstruction(editModeInstruction, editContainer, editField);
+              
+        // Package up the container and field for the component.
+        return {
+            container: editContainer,
+            field: editField 
+        };
+    };
+    
+    /**
+     * Configures the edit container and view, and uses the component's editModeRenderer to render
+     * the edit container.
+     *  
+     * @param {boolean} lazyEditView If true, will delay rendering of the edit container;
+     *                                            Default is false 
+     */
+    fluid.inlineEdit.renderEditContainer = function (that, lazyEditView) {
+        that.editContainer = that.locate("editContainer");
+        that.editField = that.locate("edit");
+        if (that.editContainer.length !== 1) {
+            if (that.editContainer.length > 1) {
+                fluid.fail("InlineEdit did not find a unique container for selector " + that.options.selectors.editContainer +
+                   ": " + fluid.dumpEl(that.editContainer));
+            }
+        }
+        
+        if (!lazyEditView) {
+            return; 
+        } // do not invoke the renderer, unless this is the "final" effective time
+        
+        var editElms = that.options.editModeRenderer(that);
+        if (editElms) {
+            that.editContainer = editElms.container;
+            that.editField = editElms.field;
+        }
+    };
+
+    /**
+     * Set up the edit mode instruction with aria in edit mode
+     * 
+     * @param {String} editModeInstructionStyle The default styling for the instruction
+     * @param {String} editModeInstructionText The default instruction text
+     * 
+     * @return {jQuery} The displayed instruction in edit mode
+     */
+    fluid.inlineEdit.setupEditModeInstruction = function (editModeInstructionStyle, editModeInstructionText) {
+        var editModeInstruction = $("<p></p>");
+        editModeInstruction.addClass(editModeInstructionStyle);
+        editModeInstruction.text(editModeInstructionText);
+
+        return editModeInstruction;
+    };
+
+    /**
+     * Positions the edit mode instruction directly beneath the edit container
+     * 
+     * @param {Object} editModeInstruction The displayed instruction in edit mode
+     * @param {Object} editContainer The edit container in edit mode
+     * @param {Object} editField The edit field in edit mode
+     */    
+    fluid.inlineEdit.positionEditModeInstruction = function (editModeInstruction, editContainer, editField) {
+        editContainer.append(editModeInstruction);
+        
+        editField.focus(function () {
+            editModeInstruction.show();
+
+            var editFieldPosition = editField.offset();
+            editModeInstruction.css({left: editFieldPosition.left});
+            editModeInstruction.css({top: editFieldPosition.top + editField.height() + 5});
+        });
+    };  
+    
+    /**
+     * Set up and style the display mode container for the viewEl and the textEditButton 
+     * 
+     * @param {Object} styles The default styling for the display mode container
+     * @param {Object} displayModeWrapper The markup used to generate the display mode container
+     * 
+     * @return {jQuery} The styled display mode container
+     */
+    fluid.inlineEdit.setupDisplayModeContainer = function (styles, displayModeWrapper) {
+        var displayModeContainer = $(displayModeWrapper);  
+        displayModeContainer = displayModeContainer.length ? displayModeContainer : $("<span></span>");  
+        displayModeContainer.addClass(styles.displayView);
+        
+        return displayModeContainer;
+    };
+    
+    /**
+     * Retrieve the display text from the DOM.  
+     * 
+     * @return {jQuery} The display text
+     */
+    fluid.inlineEdit.setupDisplayText = function (that) {
+        var viewEl = that.locate("text");
+
+        /*
+         *  Remove the display from the tab order to prevent users to think they
+         *  are able to access the inline edit field, but they cannot since the 
+         *  keyboard event binding is only on the button.
+         */
+        viewEl.attr("tabindex", "-1");
+        viewEl.addClass(that.options.styles.text);
+        
+        return viewEl;
+    };
+    
+    /**
+     * Set up the textEditButton.  Append a background image with appropriate
+     * descriptive text to the button.
+     * 
+     * @return {jQuery} The accessible button located after the display text
+     */
+    fluid.inlineEdit.setupTextEditButton = function (that) {
+        var opts = that.options;
+        var textEditButton = that.locate("textEditButton");
+        
+        if  (textEditButton.length === 0) {
+            var markup = $("<a href='#_' class='flc-inlineEdit-textEditButton'></a>");
+            markup.addClass(opts.styles.textEditButton);
+            markup.text(opts.tooltipText);            
+            
+            /**
+             * Set text for the button and listen
+             * for modelChanged to keep it updated
+             */ 
+            fluid.inlineEdit.updateTextEditButton(markup, that.model.value || opts.defaultViewText, opts.strings.textEditButton);
+            that.events.modelChanged.addListener(function () {
+                fluid.inlineEdit.updateTextEditButton(markup, that.model.value || opts.defaultViewText, opts.strings.textEditButton);
+            });        
+            
+            that.locate("text").after(markup);
+            
+            // Refresh the textEditButton with the newly appended options
+            textEditButton = that.locate("textEditButton");
+        } 
+        return textEditButton;
+    };    
+
+    /**
+     * Update the textEditButton text with the current value of the field.
+     * 
+     * @param {Object} textEditButton the textEditButton
+     * @param {String} model The current value of the inline editable text
+     * @param {Object} strings Text option for the textEditButton
+     */
+    fluid.inlineEdit.updateTextEditButton = function (textEditButton, value, stringTemplate) {
+        var buttonText = fluid.stringTemplate(stringTemplate, {
+            text: value
+        });
+        textEditButton.text(buttonText);
+    };
+    
+    /**
+     * Bind mouse hover event handler to the display mode container.  
+     * 
+     * @param {Object} displayModeRenderer The display mode container
+     * @param {String} invitationStyle The default styling for the display mode container on mouse hover
+     */
+    fluid.inlineEdit.bindHoverHandlers = function (displayModeRenderer, invitationStyle) {
+        var over = function (evt) {
+            displayModeRenderer.addClass(invitationStyle);
+        };     
+        var out = function (evt) {
+            displayModeRenderer.removeClass(invitationStyle);
+        };
+        displayModeRenderer.hover(over, out);
+    };    
+    
+    /**
+     * Bind keyboard focus and blur event handlers to an element
+     * 
+     * @param {Object} element The element to which the event handlers are bound
+     * @param {Object} displayModeRenderer The display mode container
+     * @param {Ojbect} styles The default styling for the display mode container on mouse hover
+     */    
+    fluid.inlineEdit.bindHighlightHandler = function (element, displayModeRenderer, styles) {
+        element = $(element);
+        
+        var focusOn = function () {
+            displayModeRenderer.addClass(styles.focus);
+            displayModeRenderer.addClass(styles.invitation);
+        };
+        var focusOff = function () {
+            displayModeRenderer.removeClass(styles.focus);
+            displayModeRenderer.removeClass(styles.invitation);
+        };
+        
+        element.focus(focusOn);
+        element.blur(focusOff);
+    };        
+    
+    /**
+     * Bind mouse click handler to an element
+     * 
+     * @param {Object} element The element to which the event handler is bound
+     * @param {Object} edit Function to invoke the edit mode
+     * 
+     * @return {boolean} Returns false if entering edit mode
+     */
+    fluid.inlineEdit.bindMouseHandlers = function (element, edit) {
+        element = $(element);
+        
+        var triggerGuard = fluid.inlineEdit.makeEditTriggerGuard(element, edit);
+        element.click(function (e) {
+            triggerGuard(e);
+            return false;
+        });
+    };
+
+    /**
+     * Bind keyboard press handler to an element
+     * 
+     * @param {Object} element The element to which the event handler is bound
+     * @param {Object} edit Function to invoke the edit mode
+     * 
+     * @return {boolean} Returns false if entering edit mode
+     */    
+    fluid.inlineEdit.bindKeyboardHandlers = function (element, edit) {
+        element = $(element);
+        element.attr("role", "button");
+        
+        var guard = fluid.inlineEdit.makeEditTriggerGuard(element, edit);
+        fluid.activatable(element, function (event) {
+            return guard(event);
+        });
+    };
+    
+    /**
+     * Creates an event handler that will trigger the edit mode if caused by something other
+     * than standard HTML controls. The event handler will return false if entering edit mode.
+     * 
+     * @param {Object} element The element to trigger the edit mode
+     * @param {Object} edit Function to invoke the edit mode
+     * 
+     * @return {function} The event handler function
+     */    
+    fluid.inlineEdit.makeEditTriggerGuard = function (element, edit) {
+        var selector = fluid.unwrap(element);
+        return function (event) {
+            // FLUID-2017 - avoid triggering edit mode when operating standard HTML controls. Ultimately this
+            // might need to be extensible, in more complex authouring scenarios.
+            var outer = fluid.findAncestor(event.target, function (elem) {
+                if (/input|select|textarea|button|a/i.test(elem.nodeName) || elem === selector) {
+                    return true; 
+                }
+            });
+            if (outer === selector) {
+                edit();
+                return false;
+            }
+        };
+    };
+    
+    /**
+     * Render the display mode view.  
+     * 
+     * @return {jQuery} The display container containing the display text and 
+     *                             textEditbutton for display mode view
+     */
+    fluid.inlineEdit.defaultDisplayModeRenderer = function (that) {
+        var styles = that.options.styles;
+        
+        var displayModeWrapper = fluid.inlineEdit.setupDisplayModeContainer(styles);
+        var displayModeRenderer = that.viewEl.wrap(displayModeWrapper).parent();
+        
+        that.textEditButton = fluid.inlineEdit.setupTextEditButton(that);
+        displayModeRenderer.append(that.textEditButton);
+        
+        // Add event handlers.
+        fluid.inlineEdit.bindHoverHandlers(displayModeRenderer, styles.invitation);
+        fluid.inlineEdit.bindMouseHandlers(that.viewEl, that.edit);
+        fluid.inlineEdit.bindMouseHandlers(that.textEditButton, that.edit);
+        fluid.inlineEdit.bindKeyboardHandlers(that.textEditButton, that.edit);
+        fluid.inlineEdit.bindHighlightHandler(that.viewEl, displayModeRenderer, styles);
+        fluid.inlineEdit.bindHighlightHandler(that.textEditButton, displayModeRenderer, styles);
+        
+        return displayModeRenderer;
+    };    
+    
+    fluid.inlineEdit.standardAccessor = function (element) {
+        var nodeName = element.nodeName.toLowerCase();
+        var func = "input" === nodeName || "textarea" === nodeName ? "val" : "text";
+        return {
+            value: function (newValue) {
+                return $(element)[func](newValue);
+            }
+        };
+    };
+    
+    fluid.inlineEdit.standardDisplayView = function (viewEl) {
+        var that = {
+            refreshView: function (componentThat, source) {
+                if (componentThat.model.value) {
+                    showEditedText(componentThat);
+                } else if (componentThat.options.defaultViewText) {
+                    showDefaultViewText(componentThat);
+                } else {
+                    showNothing(componentThat);
+                }
+                // If necessary, pad the view element enough that it will be evident to the user.
+                if ($.trim(componentThat.viewEl.text()).length === 0) {
+                    componentThat.viewEl.addClass(componentThat.options.styles.emptyDefaultViewText);
+                    
+                    if (componentThat.existingPadding < componentThat.options.paddings.minimumView) {
+                        componentThat.viewEl.css('padding-right', componentThat.options.paddings.minimumView);
+                    }
+                }
+            }
+        };
+        return that;
+    };
+    
+    fluid.inlineEdit.standardEditView = function (editField) {
+        var that = {
+            refreshView: function (componentThat, source) {
+                if (!source || componentThat.editField && componentThat.editField.index(source) === -1) {
+                    componentThat.editView.value(componentThat.model.value);
+                }
+            }
+        };
+        $.extend(true, that, fluid.inlineEdit.standardAccessor(editField));
+        return that;
+    };
+    
+    /**
+     * Instantiates a list of InlineEdit components.
+     * 
+     * @param {Object} componentContainer the element containing the inline editors
+     * @param {Object} options configuration options for the components
+     */
+    fluid.inlineEdits = function (componentContainer, options) {
+        options = options || {};
+        var selectors = $.extend({}, fluid.defaults("inlineEdits").selectors, options.selectors);
+        
+        // Bind to the DOM.
+        var container = fluid.container(componentContainer);
+        var editables = $(selectors.editables, container);
+        
+        return setupInlineEdits(editables, options);
+    };
+    
+    fluid.defaults("inlineEdit", {  
+        selectors: {
+            text: ".flc-inlineEdit-text",
+            editContainer: ".flc-inlineEdit-editContainer",
+            edit: ".flc-inlineEdit-edit",
+            textEditButton: ".flc-inlineEdit-textEditButton"
+        },
+        
+        styles: {
+            text: "fl-inlineEdit-text",
+            edit: "fl-inlineEdit-edit",
+            invitation: "fl-inlineEdit-invitation",
+            defaultViewStyle: "fl-inlineEdit-emptyText-invitation",
+            emptyDefaultViewText: "fl-inlineEdit-emptyDefaultViewText",
+            focus: "fl-inlineEdit-focus",
+            tooltip: "fl-inlineEdit-tooltip",
+            editModeInstruction: "fl-inlineEdit-editModeInstruction",
+            displayView: "fl-inlineEdit-simple-editableText fl-inlineEdit-textContainer",
+            textEditButton: "fl-offScreen-hidden"
+        },
+        
+        events: {
+            modelChanged: null,
+            onBeginEdit: "preventable",
+            afterBeginEdit: null,
+            onFinishEdit: "preventable",
+            afterFinishEdit: null,
+            afterInitEdit: null
+        },
+
+        strings: {
+            textEditButton: "Edit text %text",
+            editModeInstruction: "Escape to cancel, Enter or Tab when finished"
+        },
+        
+        paddings: {
+            edit: 10,
+            minimumEdit: 80,
+            minimumView: 60
+        },
+        
+        applyEditPadding: true,
+        
+        blurHandlerBinder: null,
+        
+        // set this to true or false to cause unconditional submission, otherwise it will
+        // be inferred from the edit element tag type.
+        submitOnEnter: undefined,
+        
+        modelComparator: null,
+        
+        displayAccessor: {
+            type: "fluid.inlineEdit.standardAccessor"
+        },
+        
+        displayView: {
+            type: "fluid.inlineEdit.standardDisplayView"
+        },
+        
+        editAccessor: {
+            type: "fluid.inlineEdit.standardAccessor"
+        },
+        
+        editView: {
+            type: "fluid.inlineEdit.standardEditView"
+        },
+        
+        displayModeRenderer: fluid.inlineEdit.defaultDisplayModeRenderer,
+            
+        editModeRenderer: fluid.inlineEdit.defaultEditModeRenderer,
+        
+        lazyEditView: false,
+        
+        // this is here for backwards API compatibility, but should be in the strings block
+        defaultViewText: "Click here to edit",
+
+        /** View Mode Tooltip Settings **/
+        useTooltip: true,
+        
+        // this is here for backwards API compatibility, but should be in the strings block
+        tooltipText: "Select or press Enter to edit",
+        
+        tooltipDelay: 1000,
+
+        selectOnEdit: false        
+    });
+    
+    fluid.defaults("inlineEdits", {
+        selectors: {
+            editables: ".flc-inlineEditable"
+        }
+    });
+})(jQuery, fluid_1_4);
+/*
+Copyright 2008-2009 University of Cambridge
+Copyright 2008-2010 University of Toronto
+Copyright 2010 OCAD University
+
+Licensed under the Educational Community License (ECL), Version 2.0 or the New
+BSD license. You may not use this file except in compliance with one these
+Licenses.
+
+You may obtain a copy of the ECL 2.0 License and BSD License at
+https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
+*/
+
+// Declare dependencies
+/*global fluid, fluid_1_4:true, CKEDITOR, jQuery, FCKeditor, FCKeditorAPI, FCKeditor_OnComplete, tinyMCE*/
+
+// JSLint options 
+/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
+
+var fluid_1_4 = fluid_1_4 || {};
+
+(function ($, fluid) {
+
+    /*************************************
+     * Shared Rich Text Editor functions *
+     *************************************/
+     
+    fluid.inlineEdit.makeViewAccessor = function (editorGetFn, setValueFn, getValueFn) {
+        return function (editField) {
+            return {
+                value: function (newValue) {
+                    var editor = editorGetFn(editField);
+                    if (!editor) {
+                        if (newValue) {
+                            $(editField).val(newValue);
+                        }
+                        return "";
+                    }
+                    if (newValue) {
+                        setValueFn(editField, editor, newValue);
+                    }
+                    else {
+                        return getValueFn(editor);
+                    }
+                }
+            };
+        };
+    };
+    
+    fluid.inlineEdit.richTextViewAccessor = function (element) {
+        return {
+            value: function (newValue) {
+                return $(element).html(newValue);
+            }
+        };
+    };        
+    
+    var configureInlineEdit = function (configurationName, container, options) {
+        var defaults = fluid.defaults(configurationName); 
+        var assembleOptions = fluid.merge(defaults ? defaults.mergePolicy: null, {}, defaults, options);
+        return fluid.inlineEdit(container, assembleOptions);
+    };
+
+    fluid.inlineEdit.normalizeHTML = function (value) {
+        var togo = $.trim(value.replace(/\s+/g, " "));
+        togo = togo.replace(/\s+<\//g, "</");
+        togo = togo.replace(/\<(\S+)[^\>\s]*\>/g, function (match) {
+            return match.toLowerCase();
+        });
+        return togo;
+    };
+    
+    fluid.inlineEdit.htmlComparator = function (el1, el2) {
+        return fluid.inlineEdit.normalizeHTML(el1) ===
+           fluid.inlineEdit.normalizeHTML(el2);
+    };
+    
+    fluid.inlineEdit.bindRichTextHighlightHandler = function (element, displayModeRenderer, invitationStyle) {
+        element = $(element);
+        
+        var focusOn = function () {
+            displayModeRenderer.addClass(invitationStyle);
+        };
+        var focusOff = function () {
+            displayModeRenderer.removeClass(invitationStyle);
+        };
+        
+        element.focus(focusOn);
+        element.blur(focusOff);
+    };        
+    
+    fluid.inlineEdit.setupRichTextEditButton = function (that) {
+        var opts = that.options;
+        var textEditButton = that.locate("textEditButton");
+        
+        if  (textEditButton.length === 0) {
+            var markup = $("<a href='#_' class='flc-inlineEdit-textEditButton'></a>");
+            markup.text(opts.strings.textEditButton);
+            
+            that.locate("text").after(markup);
+            
+            // Refresh the textEditButton with the newly appended options
+            textEditButton = that.locate("textEditButton");
+        } 
+        return textEditButton;
+    };    
+    
+    /**
+     * Wrap the display text and the textEditButton with the display mode container  
+     * for better style control.
+     */
+    fluid.inlineEdit.richTextDisplayModeRenderer = function (that) {
+        var styles = that.options.styles;
+        
+        var displayModeWrapper = fluid.inlineEdit.setupDisplayModeContainer(styles);
+        var displayModeRenderer = that.viewEl.wrap(displayModeWrapper).parent();
+        
+        that.textEditButton = fluid.inlineEdit.setupRichTextEditButton(that);
+        displayModeRenderer.append(that.textEditButton);
+        displayModeRenderer.addClass(styles.focus);
+        
+        // Add event handlers.
+        fluid.inlineEdit.bindHoverHandlers(displayModeRenderer, styles.invitation);
+        fluid.inlineEdit.bindMouseHandlers(that.textEditButton, that.edit);
+        fluid.inlineEdit.bindKeyboardHandlers(that.textEditButton, that.edit);
+        fluid.inlineEdit.bindRichTextHighlightHandler(that.viewEl, displayModeRenderer, styles.invitation);
+        fluid.inlineEdit.bindRichTextHighlightHandler(that.textEditButton, displayModeRenderer, styles.invitation);
+        
+        return displayModeRenderer;
+    };        
+
+   
+    /************************
+     * Tiny MCE Integration *
+     ************************/
+    
+    /**
+     * Instantiate a rich-text InlineEdit component that uses an instance of TinyMCE.
+     * 
+     * @param {Object} componentContainer the element containing the inline editors
+     * @param {Object} options configuration options for the components
+     */
+    fluid.inlineEdit.tinyMCE = function (container, options) {
+        var inlineEditor = configureInlineEdit("fluid.inlineEdit.tinyMCE", container, options);
+        tinyMCE.init(inlineEditor.options.tinyMCE);
+        return inlineEditor;
+    };
+        
+    fluid.inlineEdit.tinyMCE.getEditor = function (editField) {
+        return tinyMCE.get(editField.id);
+    };
+    
+    fluid.inlineEdit.tinyMCE.setValue = function (editField, editor, value) {
+        // without this, there is an intermittent race condition if the editor has been created on this event.
+        $(editField).val(value); 
+        editor.setContent(value, {format : 'raw'});
+    };
+    
+    fluid.inlineEdit.tinyMCE.getValue = function (editor) {
+        return editor.getContent();
+    };
+    
+    var flTinyMCE = fluid.inlineEdit.tinyMCE; // Shorter alias for awfully long fully-qualified names.
+    flTinyMCE.viewAccessor = fluid.inlineEdit.makeViewAccessor(flTinyMCE.getEditor, 
+                                                               flTinyMCE.setValue,
+                                                               flTinyMCE.getValue);
+   
+    fluid.inlineEdit.tinyMCE.blurHandlerBinder = function (that) {
+        function focusEditor(editor) {
+            setTimeout(function () {
+                tinyMCE.execCommand('mceFocus', false, that.editField[0].id);
+                if ($.browser.mozilla && $.browser.version.substring(0, 3) === "1.8") {
+                    // Have not yet found any way to make this work on FF2.x - best to do nothing,
+                    // for FLUID-2206
+                    //var body = editor.getBody();
+                    //fluid.setCaretToEnd(body.firstChild, "");
+                    return;
+                }
+                editor.selection.select(editor.getBody(), 1);
+                editor.selection.collapse(0);
+            }, 10);
+        }
+        
+        that.events.afterInitEdit.addListener(function (editor) {
+            focusEditor(editor);
+            var editorBody = editor.getBody();
+
+            // NB - this section has no effect - on most browsers no focus events
+            // are delivered to the actual body
+            fluid.deadMansBlur(that.editField, 
+                {exclusions: {body: $(editorBody)}, 
+                    handler: function () {
+                        that.cancel();
+                    }
+                });
+        });
+            
+        that.events.afterBeginEdit.addListener(function () {
+            var editor = tinyMCE.get(that.editField[0].id);
+            if (editor) {
+                focusEditor(editor);
+            } 
+        });
+    };
+   
+    fluid.inlineEdit.tinyMCE.editModeRenderer = function (that) {
+        var options = that.options.tinyMCE;
+        options.elements = fluid.allocateSimpleId(that.editField);
+        var oldinit = options.init_instance_callback;
+        
+        options.init_instance_callback = function (instance) {
+            that.events.afterInitEdit.fire(instance);
+            if (oldinit) {
+                oldinit();
+            }
+        };
+        
+        tinyMCE.init(options);
+    };
+    
+    fluid.defaults("fluid.inlineEdit.tinyMCE", {
+        tinyMCE : {
+            mode: "exact", 
+            theme: "simple"
+        },
+        useTooltip: true,
+        selectors: {
+            edit: "textarea" 
+        },
+        styles: {
+            invitation: "fl-inlineEdit-richText-invitation",
+            displayView: "fl-inlineEdit-textContainer",
+            text: ""
+                
+        },
+        strings: {
+            textEditButton: "Edit"
+        },
+        displayAccessor: {
+            type: "fluid.inlineEdit.richTextViewAccessor"
+        },
+        editAccessor: {
+            type: "fluid.inlineEdit.tinyMCE.viewAccessor"
+        },
+        lazyEditView: true,
+        defaultViewText: "Click Edit",
+        modelComparator: fluid.inlineEdit.htmlComparator,
+        blurHandlerBinder: fluid.inlineEdit.tinyMCE.blurHandlerBinder,
+        displayModeRenderer: fluid.inlineEdit.richTextDisplayModeRenderer,
+        editModeRenderer: fluid.inlineEdit.tinyMCE.editModeRenderer
+    });
+    
+    
+    /*****************************
+     * FCKEditor 2.x Integration *
+     *****************************/
+         
+    /**
+     * Instantiate a rich-text InlineEdit component that uses an instance of FCKeditor.
+     * Support for FCKEditor 2.x is now deprecated. We recommend the use of the simpler and more
+     * accessible CKEditor 3 instead.
+     * 
+     * @param {Object} componentContainer the element containing the inline editors
+     * @param {Object} options configuration options for the components
+     */
+    fluid.inlineEdit.FCKEditor = function (container, options) {
+        return configureInlineEdit("fluid.inlineEdit.FCKEditor", container, options);
+    };
+    
+    fluid.inlineEdit.FCKEditor.getEditor = function (editField) {
+        var editor = typeof(FCKeditorAPI) === "undefined" ? null: FCKeditorAPI.GetInstance(editField.id);
+        return editor;
+    };
+    
+    fluid.inlineEdit.FCKEditor.complete = fluid.event.getEventFirer();
+    
+    fluid.inlineEdit.FCKEditor.complete.addListener(function (editor) {
+        var editField = editor.LinkedField;
+        var that = $.data(editField, "fluid.inlineEdit.FCKEditor");
+        if (that && that.events) {
+            that.events.afterInitEdit.fire(editor);
+        }
+    });
+    
+    fluid.inlineEdit.FCKEditor.blurHandlerBinder = function (that) {
+        function focusEditor(editor) {
+            editor.Focus(); 
+        }
+        
+        that.events.afterInitEdit.addListener(
+            function (editor) {
+                focusEditor(editor);
+            }
+        );
+        that.events.afterBeginEdit.addListener(function () {
+            var editor = fluid.inlineEdit.FCKEditor.getEditor(that.editField[0]);
+            if (editor) {
+                focusEditor(editor);
+            } 
+        });
+
+    };
+    
+    fluid.inlineEdit.FCKEditor.editModeRenderer = function (that) {
+        var id = fluid.allocateSimpleId(that.editField);
+        $.data(fluid.unwrap(that.editField), "fluid.inlineEdit.FCKEditor", that);
+        var oFCKeditor = new FCKeditor(id);
+        // The Config object and the FCKEditor object itself expose different configuration sets,
+        // which possess a member "BasePath" with different meanings. Solve FLUID-2452, FLUID-2438
+        // by auto-inferring the inner path for Config (method from http://drupal.org/node/344230 )
+        var opcopy = fluid.copy(that.options.FCKEditor);
+        opcopy.BasePath = opcopy.BasePath + "editor/";
+        $.extend(true, oFCKeditor.Config, opcopy);
+        // somehow, some properties like Width and Height are set on the object itself
+
+        $.extend(true, oFCKeditor, that.options.FCKEditor);
+        oFCKeditor.Config.fluidInstance = that;
+        oFCKeditor.ReplaceTextarea();
+    };
+
+    fluid.inlineEdit.FCKEditor.setValue = function (editField, editor, value) {
+        editor.SetHTML(value);
+    };
+    
+    fluid.inlineEdit.FCKEditor.getValue = function (editor) {
+        return editor.GetHTML();
+    };
+    
+    var flFCKEditor = fluid.inlineEdit.FCKEditor;
+    
+    flFCKEditor.viewAccessor = fluid.inlineEdit.makeViewAccessor(flFCKEditor.getEditor,
+                                                                 flFCKEditor.setValue,
+                                                                 flFCKEditor.getValue);
+    
+    fluid.defaults("fluid.inlineEdit.FCKEditor", {
+        selectors: {
+            edit: "textarea" 
+        },
+        styles: {
+            invitation: "fl-inlineEdit-richText-invitation",
+            displayView: "fl-inlineEdit-textContainer",
+            text: ""
+        },
+        strings: {
+            textEditButton: "Edit"
+        },        
+        displayAccessor: {
+            type: "fluid.inlineEdit.richTextViewAccessor"
+        },
+        editAccessor: {
+            type: "fluid.inlineEdit.FCKEditor.viewAccessor"
+        },
+        lazyEditView: true,
+        defaultViewText: "Click Edit",
+        modelComparator: fluid.inlineEdit.htmlComparator,
+        blurHandlerBinder: fluid.inlineEdit.FCKEditor.blurHandlerBinder,
+        displayModeRenderer: fluid.inlineEdit.richTextDisplayModeRenderer,
+        editModeRenderer: fluid.inlineEdit.FCKEditor.editModeRenderer,
+        FCKEditor: {
+            BasePath: "fckeditor/"    
+        }
+    });
+    
+    
+    /****************************
+     * CKEditor 3.x Integration *
+     ****************************/
+    
+    fluid.inlineEdit.CKEditor = function (container, options) {
+        return configureInlineEdit("fluid.inlineEdit.CKEditor", container, options);
+    };
+    
+    fluid.inlineEdit.CKEditor.getEditor = function (editField) {
+        return CKEDITOR.instances[editField.id];
+    };
+    
+    fluid.inlineEdit.CKEditor.setValue = function (editField, editor, value) {
+        editor.setData(value);
+    };
+    
+    fluid.inlineEdit.CKEditor.getValue = function (editor) {
+        return editor.getData();
+    };
+    
+    var flCKEditor = fluid.inlineEdit.CKEditor;
+    flCKEditor.viewAccessor = fluid.inlineEdit.makeViewAccessor(flCKEditor.getEditor,
+                                                                flCKEditor.setValue,
+                                                                flCKEditor.getValue);
+                             
+    fluid.inlineEdit.CKEditor.focus = function (editor) {
+        setTimeout(function () {
+            // CKEditor won't focus itself except in a timeout.
+            editor.focus();
+        }, 0);
+    };
+    
+    // Special hacked HTML normalisation for CKEditor which spuriously inserts whitespace
+    // just after the first opening tag
+    fluid.inlineEdit.CKEditor.normalizeHTML = function (value) {
+        var togo = fluid.inlineEdit.normalizeHTML(value);
+        var angpos = togo.indexOf(">");
+        if (angpos !== -1 && angpos < togo.length - 1) {
+            if (togo.charAt(angpos + 1) !== " ") {
+                togo = togo.substring(0, angpos + 1) + " " + togo.substring(angpos + 1);
+            }
+        }
+        return togo;
+    };
+    
+    fluid.inlineEdit.CKEditor.htmlComparator = function (el1, el2) {
+        return fluid.inlineEdit.CKEditor.normalizeHTML(el1) ===
+           fluid.inlineEdit.CKEditor.normalizeHTML(el2);
+    };
+                                    
+    fluid.inlineEdit.CKEditor.blurHandlerBinder = function (that) {
+        that.events.afterInitEdit.addListener(fluid.inlineEdit.CKEditor.focus);
+        that.events.afterBeginEdit.addListener(function () {
+            var editor = fluid.inlineEdit.CKEditor.getEditor(that.editField[0]);
+            if (editor) {
+                fluid.inlineEdit.CKEditor.focus(editor);
+            }
+        });
+    };
+    
+    fluid.inlineEdit.CKEditor.editModeRenderer = function (that) {
+        var id = fluid.allocateSimpleId(that.editField);
+        $.data(fluid.unwrap(that.editField), "fluid.inlineEdit.CKEditor", that);
+        var editor = CKEDITOR.replace(id, that.options.CKEditor);
+        editor.on("instanceReady", function (e) {
+            fluid.inlineEdit.CKEditor.focus(e.editor);
+            that.events.afterInitEdit.fire(e.editor);
+        });
+    };                                                     
+    
+    fluid.defaults("fluid.inlineEdit.CKEditor", {
+        selectors: {
+            edit: "textarea" 
+        },
+        styles: {
+            invitation: "fl-inlineEdit-richText-invitation",
+            displayView: "fl-inlineEdit-textContainer",
+            text: ""
+        },
+        strings: {
+            textEditButton: "Edit"
+        },        
+        displayAccessor: {
+            type: "fluid.inlineEdit.richTextViewAccessor"
+        },
+        editAccessor: {
+            type: "fluid.inlineEdit.CKEditor.viewAccessor"
+        },
+        lazyEditView: true,
+        defaultViewText: "Click Edit",
+        modelComparator: fluid.inlineEdit.CKEditor.htmlComparator,
+        blurHandlerBinder: fluid.inlineEdit.CKEditor.blurHandlerBinder,
+        displayModeRenderer: fluid.inlineEdit.richTextDisplayModeRenderer,
+        editModeRenderer: fluid.inlineEdit.CKEditor.editModeRenderer,
+        CKEditor: {
+            // CKEditor-specific configuration goes here.
+        }
+    });
+ 
+    
+    /************************
+     * Dropdown Integration *
+     ************************/    
+    /**
+     * Instantiate a drop-down InlineEdit component
+     * 
+     * @param {Object} container
+     * @param {Object} options
+     */
+    fluid.inlineEdit.dropdown = function (container, options) {
+        return configureInlineEdit("fluid.inlineEdit.dropdown", container, options);
+    };
+
+    fluid.inlineEdit.dropdown.editModeRenderer = function (that) {
+        var id = fluid.allocateSimpleId(that.editField);
+        that.editField.selectbox({
+            finishHandler: function () {
+                that.finish();
+            }
+        });
+        return {
+            container: that.editContainer,
+            field: $("input.selectbox", that.editContainer) 
+        };
+    };
+   
+    fluid.inlineEdit.dropdown.blurHandlerBinder = function (that) {
+        fluid.deadMansBlur(that.editField, {
+            exclusions: {selectBox: $("div.selectbox-wrapper", that.editContainer)},
+            handler: function () {
+                that.cancel();
+            }
+        });
+    };
+    
+    fluid.defaults("fluid.inlineEdit.dropdown", {
+        applyEditPadding: false,
+        blurHandlerBinder: fluid.inlineEdit.dropdown.blurHandlerBinder,
+        editModeRenderer: fluid.inlineEdit.dropdown.editModeRenderer
+    });
+})(jQuery, fluid_1_4);
+
+
+// This must be written outside any scope as a result of the FCKEditor event model.
+// Do not overwrite this function, if you wish to add your own listener to FCK completion,
+// register it with the standard fluid event firer at fluid.inlineEdit.FCKEditor.complete
+function FCKeditor_OnComplete(editorInstance) {
+    fluid.inlineEdit.FCKEditor.complete.fire(editorInstance);
+}
+/* Copyright (c) 2006 Brandon Aaron (http://brandonaaron.net)
+ * Dual licensed under the MIT (http://www.opensource.org/licenses/mit-license.php) 
+ * and GPL (http://www.opensource.org/licenses/gpl-license.php) licenses.
+ *
+ * $LastChangedDate$
+ * $Rev$
+ *
+ * Version 2.1
+ */
+
+(function($){
+
+/**
+ * The bgiframe is chainable and applies the iframe hack to get 
+ * around zIndex issues in IE6. It will only apply itself in IE 
+ * and adds a class to the iframe called 'bgiframe'. The iframe
+ * is appeneded as the first child of the matched element(s) 
+ * with a tabIndex and zIndex of -1.
+ * 
+ * By default the plugin will take borders, sized with pixel units,
+ * into account. If a different unit is used for the border's width,
+ * then you will need to use the top and left settings as explained below.
+ *
+ * NOTICE: This plugin has been reported to cause perfromance problems
+ * when used on elements that change properties (like width, height and
+ * opacity) a lot in IE6. Most of these problems have been caused by 
+ * the expressions used to calculate the elements width, height and 
+ * borders. Some have reported it is due to the opacity filter. All 
+ * these settings can be changed if needed as explained below.
+ *
+ * @example $('div').bgiframe();
+ * @before <div><p>Paragraph</p></div>
+ * @result <div><iframe class="bgiframe".../><p>Paragraph</p></div>
+ *
+ * @param Map settings Optional settings to configure the iframe.
+ * @option String|Number top The iframe must be offset to the top
+ * 		by the width of the top border. This should be a negative 
+ *      number representing the border-top-width. If a number is 
+ * 		is used here, pixels will be assumed. Otherwise, be sure
+ *		to specify a unit. An expression could also be used. 
+ * 		By default the value is "auto" which will use an expression 
+ * 		to get the border-top-width if it is in pixels.
+ * @option String|Number left The iframe must be offset to the left
+ * 		by the width of the left border. This should be a negative 
+ *      number representing the border-left-width. If a number is 
+ * 		is used here, pixels will be assumed. Otherwise, be sure
+ *		to specify a unit. An expression could also be used. 
+ * 		By default the value is "auto" which will use an expression 
+ * 		to get the border-left-width if it is in pixels.
+ * @option String|Number width This is the width of the iframe. If
+ *		a number is used here, pixels will be assume. Otherwise, be sure
+ * 		to specify a unit. An experssion could also be used.
+ *		By default the value is "auto" which will use an experssion
+ * 		to get the offsetWidth.
+ * @option String|Number height This is the height of the iframe. If
+ *		a number is used here, pixels will be assume. Otherwise, be sure
+ * 		to specify a unit. An experssion could also be used.
+ *		By default the value is "auto" which will use an experssion
+ * 		to get the offsetHeight.
+ * @option Boolean opacity This is a boolean representing whether or not
+ * 		to use opacity. If set to true, the opacity of 0 is applied. If
+ *		set to false, the opacity filter is not applied. Default: true.
+ * @option String src This setting is provided so that one could change 
+ *		the src of the iframe to whatever they need.
+ *		Default: "javascript:false;"
+ *
+ * @name bgiframe
+ * @type jQuery
+ * @cat Plugins/bgiframe
+ * @author Brandon Aaron (brandon.aaron@gmail.com || http://brandonaaron.net)
+ */
+$.fn.bgIframe = $.fn.bgiframe = function(s) {
+	// This is only for IE6
+	if ( $.browser.msie && parseInt($.browser.version) <= 6 ) {
+		s = $.extend({
+			top     : 'auto', // auto == .currentStyle.borderTopWidth
+			left    : 'auto', // auto == .currentStyle.borderLeftWidth
+			width   : 'auto', // auto == offsetWidth
+			height  : 'auto', // auto == offsetHeight
+			opacity : true,
+			src     : 'javascript:false;'
+		}, s || {});
+		var prop = function(n){return n&&n.constructor==Number?n+'px':n;},
+		    html = '<iframe class="bgiframe"frameborder="0"tabindex="-1"src="'+s.src+'"'+
+		               'style="display:block;position:absolute;z-index:-1;'+
+			               (s.opacity !== false?'filter:Alpha(Opacity=\'0\');':'')+
+					       'top:'+(s.top=='auto'?'expression(((parseInt(this.parentNode.currentStyle.borderTopWidth)||0)*-1)+\'px\')':prop(s.top))+';'+
+					       'left:'+(s.left=='auto'?'expression(((parseInt(this.parentNode.currentStyle.borderLeftWidth)||0)*-1)+\'px\')':prop(s.left))+';'+
+					       'width:'+(s.width=='auto'?'expression(this.parentNode.offsetWidth+\'px\')':prop(s.width))+';'+
+					       'height:'+(s.height=='auto'?'expression(this.parentNode.offsetHeight+\'px\')':prop(s.height))+';'+
+					'"/>';
+		return this.each(function() {
+			if ( $('> iframe.bgiframe', this).length == 0 )
+				this.insertBefore( document.createElement(html), this.firstChild );
+		});
+	}
+	return this;
+};
+
+// Add browser.version if it doesn't exist
+if (!$.browser.version)
+	$.browser.version = navigator.userAgent.toLowerCase().match(/.+(?:rv|it|ra|ie)[\/: ]([\d.]+)/)[1];
+
+})(jQuery);/*
+Copyright 2008-2009 University of Cambridge
+Copyright 2008-2009 University of Toronto
+Copyright 2010-2011 OCAD University
+Copyright 2010 Lucendo Development Ltd.
+
+Licensed under the Educational Community License (ECL), Version 2.0 or the New
+BSD license. You may not use this file except in compliance with one these
+Licenses.
+
+You may obtain a copy of the ECL 2.0 License and BSD License at
+https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
+*/
+
+// Declare dependencies
+/*global fluid_1_4:true, jQuery*/
+
+// JSLint options 
+/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
+
+var fluid_1_4 = fluid_1_4 || {};
+
+(function ($, fluid) {
+
+    /******************
+     * Pager Bar View *
+     ******************/
+
+    
+    function updateStyles(pageListThat, newModel, oldModel) {
+        if (!pageListThat.pageLinks) {
+            return;
+        }
+        if (oldModel.pageIndex !== undefined) {
+            var oldLink = pageListThat.pageLinks.eq(oldModel.pageIndex);
+            oldLink.removeClass(pageListThat.options.styles.currentPage);
+        }
+        var pageLink = pageListThat.pageLinks.eq(newModel.pageIndex);
+        pageLink.addClass(pageListThat.options.styles.currentPage); 
+    }
+    
+    function bindLinkClick(link, events, eventArg) {
+        link.unbind("click.fluid.pager");
+        link.bind("click.fluid.pager", function () {
+            events.initiatePageChange.fire(eventArg);
+        });
+    }
+    
+    // 10 -> 1, 11 -> 2
+    function computePageCount(model) {
+        model.pageCount = Math.max(1, Math.floor((model.totalRange - 1) / model.pageSize) + 1);
+    }
+
+    fluid.pager = function () {
+        return fluid.pagerImpl.apply(null, arguments);
+    };
+    
+    fluid.pager.computePageLimit = function (model) {
+        return Math.min(model.totalRange, (model.pageIndex + 1) * model.pageSize);
+    };
+
+    fluid.pager.directPageList = function (container, events, options) {
+        var that = fluid.initView("fluid.pager.directPageList", container, options);
+        that.pageLinks = that.locate("pageLinks");
+        for (var i = 0; i < that.pageLinks.length; ++i) {
+            var pageLink = that.pageLinks.eq(i);
+            bindLinkClick(pageLink, events, {pageIndex: i});
+        }
+        events.onModelChange.addListener(
+            function (newModel, oldModel) {
+                updateStyles(that, newModel, oldModel);
+            }
+        );
+        that.defaultModel = {
+            pageIndex: undefined,
+            pageSize: 1,
+            totalRange: that.pageLinks.length
+        };
+        return that;
+    };
+    
+    /** Returns an array of size count, filled with increasing integers, 
+     *  starting at 0 or at the index specified by first. 
+     */
+    
+    fluid.iota = function (count, first) {
+        first = first || 0;
+        var togo = [];
+        for (var i = 0; i < count; ++i) {
+            togo[togo.length] = first++;
+        }
+        return togo;
+    };
+    
+    fluid.pager.everyPageStrategy = fluid.iota;
+    
+    fluid.pager.gappedPageStrategy = function (locality, midLocality) {
+        if (!locality) {
+            locality = 3;
+        }
+        if (!midLocality) {
+            midLocality = locality;
+        }
+        return function (count, first, mid) {
+            var togo = [];
+            var j = 0;
+            var lastSkip = false;
+            for (var i = 0; i < count; ++i) {
+                if (i < locality || (count - i - 1) < locality || (i >= mid - midLocality && i <= mid + midLocality)) {
+                    togo[j++] = i;
+                    lastSkip = false;
+                } else if (!lastSkip) {
+                    togo[j++] = -1;
+                    lastSkip = true;
+                }
+            }
+            return togo;
+        };
+    };
+    
+    /**
+     * An impl of a page strategy that will always display same number of page links (including skip place holders). 
+     * @param   endLinkCount    int     The # of elements first and last trunks of elements
+     * @param   midLinkCount    int     The # of elements from beside the selected #
+     * @author  Eric Dalquist
+     */
+    fluid.pager.consistentGappedPageStrategy = function (endLinkCount, midLinkCount) {
+        if (!endLinkCount) {
+            endLinkCount = 1;
+        }
+        if (!midLinkCount) {
+            midLinkCount = endLinkCount;
+        }
+        var endWidth = endLinkCount + 2 + midLinkCount;
+
+        return function (count, first, mid) {
+            var pages = [];
+            var anchoredLeft = mid < endWidth;
+            var anchoredRight = mid >= count - endWidth;
+            var anchoredEndWidth = endWidth + midLinkCount;
+            var midStart = mid - midLinkCount;
+            var midEnd = mid + midLinkCount;
+            var lastSkip = false;
+            
+            for (var page = 0; page < count; page++) {
+                if (page < endLinkCount || // start pages
+                        count - page <= endLinkCount || // end pages
+                        (anchoredLeft && page < anchoredEndWidth) || // pages if no skipped pages between start and mid
+                        (anchoredRight && page >= count - anchoredEndWidth) || // pages if no skipped pages between mid and end
+                        (page >= midStart && page <= midEnd) // pages around the mid
+                        ) {
+                    pages.push(page);
+                    lastSkip = false;
+                } else if (!lastSkip) {
+                    pages.push(-1);
+                    lastSkip = true;
+                }
+            }
+            return pages;
+        };
+    };  
+    
+    fluid.pager.renderedPageList = function (container, events, pagerBarOptions, options, strings) {
+        options = $.extend(true, pagerBarOptions, options);
+        var that = fluid.initView("fluid.pager.renderedPageList", container, options);
+        options = that.options; // pick up any defaults
+        var idMap = {};
+        var renderOptions = {
+            cutpoints: [ 
+                {
+                    id: "page-link:link",
+                    selector: pagerBarOptions.selectors.pageLinks
+                },
+                {
+                    id: "page-link:skip",
+                    selector: pagerBarOptions.selectors.pageLinkSkip
+                }
+            ],
+            idMap: idMap
+        };
+        
+        if (options.linkBody) {
+            renderOptions.cutpoints[renderOptions.cutpoints.length] = {
+                id: "payload-component",
+                selector: options.linkBody
+            };
+        }   
+        
+        var assembleComponent = function (page, isCurrent) {
+            var obj = {
+                ID: "page-link:link",
+                localID: page + 1,
+                value: page + 1,
+                pageIndex: page,
+                decorators: [
+                    {
+                        type: "jQuery",
+                        func: "click", 
+                        args: function (event) {
+                            events.initiatePageChange.fire({pageIndex: page});
+                            event.preventDefault();
+                        }
+                    }
+                ]
+            };
+            
+            if (isCurrent) {
+                obj.current = true;
+                obj.decorators = obj.decorators.concat([
+                    {
+                        type: "addClass",
+                        classes: that.options.styles.currentPage
+                    },
+                    {
+                        type: "jQuery",
+                        func: "attr", 
+                        args: ["aria-label", that.options.strings.currentPageIndexMsg] 
+                    }
+                ]);
+            }
+            
+            return obj;
+        };
+             
+        function pageToComponent(current) {
+            return function (page) {
+                return page === -1 ? {
+                    ID: "page-link:skip"
+                } : assembleComponent(page, page === current);
+            };
+        }
+        
+        var root = that.locate("root");
+        fluid.expectFilledSelector(root, "Error finding root template for fluid.pager.renderedPageList");
+        
+        var template = fluid.selfRender(root, {}, renderOptions);
+        events.onModelChange.addListener(
+            function (newModel, oldModel) {
+                var pages = that.options.pageStrategy(newModel.pageCount, 0, newModel.pageIndex);
+                var pageTree = fluid.transform(pages, pageToComponent(newModel.pageIndex));
+                if (pageTree.length > 1) {
+                    pageTree[pageTree.length - 1].value = pageTree[pageTree.length - 1].value + strings.last;
+                }
+                events.onRenderPageLinks.fire(pageTree, newModel);
+                
+                //Destroys all the tooltips before rerendering the pagelinks.
+                //This will clean up the tooltips, which are all added to the end at the end of the DOM,
+                //and prevent the tooltips from sticking around when using the keyboard to activate
+                //the page links.
+                $.each(idMap, function (key, id) {
+                    var pageLink = fluid.jById(id);
+                    if (pageLink.tooltip) {
+                        pageLink.tooltip("destroy");
+                    }
+                });
+                fluid.reRender(template, root, pageTree, renderOptions);
+                updateStyles(that, newModel, oldModel);
+            }
+        );
+        return that;
+    };
+    
+    fluid.defaults("fluid.pager.renderedPageList", {
+        selectors: {
+            root: ".flc-pager-links"
+        },
+        linkBody: "a",
+        pageStrategy: fluid.pager.everyPageStrategy
+    });
+    
+    var updatePreviousNext = function (that, options, newModel) {
+        if (newModel.pageIndex === 0) {
+            that.previous.addClass(options.styles.disabled);
+        } else {
+            that.previous.removeClass(options.styles.disabled);
+        }
+        
+        if (newModel.pageIndex === newModel.pageCount - 1) {
+            that.next.addClass(options.styles.disabled);
+        } else {
+            that.next.removeClass(options.styles.disabled);
+        }
+    };
+    
+    fluid.pager.previousNext = function (container, events, options) {
+        var that = fluid.initView("fluid.pager.previousNext", container, options);
+        that.previous = that.locate("previous");
+        bindLinkClick(that.previous, events, {relativePage: -1});
+        that.next = that.locate("next");
+        bindLinkClick(that.next, events, {relativePage: +1});
+        events.onModelChange.addListener(
+            function (newModel, oldModel, overallThat) {
+                updatePreviousNext(that, options, newModel);
+            }
+        );
+        return that;
+    };
+
+    fluid.pager.pagerBar = function (events, container, options, strings) {
+        var that = fluid.initView("fluid.pager.pagerBar", container, options);
+        that.pageList = fluid.initSubcomponent(that, "pageList", 
+            [container, events, that.options, fluid.COMPONENT_OPTIONS, strings]);
+        that.previousNext = fluid.initSubcomponent(that, "previousNext", 
+            [container, events, that.options, fluid.COMPONENT_OPTIONS, strings]);
+        
+        return that;
+    };
+
+    
+    fluid.defaults("fluid.pager.pagerBar", {
+            
+        previousNext: {
+            type: "fluid.pager.previousNext"
+        },
+        
+        pageList: {
+            type: "fluid.pager.renderedPageList",
+            options: {
+                pageStrategy: fluid.pager.gappedPageStrategy(3, 1)
+            }
+        },
+        
+        selectors: {
+            pageLinks: ".flc-pager-pageLink",
+            pageLinkSkip: ".flc-pager-pageLink-skip",
+            previous: ".flc-pager-previous",
+            next: ".flc-pager-next"
+        },
+        
+        styles: {
+            currentPage: "fl-pager-currentPage",
+            disabled: "fl-pager-disabled"
+        },
+        
+        strings: {
+            currentPageIndexMsg: "Current page"
+        }
+    });
+
+    function getColumnDefs(that) {
+        return that.options.columnDefs;
+    }
+
+    fluid.pager.findColumnDef = function (columnDefs, key) {
+        var columnDef = $.grep(columnDefs, function (def) {
+            return def.key === key;
+        })[0];
+        return columnDef;
+    };
+    
+    function getRoots(target, overallThat, index) {
+        var cellRoot = (overallThat.options.dataOffset ? overallThat.options.dataOffset + "." : "");
+        target.shortRoot = index;
+        target.longRoot = cellRoot + target.shortRoot;
+    }
+    
+    function expandPath(EL, shortRoot, longRoot) {
+        if (EL.charAt(0) === "*") {
+            return longRoot + EL.substring(1); 
+        } else {
+            return EL.replace("*", shortRoot);
+        }
+    }
+    
+    fluid.pager.fetchValue = function (that, dataModel, index, valuebinding, roots) {
+        getRoots(roots, that, index);
+
+        var path = expandPath(valuebinding, roots.shortRoot, roots.longRoot);
+        return fluid.get(dataModel, path);
+    };
+    
+    fluid.pager.basicSorter = function (overallThat, model) {        
+        var dataModel = overallThat.options.dataModel;
+        var roots = {};
+        var columnDefs = getColumnDefs(overallThat);
+        var columnDef = fluid.pager.findColumnDef(columnDefs, model.sortKey);
+        var sortrecs = [];
+        for (var i = 0; i < model.totalRange; ++i) {
+            sortrecs[i] = {
+                index: i,
+                value: fluid.pager.fetchValue(overallThat, dataModel, i, columnDef.valuebinding, roots)
+            };
+        }
+        function sortfunc(arec, brec) {
+            var a = arec.value;
+            var b = brec.value;
+            return a === b ? 0 : (a > b ? model.sortDir : -model.sortDir); 
+        }
+        sortrecs.sort(sortfunc);
+        return fluid.transform(sortrecs, function (row) {
+            return row.index;
+        });
+    };
+
+    
+    fluid.pager.directModelFilter = function (model, pagerModel, perm) {
+        var togo = [];
+        var limit = fluid.pager.computePageLimit(pagerModel);
+        for (var i = pagerModel.pageIndex * pagerModel.pageSize; i < limit; ++i) {
+            var index = perm ? perm[i] : i;
+            togo[togo.length] = {index: index, row: model[index]};
+        }
+        return togo;
+    };
+    
+    function expandVariables(value, opts) {
+        var togo = "";
+        var index = 0;
+        while (true) {
+            var nextindex = value.indexOf("${", index);
+            if (nextindex === -1) {
+                togo += value.substring(index);
+                break;
+            } else {
+                togo += value.substring(index, nextindex);
+                var endi = value.indexOf("}", nextindex + 2);
+                var EL = value.substring(nextindex + 2, endi);
+                if (EL === "VALUE") {
+                    EL = opts.EL;
+                } else {
+                    EL = expandPath(EL, opts.shortRoot, opts.longRoot);
+                }
+                var val = fluid.get(opts.dataModel, EL);
+                togo += val;
+                index = endi + 1;
+            }
+        }
+        return togo;
+    }
+   
+    function expandPaths(target, tree, opts) {
+        for (var i in tree) {
+            var val = tree[i];
+            if (val === fluid.VALUE) {
+                if (i === "valuebinding") {
+                    target[i] = opts.EL;
+                } else {
+                    target[i] = {"valuebinding" : opts.EL};
+                }
+            } else if (i === "valuebinding") {
+                target[i] = expandPath(tree[i], opts);
+            } else if (typeof (val) === 'object') {
+                target[i] = val.length !== undefined ? [] : {};
+                expandPaths(target[i], val, opts);
+            } else if (typeof (val) === 'string') {
+                target[i] = expandVariables(val, opts);
+            } else {
+                target[i] = tree[i];
+            }
+        }
+        return target;
+    }
+   
+   // sets opts.EL, returns ID
+    function iDforColumn(columnDef, opts) {
+        var options = opts.options;
+        var EL = columnDef.valuebinding;
+        var key = columnDef.key;
+        if (!EL) {
+            fluid.fail("Error in definition for column with key " + key + ": valuebinding is not set");
+        }
+        opts.EL = expandPath(EL, opts.shortRoot, opts.longRoot);
+        if (!key) {
+            var segs = fluid.model.parseEL(EL);
+            key = segs[segs.length - 1];
+        }
+        var ID = (options.keyPrefix ? options.keyPrefix : "") + key;
+        return ID;
+    }
+   
+    function expandColumnDefs(filteredRow, opts) {
+        var tree = fluid.transform(opts.columnDefs, function (columnDef) {
+            var ID = iDforColumn(columnDef, opts);
+            var togo;
+            if (!columnDef.components) {
+                return {
+                    ID: ID,
+                    valuebinding: opts.EL
+                };
+            } else if (typeof columnDef.components === 'function') {
+                togo = columnDef.components(filteredRow.row, filteredRow.index);
+            } else {
+                togo = columnDef.components;
+            }
+            togo = expandPaths({}, togo, opts);
+            togo.ID = ID;
+            return togo;
+        });
+        return tree;
+    }
+   
+    function fetchModel(overallThat) {
+        return fluid.get(overallThat.options.dataModel, 
+            overallThat.options.dataOffset);
+    }
+   
+    
+    function bigHeaderForKey(key, opts) {
+        var id = opts.options.renderOptions.idMap["header:" + key];
+        var smallHeader = fluid.jById(id);
+        if (smallHeader.length === 0) {
+            return null;
+        }
+        var headerSortStylisticOffset = opts.overallOptions.selectors.headerSortStylisticOffset;
+        var bigHeader = fluid.findAncestor(smallHeader, function (element) {
+            return $(element).is(headerSortStylisticOffset); 
+        });
+        return bigHeader;
+    }
+   
+    function setSortHeaderClass(styles, element, sort) {
+        element = $(element);
+        element.removeClass(styles.ascendingHeader);
+        element.removeClass(styles.descendingHeader);
+        if (sort !== 0) {
+            element.addClass(sort === 1 ? styles.ascendingHeader : styles.descendingHeader);
+            //aria-sort property are specified in the w3 WAI spec, ascending, descending, none, other.
+            //since pager currently uses ascending and descending, we do not support the others.
+            //http://www.w3.org/WAI/PF/aria/states_and_properties#aria-sort
+            element.attr('aria-sort', sort === 1 ? 'ascending' : 'descending'); 
+        }
+    }
+    
+    function isCurrentColumnSortable(columnDefs, model) {
+        var columnDef = model.sortKey ? fluid.pager.findColumnDef(columnDefs, model.sortKey) : null;
+        return columnDef ? columnDef.sortable : false;
+    }
+    
+    function setModelSortHeaderClass(newModel, opts) {
+        var styles = opts.overallOptions.styles;
+        var sort = isCurrentColumnSortable(opts.columnDefs, newModel) ? newModel.sortDir : 0;
+        setSortHeaderClass(styles, bigHeaderForKey(newModel.sortKey, opts), sort);
+    }
+   
+    function fireModelChange(that, newModel, forceUpdate) {
+        computePageCount(newModel);
+        if (newModel.pageIndex >= newModel.pageCount) {
+            newModel.pageIndex = newModel.pageCount - 1;
+        }
+        if (forceUpdate || newModel.pageIndex !== that.model.pageIndex || newModel.pageSize !== that.model.pageSize || newModel.sortKey !== that.model.sortKey ||
+                newModel.sortDir !== that.model.sortDir) {
+            var sorted = isCurrentColumnSortable(getColumnDefs(that), newModel) ? 
+                that.options.sorter(that, newModel) : null;
+            that.permutation = sorted;
+            that.events.onModelChange.fire(newModel, that.model, that);
+            fluid.model.copyModel(that.model, newModel);
+        }
+    }
+
+    function generateColumnClick(overallThat, columnDef, opts) {
+        return function () {
+            if (columnDef.sortable === true) {
+                var model = overallThat.model;
+                var newModel = fluid.copy(model);
+                var styles = overallThat.options.styles;
+                var oldKey = model.sortKey;
+                if (columnDef.key !== model.sortKey) {
+                    newModel.sortKey = columnDef.key;
+                    newModel.sortDir = 1;
+                    var oldBig = bigHeaderForKey(oldKey, opts);
+                    if (oldBig) {
+                        setSortHeaderClass(styles, oldBig, 0);
+                    }
+                } else if (newModel.sortKey === columnDef.key) {
+                    newModel.sortDir = -1 * newModel.sortDir;
+                } else {
+                    return false;
+                }
+                newModel.pageIndex = 0;
+                fireModelChange(overallThat, newModel, true);
+                setModelSortHeaderClass(newModel, opts);                
+            }
+            return false;
+        };
+    }
+   
+    function fetchHeaderDecorators(decorators, columnDef) {
+        return decorators[columnDef.sortable ? "sortableHeader" : "unsortableHeader"];
+    }
+   
+    function generateHeader(overallThat, newModel, columnDefs, opts) {
+        var sortableColumnTxt = opts.options.strings.sortableColumnText;
+        if (newModel.sortDir === 1) {
+            sortableColumnTxt = opts.options.strings.sortableColumnTextAsc;
+        } else if (newModel.sortDir === -1) {
+            sortableColumnTxt = opts.options.strings.sortableColumnTextDesc;
+        }
+
+        return {
+            children:  
+                fluid.transform(columnDefs, function (columnDef) {
+                return {
+                    ID: iDforColumn(columnDef, opts),
+                    value: columnDef.label,
+                    decorators: [ 
+                        {"jQuery": ["click", generateColumnClick(overallThat, columnDef, opts)]},
+                        {identify: "header:" + columnDef.key},
+                        {type: "attrs", attributes: { title: (columnDef.key === newModel.sortKey) ? sortableColumnTxt : opts.options.strings.sortableColumnText}}
+                    ].concat(fetchHeaderDecorators(opts.overallOptions.decorators, columnDef))
+                };
+            })
+        };
+    }
+   
+    /** A body renderer implementation which uses the Fluid renderer to render a table section **/
+   
+    fluid.pager.selfRender = function (overallThat, inOptions) {
+        var that = fluid.initView("fluid.pager.selfRender", overallThat.container, inOptions);
+        var options = that.options;
+        options.renderOptions.idMap = options.renderOptions.idMap || {};
+        var idMap = options.renderOptions.idMap;
+        var root = that.locate("root");
+        var template = fluid.selfRender(root, {}, options.renderOptions);
+        root.addClass(options.styles.root);
+        var columnDefs = getColumnDefs(overallThat);
+        var expOpts = {options: options, columnDefs: columnDefs, overallOptions: overallThat.options, dataModel: overallThat.options.dataModel, idMap: idMap};
+        var directModel = fetchModel(overallThat);
+
+        return {
+            returnedOptions: {
+                listeners: {
+                    onModelChange: function (newModel, oldModel) {
+                        var filtered = overallThat.options.modelFilter(directModel, newModel, overallThat.permutation);
+                        var tree = fluid.transform(filtered, 
+                            function (filteredRow) {
+                                getRoots(expOpts, overallThat, filteredRow.index);
+                                if (columnDefs === "explode") {
+                                    return fluid.explode(filteredRow.row, expOpts.longRoot);
+                                } else if (columnDefs.length) {
+                                    return expandColumnDefs(filteredRow, expOpts);
+                                }
+                            });
+                        var fullTree = {};
+                        fullTree[options.row] = tree;
+                        if (typeof (columnDefs) === "object") {
+                            fullTree[options.header] = generateHeader(overallThat, newModel, columnDefs, expOpts);
+                        }
+                        options.renderOptions = options.renderOptions || {};
+                        options.renderOptions.model = expOpts.dataModel;
+                        fluid.reRender(template, root, fullTree, options.renderOptions);
+                        setModelSortHeaderClass(newModel, expOpts); // TODO, should this not be actually renderable?
+                    }
+                }
+            }
+        };
+    };
+
+    fluid.defaults("fluid.pager.selfRender", {
+        selectors: {
+            root: ".flc-pager-body-template"
+        },
+        
+        styles: {
+            root: "fl-pager"
+        },
+        
+        keyStrategy: "id",
+        keyPrefix: "",
+        row: "row:",
+        header: "header:",
+        
+        strings: {
+            sortableColumnText: "Select to sort",
+            sortableColumnTextDesc: "Select to sort in ascending, currently in descending order.",
+            sortableColumnTextAsc: "Select to sort in descending, currently in ascending order."
+        },
+
+        // Options passed upstream to the renderer
+        renderOptions: {}
+    });
+
+    fluid.pager.summaryAria = function (element) {
+        element.attr({
+            "aria-relevant": "all",
+            "aria-atomic": "false",
+            "aria-live": "assertive",
+            "role": "status"
+        });
+    };
+
+    fluid.pager.summary = function (dom, options) {
+        var node = dom.locate("summary");
+        fluid.pager.summaryAria(node);
+        return {
+            returnedOptions: {
+                listeners: {
+                    onModelChange: function (newModel, oldModel) {
+                        var text = fluid.stringTemplate(options.message, {
+                            first: newModel.pageIndex * newModel.pageSize + 1,
+                            last: fluid.pager.computePageLimit(newModel),
+                            total: newModel.totalRange,
+                            currentPage: newModel.pageIndex + 1
+                        });
+                        if (node.length > 0) {
+                            node.text(text);
+                        }
+                    }
+                }
+            }
+        };
+    };
+    
+    fluid.pager.directPageSize = function (that) {
+        var node = that.locate("pageSize");
+        if (node.length > 0) {
+            that.events.onModelChange.addListener(
+                function (newModel, oldModel) {
+                    if (node.val() !== newModel.pageSize) {
+                        node.val(newModel.pageSize);
+                    }
+                }
+            );
+            node.change(function () {
+                that.events.initiatePageSizeChange.fire(node.val());
+            });
+        }
+    };
+
+
+    fluid.pager.rangeAnnotator = function (that, options) {
+        var roots = {};
+        that.events.onRenderPageLinks.addListener(function (tree, newModel) {
+            var column = that.options.annotateColumnRange;
+            var dataModel = that.options.dataModel;
+            // TODO: reaching into another component's options like this is a bit unfortunate
+            var columnDefs = getColumnDefs(that);
+
+            if (!column || !dataModel || !columnDefs) {
+                return;
+            }
+            var columnDef = fluid.pager.findColumnDef(columnDefs, column);
+            
+            function fetchValue(index) {
+                index = that.permutation ? that.permutation[index] : index;
+                return fluid.pager.fetchValue(that, dataModel, index, columnDef.valuebinding, roots);
+            }
+            var tModel = {};
+            fluid.model.copyModel(tModel, newModel);
+            
+            fluid.transform(tree, function (cell) {
+                if (cell.ID === "page-link:link") {
+                    var page = cell.pageIndex;
+                    var start = page * tModel.pageSize;
+                    tModel.pageIndex = page;
+                    var limit = fluid.pager.computePageLimit(tModel);
+                    var iValue = fetchValue(start);
+                    var lValue = fetchValue(limit - 1);
+                    
+                    var tooltipOpts = fluid.copy(that.options.tooltip.options) || {};
+                    
+                    if (!tooltipOpts.content) {
+                        tooltipOpts.content = function () { 
+                            return fluid.stringTemplate(that.options.markup.rangeAnnotation, {
+                                first: iValue,
+                                last: lValue
+                            });
+                        };
+                    }
+                    
+                    if (!cell.current) {
+                        var decorators = [
+                            {
+                                type: "fluid",
+                                func: that.options.tooltip.type,
+                                options: tooltipOpts
+                            },
+                            {
+                                identify: page
+                            }
+                        ];
+                        cell.decorators = cell.decorators.concat(decorators);
+                    }
+                }
+            });
+        });
+    };
+
+    /*******************
+     * Pager Component *
+     *******************/
+    
+    fluid.pagerImpl = function (container, options) {
+        var that = fluid.initView("fluid.pager", container, options);
+                
+        that.container.attr("role", "application");
+        
+        that.events.initiatePageChange.addListener(
+            function (arg) {
+                var newModel = fluid.copy(that.model);
+                if (arg.relativePage !== undefined) {
+                    newModel.pageIndex = that.model.pageIndex + arg.relativePage;
+                } else {
+                    newModel.pageIndex = arg.pageIndex;
+                }
+                if (newModel.pageIndex === undefined || newModel.pageIndex < 0) {
+                    newModel.pageIndex = 0;
+                }
+                fireModelChange(that, newModel, arg.forceUpdate);
+            }
+        );
+        
+        that.events.initiatePageSizeChange.addListener(
+            function (arg) {
+                var newModel = fluid.copy(that.model);
+                newModel.pageSize = arg;
+                fireModelChange(that, newModel);     
+            }
+        );
+
+        // Setup the top and bottom pager bars.
+        var pagerBarElement = that.locate("pagerBar");
+        if (pagerBarElement.length > 0) {
+            that.pagerBar = fluid.initSubcomponent(that, "pagerBar", 
+                [that.events, pagerBarElement, fluid.COMPONENT_OPTIONS, that.options.strings]);
+        }
+        
+        var pagerBarSecondaryElement = that.locate("pagerBarSecondary");
+        if (pagerBarSecondaryElement.length > 0) {
+            that.pagerBarSecondary = fluid.initSubcomponent(that, "pagerBar",
+                [that.events, pagerBarSecondaryElement, fluid.COMPONENT_OPTIONS, that.options.strings]);
+        }
+ 
+        that.bodyRenderer = fluid.initSubcomponent(that, "bodyRenderer", [that, fluid.COMPONENT_OPTIONS]);
+        
+        that.summary = fluid.initSubcomponent(that, "summary", [that.dom, fluid.COMPONENT_OPTIONS]);
+        
+        that.pageSize = fluid.initSubcomponent(that, "pageSize", [that]);
+        
+        that.rangeAnnotator = fluid.initSubcomponent(that, "rangeAnnotator", [that, fluid.COMPONENT_OPTIONS]);
+ 
+        that.model = fluid.copy(that.options.model);
+        
+        var dataModel = fetchModel(that);
+        if (dataModel) {
+            that.model.totalRange = dataModel.length;
+        }
+        if (that.model.totalRange === undefined) {
+            if (!that.pagerBar) {
+                fluid.fail("Error in Pager configuration - cannot determine total range, " +
+                    " since not configured in model.totalRange and no PagerBar is configured");
+            }
+            that.model = that.pagerBar.pageList.defaultModel;
+        }
+        that.applier = fluid.makeChangeApplier(that.model);
+
+        that.events.initiatePageChange.fire({pageIndex: that.model.pageIndex ? that.model.pageIndex : 0, 
+            forceUpdate: true});
+
+        return that;
+    };
+    
+    fluid.defaults("fluid.pager", {
+        mergePolicy: {
+            dataModel: "preserve",
+            model: "preserve"
+        },
+        pagerBar: {
+            type: "fluid.pager.pagerBar"
+        },
+        
+        summary: {type: "fluid.pager.summary", options: {
+            message: "Viewing page %currentPage. Showing records %first - %last of %total items." 
+        }},
+        
+        pageSize: {
+            type: "fluid.pager.directPageSize"
+        },
+        
+        modelFilter: fluid.pager.directModelFilter,
+        
+        sorter: fluid.pager.basicSorter,
+        
+        bodyRenderer: {
+            type: "fluid.pager.selfRender"
+        },
+        
+        model: {
+            pageIndex: undefined,
+            pageSize: 10,
+            totalRange: undefined
+        },
+        
+        dataModel: undefined,
+        // Offset of the tree's "main" data from the overall dataModel root
+        dataOffset: "",
+        
+        // strategy for generating a tree row, either "explode" or an array of columnDef objects
+        columnDefs: [
+            {
+                key: "column1",
+                valuebinding: "*.value1",  
+                sortable: true
+            }
+        ],
+        
+        annotateColumnRange: "column1",
+        
+        tooltip: {
+            type: "fluid.tooltip"
+        },
+        
+        rangeAnnotator: {
+            type: "fluid.pager.rangeAnnotator"
+        },
+        
+        selectors: {
+            pagerBar: ".flc-pager-top",
+            pagerBarSecondary: ".flc-pager-bottom",
+            summary: ".flc-pager-summary",
+            pageSize: ".flc-pager-page-size",
+            headerSortStylisticOffset: ".flc-pager-sort-header"
+        },
+        
+        styles: {
+            ascendingHeader: "fl-pager-asc",
+            descendingHeader: "fl-pager-desc"
+        },
+        
+        decorators: {
+            sortableHeader: [],
+            unsortableHeader: []
+        },
+        
+        strings: {
+            last: " (last)"
+        },
+        
+        events: {
+            initiatePageChange: null,
+            initiatePageSizeChange: null,
+            onModelChange: null,
+            onRenderPageLinks: null
+        },
+        
+        markup: {
+            rangeAnnotation: "<b> %first </b><br/>&mdash;<br/><b> %last </b>"
+        }
+    });
+})(jQuery, fluid_1_4);
+/*
+Copyright 2008-2009 University of Toronto
+Copyright 2008-2009 University of California, Berkeley
+Copyright 2010-2011 OCAD University
+
+Licensed under the Educational Community License (ECL), Version 2.0 or the New
+BSD license. You may not use this file except in compliance with one these
+Licenses.
+
+You may obtain a copy of the ECL 2.0 License and BSD License at
+https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
+*/
+
+// Declare dependencies
+/*global fluid_1_4:true, jQuery*/
+
+// JSLint options 
+/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
+
+var fluid_1_4 = fluid_1_4 || {};
+
+(function ($, fluid) {    
+    
+    var animateDisplay = function (elm, animation, defaultAnimation) {
+        animation = (animation) ? animation : defaultAnimation;
+        elm.animate(animation.params, animation.duration, animation.callback);
+    };
+    
+    var animateProgress = function (elm, width, speed) {
+        // de-queue any left over animations
+        elm.queue("fx", []); 
+        
+        elm.animate({ 
+            width: width,
+            queue: false
+        }, 
+        speed);
+    };
+    
+    var showProgress = function (that, animation) {
+        if (animation === false) {
+            that.displayElement.show();
+        } else {
+            animateDisplay(that.displayElement, animation, that.options.showAnimation);
+        }
+    };
+    
+    var hideProgress = function (that, delay, animation) {
+        
+        delay = (delay === null || isNaN(delay)) ? that.options.delay : delay;
+        
+        if (delay) {
+            // use a setTimeout to delay the hide for n millies, note use of recursion
+            var timeOut = setTimeout(function () {
+                hideProgress(that, 0, animation);
+            }, delay);
+        } else {
+            if (animation === false) {
+                that.displayElement.hide();
+            } else {
+                animateDisplay(that.displayElement, animation, that.options.hideAnimation);
+            }
+        }   
+    };
+    
+    var updateWidth = function (that, newWidth, dontAnimate) {
+        dontAnimate  = dontAnimate || false;
+        var currWidth = that.indicator.width();
+        var direction = that.options.animate;
+        if ((newWidth > currWidth) && (direction === "both" || direction === "forward") && !dontAnimate) {
+            animateProgress(that.indicator, newWidth, that.options.speed);
+        } else if ((newWidth < currWidth) && (direction === "both" || direction === "backward") && !dontAnimate) {
+            animateProgress(that.indicator, newWidth, that.options.speed);
+        } else {
+            that.indicator.width(newWidth);
+        }
+    };
+         
+    var percentToPixels = function (that, percent) {
+        // progress does not support percents over 100, also all numbers are rounded to integers
+        return Math.round((Math.min(percent, 100) * that.progressBar.innerWidth()) / 100);
+    };
+    
+    var refreshRelativeWidth = function (that)  {
+        var pixels = Math.max(percentToPixels(that, parseFloat(that.storedPercent)), that.options.minWidth);
+        updateWidth(that, pixels, true);
+    };
+        
+    var initARIA = function (ariaElement, ariaBusyText) {
+        ariaElement.attr("role", "progressbar");
+        ariaElement.attr("aria-valuemin", "0");
+        ariaElement.attr("aria-valuemax", "100");
+        ariaElement.attr("aria-valuenow", "0");
+        //Empty value for ariaBusyText will default to aria-valuenow.
+        if (ariaBusyText) {
+            ariaElement.attr("aria-valuetext", "");
+        }
+        ariaElement.attr("aria-busy", "false");
+    };
+    
+    var updateARIA = function (that, percent) {
+        var str = that.options.strings;
+        var busy = percent < 100 && percent > 0;
+        that.ariaElement.attr("aria-busy", busy);
+        that.ariaElement.attr("aria-valuenow", percent);   
+        //Empty value for ariaBusyText will default to aria-valuenow.
+        if (str.ariaBusyText) {
+            if (busy) {
+                var busyString = fluid.stringTemplate(str.ariaBusyText, {percentComplete : percent});           
+                that.ariaElement.attr("aria-valuetext", busyString);
+            } else if (percent === 100) {
+                // FLUID-2936: JAWS doesn't currently read the "Progress is complete" message to the user, even though we set it here.
+                that.ariaElement.attr("aria-valuetext", str.ariaDoneText);
+            }
+        }
+    };
+        
+    var updateText = function (label, value) {
+        label.html(value);
+    };
+    
+    var repositionIndicator = function (that) {
+        that.indicator.css("top", that.progressBar.position().top)
+            .css("left", 0)
+            .height(that.progressBar.height());
+        refreshRelativeWidth(that);
+    };
+        
+    var updateProgress = function (that, percent, labelText, animationForShow) {
+        
+        // show progress before updating, jQuery will handle the case if the object is already displayed
+        showProgress(that, animationForShow);
+            
+        // do not update if the value of percent is falsey
+        if (percent !== null) {
+            that.storedPercent = percent;
+        
+            var pixels = Math.max(percentToPixels(that, parseFloat(percent)), that.options.minWidth);   
+            updateWidth(that, pixels);
+        }
+        
+        if (labelText !== null) {
+            updateText(that.label, labelText);
+        }
+        
+        // update ARIA
+        if (that.ariaElement) {
+            updateARIA(that, percent);
+        }
+    };
+        
+    var setupProgress = function (that) {
+        that.displayElement = that.locate("displayElement");
+
+        // hide file progress in case it is showing
+        if (that.options.initiallyHidden) {
+            that.displayElement.hide();
+        }
+
+        that.progressBar = that.locate("progressBar");
+        that.label = that.locate("label");
+        that.indicator = that.locate("indicator");
+        that.ariaElement = that.locate("ariaElement");
+        
+        that.indicator.width(that.options.minWidth);
+
+        that.storedPercent = 0;
+                
+        // initialize ARIA
+        if (that.ariaElement) {
+            initARIA(that.ariaElement, that.options.strings.ariaBusyText);
+        }
+        
+        // afterProgressHidden:  
+        // Registering listener with the callback provided by the user and reinitializing
+        // the event trigger function. 
+        // Note: callback depricated as of 1.5, use afterProgressHidden event
+        if (that.options.hideAnimation.callback) {
+            that.events.afterProgressHidden.addListener(that.options.hideAnimation.callback);           
+        }
+        
+        // triggers the afterProgressHidden event    
+        // Note: callback depricated as of 1.5, use afterProgressHidden event
+        that.options.hideAnimation.callback = that.events.afterProgressHidden.fire;
+
+        
+        // onProgressBegin:
+        // Registering listener with the callback provided by the user and reinitializing
+        // the event trigger function.  
+        // Note: callback depricated as of 1.5, use onProgressBegin event
+        if (that.options.showAnimation.callback) {
+            that.events.onProgressBegin.addListener(that.options.showAnimation.callback);                      
+        } 
+            
+        // triggers the onProgressBegin event
+        // Note: callback depricated as of 1.5, use onProgressBegin event
+        that.options.showAnimation.callback = that.events.onProgressBegin.fire;
+    };
+           
+    /**
+    * Instantiates a new Progress component.
+    * 
+    * @param {jQuery|Selector|Element} container the DOM element in which the Uploader lives
+    * @param {Object} options configuration options for the component.
+    */
+    fluid.progress = function (container, options) {
+        var that = fluid.initView("fluid.progress", container, options);
+        setupProgress(that);
+        
+        /**
+         * Shows the progress bar if is currently hidden.
+         * 
+         * @param {Object} animation a custom animation used when showing the progress bar
+         */
+        that.show = function (animation) {
+            showProgress(that, animation);
+        };
+        
+        /**
+         * Hides the progress bar if it is visible.
+         * 
+         * @param {Number} delay the amount of time to wait before hiding
+         * @param {Object} animation a custom animation used when hiding the progress bar
+         */
+        that.hide = function (delay, animation) {
+            hideProgress(that, delay, animation);
+        };
+        
+        /**
+         * Updates the state of the progress bar.
+         * This will automatically show the progress bar if it is currently hidden.
+         * Percentage is specified as a decimal value, but will be automatically converted if needed.
+         * 
+         * 
+         * @param {Number|String} percentage the current percentage, specified as a "float-ish" value 
+         * @param {String} labelValue the value to set for the label; this can be an HTML string
+         * @param {Object} animationForShow the animation to use when showing the progress bar if it is hidden
+         */
+        that.update = function (percentage, labelValue, animationForShow) {
+            updateProgress(that, percentage, labelValue, animationForShow);
+        };
+        
+        that.refreshView = function () {
+            repositionIndicator(that);
+        };
+                        
+        return that;  
+    };
+      
+    fluid.defaults("fluid.progress", {
+        gradeNames: "fluid.viewComponent",
+        selectors: {
+            displayElement: ".flc-progress", // required, the element that gets displayed when progress is displayed, could be the indicator or bar or some larger outer wrapper as in an overlay effect
+            progressBar: ".flc-progress-bar", //required
+            indicator: ".flc-progress-indicator", //required
+            label: ".flc-progress-label", //optional
+            ariaElement: ".flc-progress-bar" // usually required, except in cases where there are more than one progressor for the same data such as a total and a sub-total
+        },
+        
+        strings: {
+            //Empty value for ariaBusyText will default to aria-valuenow.
+            ariaBusyText: "Progress is %percentComplete percent complete",
+            ariaDoneText: "Progress is complete."
+        },
+        
+        // progress display and hide animations, use the jQuery animation primatives, set to false to use no animation
+        // animations must be symetrical (if you hide with width, you'd better show with width) or you get odd effects
+        // see jQuery docs about animations to customize
+        showAnimation: {
+            params: {
+                opacity: "show"
+            }, 
+            duration: "slow",
+            //callback has been deprecated and will be removed as of 1.5, instead use onProgressBegin event 
+            callback: null 
+        }, // equivalent of $().fadeIn("slow")
+        
+        hideAnimation: {
+            params: {
+                opacity: "hide"
+            }, 
+            duration: "slow", 
+            //callback has been deprecated and will be removed as of 1.5, instead use afterProgressHidden event 
+            callback: null
+        }, // equivalent of $().fadeOut("slow")
+        
+        events: {            
+            onProgressBegin: null,
+            afterProgressHidden: null            
+        },
+
+        minWidth: 5, // 0 length indicators can look broken if there is a long pause between updates
+        delay: 0, // the amount to delay the fade out of the progress
+        speed: 200, // default speed for animations, pretty fast
+        animate: "forward", // suppport "forward", "backward", and "both", any other value is no animation either way
+        initiallyHidden: true, // supports progress indicators which may always be present
+        updatePosition: false
+    });
+    
+})(jQuery, fluid_1_4);
+/*
  * jQuery UI Draggable 1.8.11
  *
  * Copyright 2011, AUTHORS.txt (http://jqueryui.com/about)
@@ -17666,181 +21048,6 @@ $.extend( $.ui.slider, {
 
 }(jQuery));
 /*
-Copyright 2009 University of Cambridge
-Copyright 2009 University of Toronto
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global fluid_1_4:true, jQuery*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {
-
-    /*
-     *  TODO: 
-     *  - get and implement a design for the table of contents 
-     *  - make the toc template pluggable
-     *  - make sure getting headings using something other then a selector works
-     *  - move interesting parts of the template to the defaults ie. link
-     */ 
-    
-
-    /**
-     * Inserts an anchor into the page in front of the element.
-     * @param {Object} el
-     */    
-    var insertAnchor = function (el) {
-        var a = $("<a name='" + el.text() + "' />", el[0].ownerDocument);
-        el.before(a);
-    };
-    
-    /**
-     * Creates a generic tree node
-     */
-    var createNode = function (id) {
-        var node = {
-            ID: id,
-            children: []
-        };
-        return node;
-    };
-
-    /**
-     * Creates the renderer tree that matches the table of contents template
-     * @param {jQuery Object} headings - the headings to be put into the table of contents
-     */
-    var createTree = function (headings, levels) {
-        
-        // Builds the tree recursively 
-        var generateTree = function (nodes, items, level) {
-            if (items.length === 0) {
-                return;
-            }
-            
-            var item = items[0];
-            
-            if (level === item.level) {
-                nodes[nodes.length - 1].push(item.leaf);
-                items.shift();
-                return generateTree(nodes, items, level);
-            }
-            
-            if (level < item.level) {
-                var prefix = level > -1 ? "level" + (level + 1) + ":" : "";
-                var postfix = level === -1 ? "s:" : "s";
-                var name = prefix + "level" + (level + 2) + postfix;
-                var myNode = createNode(name);
-                nodes[nodes.length - 1].push(myNode);
-                nodes.push(myNode.children);
-                return generateTree(nodes, items, level + 1);
-            }
-            
-            if (level > item.level) {
-                nodes.pop();
-                return generateTree(nodes, items, level - 1);
-            }
-        };
-
-        var tree = {
-            children: []
-        };
-        
-        // Leaf nodes for the renderer tree from the headings
-        var items = fluid.transform(headings, function (heading) {
-                var level = $.inArray(heading.tagName, levels);
-                var text = $(heading).text();
-                return {
-                    level: level,
-                    leaf: {
-                        ID: "level" + (level + 1) + ":item",
-                        children: [{
-                            ID: "link",
-                            linktext: text,
-                            target: "#" + text
-                        }]
-                    }
-                };
-            });
-
-        generateTree([tree.children], items, -1);
-        
-        return tree;
-    };
-    
-    var buildTOC = function (container, headings, levels, templateURL, afterRender) {
-        // Insert anchors into the page that the table of contents will link to
-        headings.each(function (i, el) {
-            insertAnchor($(el));
-        });
-        
-        // Data structure needed by fetchResources
-        var resources = {
-            toc: {
-                href: templateURL
-            }
-        };
-        
-        // Get the template, create the tree and render the table of contents
-        fluid.fetchResources(resources, function () {
-            var templates = fluid.parseTemplates(resources, ["toc"], {});
-            var node = $("<div></div>", container[0].ownerDocument);
-            fluid.reRender(templates, node, createTree(headings, levels), {});
-            container.prepend(node);
-            afterRender.fire(node);
-        });
-    };
-
-    fluid.tableOfContents = function (container, options) {
-        var that = fluid.initView("fluid.tableOfContents", container, options);
-
-        // TODO: need better name for tocNode. and node, while you're at it. 
-        //       also, should the DOM be exposed in this way? Is there a better way to handle this?
-        that.events.afterRender.addListener(function (node) {
-            that.tocNode = $(node);
-        });
-
-        buildTOC(that.container, that.locate("headings"), that.options.levels, that.options.templateUrl, that.events.afterRender);
-
-        // TODO: is it weird to have hide and show on a component? 
-        that.hide = function () {
-            if (that.tocNode) {
-                that.tocNode.hide();
-            }
-        };
-        
-        that.show = function () {
-            if (that.tocNode) {
-                that.tocNode.show();
-            }
-        };
-
-        return that;
-    };
-    
-    fluid.defaults("fluid.tableOfContents", {  
-        selectors: {
-            headings: ":header"
-        },
-        events: {
-            afterRender: null
-        },
-        templateUrl: "../html/TableOfContents.html",
-        levels: ["H1", "H2", "H3", "H4", "H5", "H6"]
-    });
-
-})(jQuery, fluid_1_4);
-/*
     json2.js
     2007-11-06
 
@@ -18104,6 +21311,2204 @@ replace(/(?:^|:|,)(?:\s*\[)+/g, ''))) {
         };
     }();
 }
+/*
+Copyright 2008-2010 University of Cambridge
+Copyright 2008-2010 University of Toronto
+
+Licensed under the Educational Community License (ECL), Version 2.0 or the New
+BSD license. You may not use this file except in compliance with one these
+Licenses.
+
+You may obtain a copy of the ECL 2.0 License and BSD License at
+https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
+*/
+
+// Declare dependencies
+/*global fluid_1_4:true, jQuery*/
+
+// JSLint options 
+/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
+
+var fluid_1_4 = fluid_1_4 || {};
+
+(function ($, fluid) {
+    /** 
+     * Returns the absolute position of a supplied DOM node in pixels.
+     * Implementation taken from quirksmode http://www.quirksmode.org/js/findpos.html
+     */
+    fluid.dom.computeAbsolutePosition = function (element) {
+        var curleft = 0, curtop = 0;
+        if (element.offsetParent) {
+            do {
+                curleft += element.offsetLeft;
+                curtop += element.offsetTop;
+                element = element.offsetParent;
+            } while (element);
+            return [curleft, curtop];
+        }
+    };
+    
+    /** 
+     * Cleanse the children of a DOM node by removing all <script> tags.
+     * This is necessary to prevent the possibility that these blocks are
+     * reevaluated if the node were reattached to the document. 
+     */
+    fluid.dom.cleanseScripts = function (element) {
+        var cleansed = $.data(element, fluid.dom.cleanseScripts.MARKER);
+        if (!cleansed) {
+            fluid.dom.iterateDom(element, function (node) {
+                return node.tagName.toLowerCase() === "script"? "delete" : null;
+            });
+            $.data(element, fluid.dom.cleanseScripts.MARKER, true);
+        }
+    };  
+    fluid.dom.cleanseScripts.MARKER = "fluid-scripts-cleansed";
+
+    /**
+     * Inserts newChild as the next sibling of refChild.
+     * @param {Object} newChild
+     * @param {Object} refChild
+     */
+    fluid.dom.insertAfter = function (newChild, refChild) {
+        var nextSib = refChild.nextSibling;
+        if (!nextSib) {
+            refChild.parentNode.appendChild(newChild);
+        }
+        else {
+            refChild.parentNode.insertBefore(newChild, nextSib);
+        }
+    };
+    
+    // The following two functions taken from http://developer.mozilla.org/En/Whitespace_in_the_DOM
+    /**
+     * Determine whether a node's text content is entirely whitespace.
+     *
+     * @param node  A node implementing the |CharacterData| interface (i.e.,
+     *              a |Text|, |Comment|, or |CDATASection| node
+     * @return     True if all of the text content of |nod| is whitespace,
+     *             otherwise false.
+     */
+    fluid.dom.isWhitespaceNode = function (node) {
+       // Use ECMA-262 Edition 3 String and RegExp features
+        return !(/[^\t\n\r ]/.test(node.data));
+    };
+    
+    /**
+     * Determine if a node should be ignored by the iterator functions.
+     *
+     * @param nod  An object implementing the DOM1 |Node| interface.
+     * @return     true if the node is:
+     *                1) A |Text| node that is all whitespace
+     *                2) A |Comment| node
+     *             and otherwise false.
+     */
+    fluid.dom.isIgnorableNode = function (node) {
+        return (node.nodeType === 8) || // A comment node
+         ((node.nodeType === 3) && fluid.dom.isWhitespaceNode(node)); // a text node, all ws
+    };
+
+})(jQuery, fluid_1_4);
+/*
+Copyright 2008-2010 University of Cambridge
+Copyright 2008-2010 University of Toronto
+Copyright 2010 OCAD University
+
+Licensed under the Educational Community License (ECL), Version 2.0 or the New
+BSD license. You may not use this file except in compliance with one these
+Licenses.
+
+You may obtain a copy of the ECL 2.0 License and BSD License at
+https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
+*/
+
+// Declare dependencies
+/*global window, fluid_1_4:true, jQuery*/
+
+// JSLint options 
+/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
+
+var fluid_1_4 = fluid_1_4 || {};
+
+(function ($, fluid) {
+    
+    fluid.orientation = {
+        HORIZONTAL: 4,
+        VERTICAL: 1
+    };
+    
+    fluid.rectSides = {
+        // agree with fluid.orientation
+        4: ["left", "right"],
+        1: ["top", "bottom"],
+        // agree with fluid.direction
+        8: "top",
+        12: "bottom",
+        2: "left",
+        3: "right"
+    };
+    
+    /**
+     * This is the position, relative to a given drop target, that a dragged item should be dropped.
+     */
+    fluid.position = {
+        BEFORE: -1,
+        AFTER: 1,
+        INSIDE: 2,
+        REPLACE: 3
+    };
+    
+    /**
+     * For incrementing/decrementing a count or index, or moving in a rectilinear direction.
+     */
+    fluid.direction = {
+        NEXT: 1,
+        PREVIOUS: -1,
+        UP: 8,
+        DOWN: 12,
+        LEFT: 2,
+        RIGHT: 3
+    };
+    
+    fluid.directionSign = function (direction) {
+        return direction === fluid.direction.UP || direction === fluid.direction.LEFT ? 
+             fluid.direction.PREVIOUS : fluid.direction.NEXT;
+    };
+    
+    fluid.directionAxis = function (direction) {
+        return direction === fluid.direction.LEFT || direction === fluid.direction.RIGHT ?
+            0 : 1; 
+    };
+    
+    fluid.directionOrientation = function (direction) {
+        return fluid.directionAxis(direction) ? fluid.orientation.VERTICAL : fluid.orientation.HORIZONTAL;
+    };
+    
+    fluid.keycodeDirection = {
+        up: fluid.direction.UP,
+        down: fluid.direction.DOWN,
+        left: fluid.direction.LEFT,
+        right: fluid.direction.RIGHT
+    };
+    
+    // moves a single node in the DOM to a new position relative to another
+    fluid.moveDom = function (source, target, position) {
+        source = fluid.unwrap(source);
+        target = fluid.unwrap(target);
+        
+        var scan;
+        // fluid.log("moveDom source " + fluid.dumpEl(source) + " target " + fluid.dumpEl(target) + " position " + position);     
+        if (position === fluid.position.INSIDE) {
+            target.appendChild(source);
+        }
+        else if (position === fluid.position.BEFORE) {
+            for (scan = target.previousSibling; ; scan = scan.previousSibling) {
+                if (!scan || !fluid.dom.isIgnorableNode(scan)) {
+                    if (scan !== source) {
+                        fluid.dom.cleanseScripts(source);
+                        target.parentNode.insertBefore(source, target);    
+                    }
+                    break;
+                }
+            }
+        }
+        else if (position === fluid.position.AFTER) {
+            for (scan = target.nextSibling; ; scan = scan.nextSibling) {
+                if (!scan || !fluid.dom.isIgnorableNode(scan)) {
+                    if (scan !== source) {
+                        fluid.dom.cleanseScripts(source);
+                        fluid.dom.insertAfter(source, target);
+                    }
+                    break;
+                }
+            }
+        }
+        else {
+            fluid.fail("Unrecognised position supplied to fluid.moveDom: " + position);
+        }
+    };
+    
+    // unsupported, NON-API function
+    fluid.normalisePosition = function (position, samespan, targeti, sourcei) {
+        // convert a REPLACE into a primitive BEFORE/AFTER
+        if (position === fluid.position.REPLACE) {
+            position = samespan && targeti >= sourcei ? fluid.position.AFTER: fluid.position.BEFORE;
+        }
+        return position;
+    };
+    
+    fluid.permuteDom = function (element, target, position, sourceelements, targetelements) {
+        element = fluid.unwrap(element);
+        target = fluid.unwrap(target);
+        var sourcei = $.inArray(element, sourceelements);
+        if (sourcei === -1) {
+            fluid.fail("Error in permuteDom: source element " + fluid.dumpEl(element) + 
+                " not found in source list " + fluid.dumpEl(sourceelements));
+        }
+        var targeti = $.inArray(target, targetelements);
+        if (targeti === -1) {
+            fluid.fail("Error in permuteDom: target element " + fluid.dumpEl(target) + 
+                " not found in source list " + fluid.dumpEl(targetelements));
+        }
+        var samespan = sourceelements === targetelements;
+        position = fluid.normalisePosition(position, samespan, targeti, sourcei);
+
+        //fluid.log("permuteDom sourcei " + sourcei + " targeti " + targeti);
+        // cache the old neighbourhood of the element for the final move
+        var oldn = {};
+        oldn[fluid.position.AFTER] = element.nextSibling;
+        oldn[fluid.position.BEFORE] = element.previousSibling;
+        fluid.moveDom(sourceelements[sourcei], targetelements[targeti], position);
+        
+        // perform the leftward-moving, AFTER shift
+        var frontlimit = samespan ? targeti - 1: sourceelements.length - 2;
+        var i;
+        if (position === fluid.position.BEFORE && samespan) { 
+            // we cannot do skip processing if the element was "fused against the grain" 
+            frontlimit--;
+        }
+        if (!samespan || targeti > sourcei) {
+            for (i = frontlimit; i > sourcei; -- i) {
+                fluid.moveDom(sourceelements[i + 1], sourceelements[i], fluid.position.AFTER);
+            }
+            if (sourcei + 1 < sourceelements.length) {
+                fluid.moveDom(sourceelements[sourcei + 1], oldn[fluid.position.AFTER], fluid.position.BEFORE);
+            }
+        }
+        // perform the rightward-moving, BEFORE shift
+        var backlimit = samespan ? sourcei - 1: targetelements.length - 1;
+        if (position === fluid.position.AFTER) { 
+            // we cannot do skip processing if the element was "fused against the grain" 
+            targeti++;
+        }
+        if (!samespan || targeti < sourcei) {
+            for (i = targeti; i < backlimit; ++ i) {
+                fluid.moveDom(targetelements[i], targetelements[i + 1], fluid.position.BEFORE);
+            }
+            if (backlimit >= 0 && backlimit < targetelements.length - 1) {
+                fluid.moveDom(targetelements[backlimit], oldn[fluid.position.BEFORE], fluid.position.AFTER);
+            }                
+        }
+
+    };
+  
+    var curCss = function (a, name) {
+        return window.getComputedStyle ? window.getComputedStyle(a, null).getPropertyValue(name) : 
+          a.currentStyle[name];
+    };
+    
+    var isAttached = function (node) {
+        while (node && node.nodeName) {
+            if (node.nodeName === "BODY") {
+                return true;
+            }
+            node = node.parentNode;
+        }
+        return false;
+    };
+    
+    var generalHidden = function (a) {
+        return "hidden" === a.type || curCss(a, "display") === "none" || curCss(a, "visibility") === "hidden" || !isAttached(a);
+    };
+    
+
+    var computeGeometry = function (element, orientation, disposition) {
+        var elem = {};
+        elem.element = element;
+        elem.orientation = orientation;
+        if (disposition === fluid.position.INSIDE) {
+            elem.position = disposition;
+        }
+        if (generalHidden(element)) {
+            elem.clazz = "hidden";
+        }
+        var pos = fluid.dom.computeAbsolutePosition(element) || [0, 0];
+        var width = element.offsetWidth;
+        var height = element.offsetHeight;
+        elem.rect = {left: pos[0], top: pos[1]};
+        elem.rect.right = pos[0] + width;
+        elem.rect.bottom = pos[1] + height;
+        return elem;
+    };
+    
+    // A "suitable large" value for the sentinel blocks at the ends of spans
+    var SENTINEL_DIMENSION = 10000;
+
+    function dumprect(rect) {
+        return "Rect top: " + rect.top +
+                 " left: " + rect.left + 
+               " bottom: " + rect.bottom +
+                " right: " + rect.right;
+    }
+
+    function dumpelem(cacheelem) {
+        if (!cacheelem || !cacheelem.rect) {
+            return "null";
+        } else {
+            return dumprect(cacheelem.rect) + " position: " +
+            cacheelem.position +
+            " for " +
+            fluid.dumpEl(cacheelem.element);
+        }
+    }
+    
+   
+    // unsupported, NON-API function
+    fluid.dropManager = function () { 
+        var targets = [];
+        var cache = {};
+        var that = {};        
+        
+        var lastClosest;              
+        var lastGeometry;
+        var displacementX, displacementY;
+        
+        that.updateGeometry = function (geometricInfo) {
+            lastGeometry = geometricInfo;
+            targets = [];
+            cache = {};
+            var mapper = geometricInfo.elementMapper;
+            for (var i = 0; i < geometricInfo.extents.length; ++ i) {
+                var thisInfo = geometricInfo.extents[i];
+                var orientation = thisInfo.orientation;
+                var sides = fluid.rectSides[orientation];
+                
+                var processElement = function (element, sentB, sentF, disposition, j) {
+                    var cacheelem = computeGeometry(element, orientation, disposition);
+                    cacheelem.owner = thisInfo;
+                    if (cacheelem.clazz !== "hidden" && mapper) {
+                        cacheelem.clazz = mapper(element);
+                    }
+                    cache[fluid.dropManager.cacheKey(element)] = cacheelem;
+                    var backClass = fluid.dropManager.getRelativeClass(thisInfo.elements, j, fluid.position.BEFORE, cacheelem.clazz, mapper); 
+                    var frontClass = fluid.dropManager.getRelativeClass(thisInfo.elements, j, fluid.position.AFTER, cacheelem.clazz, mapper); 
+                    if (disposition === fluid.position.INSIDE) {
+                        targets[targets.length] = cacheelem;
+                    }
+                    else {
+                        fluid.dropManager.splitElement(targets, sides, cacheelem, disposition, backClass, frontClass);
+                    }
+                    // deal with sentinel blocks by creating near-copies of the end elements
+                    if (sentB && geometricInfo.sentinelize) {
+                        fluid.dropManager.sentinelizeElement(targets, sides, cacheelem, 1, disposition, backClass);
+                    }
+                    if (sentF && geometricInfo.sentinelize) {
+                        fluid.dropManager.sentinelizeElement(targets, sides, cacheelem, 0, disposition, frontClass);
+                    }
+                    //fluid.log(dumpelem(cacheelem));
+                    return cacheelem;
+                };
+                
+                var allHidden = true;
+                for (var j = 0; j < thisInfo.elements.length; ++ j) {
+                    var element = thisInfo.elements[j];
+                    var cacheelem = processElement(element, j === 0, j === thisInfo.elements.length - 1, 
+                            fluid.position.INTERLEAVED, j);
+                    if (cacheelem.clazz !== "hidden") {
+                        allHidden = false;
+                    }
+                }
+                if (allHidden && thisInfo.parentElement) {
+                    processElement(thisInfo.parentElement, true, true, 
+                            fluid.position.INSIDE);
+                }
+            }   
+        };
+        
+        that.startDrag = function (event, handlePos, handleWidth, handleHeight) {
+            var handleMidX = handlePos[0] + handleWidth / 2;
+            var handleMidY = handlePos[1] + handleHeight / 2;
+            var dX = handleMidX - event.pageX;
+            var dY = handleMidY - event.pageY;
+            that.updateGeometry(lastGeometry);
+            lastClosest = null;
+            displacementX = dX;
+            displacementY = dY;
+            $("body").bind("mousemove.fluid-dropManager", that.mouseMove);
+        };
+        
+        that.lastPosition = function () {
+            return lastClosest;
+        };
+        
+        that.endDrag = function () {
+            $("body").unbind("mousemove.fluid-dropManager");
+        };
+        
+        that.mouseMove = function (evt) {
+            var x = evt.pageX + displacementX;
+            var y = evt.pageY + displacementY;
+            //fluid.log("Mouse x " + x + " y " + y );
+            
+            var closestTarget = that.closestTarget(x, y, lastClosest);
+            if (closestTarget && closestTarget !== fluid.dropManager.NO_CHANGE) {
+                lastClosest = closestTarget;
+              
+                that.dropChangeFirer.fire(closestTarget);
+            }
+        };
+        
+        that.dropChangeFirer = fluid.event.getEventFirer();
+        
+        var blankHolder = {
+            element: null
+        };
+        
+        that.closestTarget = function (x, y, lastClosest) {
+            var mindistance = Number.MAX_VALUE;
+            var minelem = blankHolder;
+            var minlockeddistance = Number.MAX_VALUE;
+            var minlockedelem = blankHolder;
+            for (var i = 0; i < targets.length; ++ i) {
+                var cacheelem = targets[i];
+                if (cacheelem.clazz === "hidden") {
+                    continue;
+                }
+                var distance = fluid.geom.minPointRectangle(x, y, cacheelem.rect);
+                if (cacheelem.clazz === "locked") {
+                    if (distance < minlockeddistance) {
+                        minlockeddistance = distance;
+                        minlockedelem = cacheelem;
+                    }
+                } else {
+                    if (distance < mindistance) {
+                        mindistance = distance;
+                        minelem = cacheelem;
+                    }
+                    if (distance === 0) {
+                        break;
+                    }
+                }
+            }
+            if (!minelem) {
+                return minelem;
+            }
+            if (minlockeddistance >= mindistance) {
+                minlockedelem = blankHolder;
+            }
+            //fluid.log("PRE: mindistance " + mindistance + " element " + 
+            //   fluid.dumpEl(minelem.element) + " minlockeddistance " + minlockeddistance
+            //    + " locked elem " + dumpelem(minlockedelem));
+            if (lastClosest && lastClosest.position === minelem.position &&
+                fluid.unwrap(lastClosest.element) === fluid.unwrap(minelem.element) &&
+                fluid.unwrap(lastClosest.lockedelem) === fluid.unwrap(minlockedelem.element)
+                ) {
+                return fluid.dropManager.NO_CHANGE;
+            }
+            //fluid.log("mindistance " + mindistance + " minlockeddistance " + minlockeddistance);
+            return {
+                position: minelem.position,
+                element: minelem.element,
+                lockedelem: minlockedelem.element
+            };
+        };
+        
+        that.shuffleProjectFrom = function (element, direction, includeLocked, disableWrap) {
+            var togo = that.projectFrom(element, direction, includeLocked, disableWrap);
+            if (togo) {
+                togo.position = fluid.position.REPLACE;
+            }
+            return togo;
+        };
+        
+        that.projectFrom = function (element, direction, includeLocked, disableWrap) {
+            that.updateGeometry(lastGeometry);
+            var cacheelem = cache[fluid.dropManager.cacheKey(element)];
+            var projected = fluid.geom.projectFrom(cacheelem.rect, direction, targets, includeLocked, disableWrap);
+            if (!projected.cacheelem) {
+                return null;
+            }
+            var retpos = projected.cacheelem.position;
+            return {element: projected.cacheelem.element, 
+                     position: retpos ? retpos : fluid.position.BEFORE 
+                     };
+        };
+        
+        that.logicalFrom = function (element, direction, includeLocked, disableWrap) {
+            var orderables = that.getOwningSpan(element, fluid.position.INTERLEAVED, includeLocked);
+            return {element: fluid.dropManager.getRelativeElement(element, direction, orderables, disableWrap), 
+                position: fluid.position.REPLACE};
+        };
+           
+        that.lockedWrapFrom = function (element, direction, includeLocked, disableWrap) {
+            var base = that.logicalFrom(element, direction, includeLocked, disableWrap);
+            var selectables = that.getOwningSpan(element, fluid.position.INTERLEAVED, includeLocked);
+            var allElements = cache[fluid.dropManager.cacheKey(element)].owner.elements;
+            if (includeLocked || selectables[0] === allElements[0]) {
+                return base;
+            }
+            var directElement = fluid.dropManager.getRelativeElement(element, direction, allElements, disableWrap);
+            if (lastGeometry.elementMapper(directElement) === "locked") {
+                base.element = null;
+                base.clazz = "locked";  
+            }
+            return base;
+        }; 
+        
+        that.getOwningSpan = function (element, position, includeLocked) {
+            var owner = cache[fluid.dropManager.cacheKey(element)].owner; 
+            var elements = position === fluid.position.INSIDE ? [owner.parentElement] : owner.elements;
+            if (!includeLocked && lastGeometry.elementMapper) {
+                elements = $.makeArray(elements);
+                fluid.remove_if(elements, function (element) {
+                    return lastGeometry.elementMapper(element) === "locked";
+                });
+            }
+            return elements;
+        };
+        
+        that.geometricMove = function (element, target, position) {
+            var sourceElements = that.getOwningSpan(element, null, true);
+            var targetElements = that.getOwningSpan(target, position, true);
+            fluid.permuteDom(element, target, position, sourceElements, targetElements);
+        };              
+        
+        return that;
+    };    
+   
+ 
+    fluid.dropManager.NO_CHANGE = "no change";
+    
+    fluid.dropManager.cacheKey = function (element) {
+        return fluid.allocateSimpleId(element);
+    };
+    
+    fluid.dropManager.sentinelizeElement = function (targets, sides, cacheelem, fc, disposition, clazz) {
+        var elemCopy = $.extend(true, {}, cacheelem);
+        elemCopy.rect[sides[fc]] = elemCopy.rect[sides[1 - fc]] + (fc ? 1: -1);
+        elemCopy.rect[sides[1 - fc]] = (fc ? -1 : 1) * SENTINEL_DIMENSION;
+        elemCopy.position = disposition === fluid.position.INSIDE ?
+           disposition : (fc ? fluid.position.BEFORE : fluid.position.AFTER);
+        elemCopy.clazz = clazz;
+        targets[targets.length] = elemCopy;
+    };
+    
+    fluid.dropManager.splitElement = function (targets, sides, cacheelem, disposition, clazz1, clazz2) {
+        var elem1 = $.extend(true, {}, cacheelem);
+        var elem2 = $.extend(true, {}, cacheelem);
+        var midpoint = (elem1.rect[sides[0]] + elem1.rect[sides[1]]) / 2;
+        elem1.rect[sides[1]] = midpoint; 
+        elem1.position = fluid.position.BEFORE;
+        
+        elem2.rect[sides[0]] = midpoint; 
+        elem2.position = fluid.position.AFTER;
+        
+        elem1.clazz = clazz1;
+        elem2.clazz = clazz2;
+        targets[targets.length] = elem1;
+        targets[targets.length] = elem2;
+    };
+    
+    // Expand this configuration point if we ever go back to a full "permissions" model
+    fluid.dropManager.getRelativeClass = function (thisElements, index, relative, thisclazz, mapper) {
+        index += relative;
+        if (index < 0 && thisclazz === "locked") {
+            return "locked";
+        }
+        if (index >= thisElements.length || mapper === null) {
+            return null;
+        } else {
+            relative = thisElements[index];
+            return mapper(relative) === "locked" && thisclazz === "locked" ? "locked" : null;
+        }
+    };
+    
+    fluid.dropManager.getRelativeElement = function (element, direction, elements, disableWrap) {
+        var folded = fluid.directionSign(direction);
+        
+        var index = $(elements).index(element) + folded;
+        if (index < 0) {
+            index += elements.length;
+        }
+        
+        // disable wrap
+        if (disableWrap) {                   
+            if (index === elements.length || index === (elements.length + folded)) {
+                return element;
+            }
+        }
+          
+        index %= elements.length;
+        return elements[index];              
+    };
+    
+    fluid.geom = fluid.geom || {};
+    
+    // These distance algorithms have been taken from
+    // http://www.cs.mcgill.ca/~cs644/Godfried/2005/Fall/fzamal/concepts.htm
+    
+    /** Returns the minimum squared distance between a point and a rectangle **/
+    fluid.geom.minPointRectangle = function (x, y, rectangle) {
+        var dx = x < rectangle.left ? (rectangle.left - x) : 
+                  (x > rectangle.right ? (x - rectangle.right) : 0);
+        var dy = y < rectangle.top ? (rectangle.top - y) : 
+                  (y > rectangle.bottom ? (y - rectangle.bottom) : 0);
+        return dx * dx + dy * dy;
+    };
+    
+    /** Returns the minimum squared distance between two rectangles **/
+    fluid.geom.minRectRect = function (rect1, rect2) {
+        var dx = rect1.right < rect2.left ? rect2.left - rect1.right : 
+                 rect2.right < rect1.left ? rect1.left - rect2.right :0;
+        var dy = rect1.bottom < rect2.top ? rect2.top - rect1.bottom : 
+                 rect2.bottom < rect1.top ? rect1.top - rect2.bottom :0;
+        return dx * dx + dy * dy;
+    };
+    
+    var makePenCollect = function () {
+        return {
+            mindist: Number.MAX_VALUE,
+            minrdist: Number.MAX_VALUE
+        };
+    };
+
+    /** Determine the one amongst a set of rectangle targets which is the "best fit"
+     * for an axial motion from a "base rectangle" (commonly arising from the case
+     * of cursor key navigation).
+     * @param {Rectangle} baserect The base rectangl from which the motion is to be referred
+     * @param {fluid.direction} direction  The direction of motion
+     * @param {Array of Rectangle holders} targets An array of objects "cache elements" 
+     * for which the member <code>rect</code> is the holder of the rectangle to be tested.
+     * @param disableWrap which is used to enable or disable wrapping of elements
+     * @return The cache element which is the most appropriate for the requested motion.
+     */
+    fluid.geom.projectFrom = function (baserect, direction, targets, forSelection, disableWrap) {
+        var axis = fluid.directionAxis(direction);
+        var frontSide = fluid.rectSides[direction];
+        var backSide = fluid.rectSides[axis * 15 + 5 - direction];
+        var dirSign = fluid.directionSign(direction);
+        
+        var penrect = {left: (7 * baserect.left + 1 * baserect.right) / 8,
+                       right: (5 * baserect.left + 3 * baserect.right) / 8,
+                       top: (7 * baserect.top + 1 * baserect.bottom) / 8,
+                       bottom: (5 * baserect.top + 3 * baserect.bottom) / 8};
+         
+        penrect[frontSide] = dirSign * SENTINEL_DIMENSION;
+        penrect[backSide] = -penrect[frontSide];
+        
+        function accPen(collect, cacheelem, backSign) {
+            var thisrect = cacheelem.rect;
+            var pdist = fluid.geom.minRectRect(penrect, thisrect);
+            var rdist = -dirSign * backSign * (baserect[backSign === 1 ? frontSide:backSide] - 
+                                                thisrect[backSign === 1 ? backSide:frontSide]);
+            // fluid.log("pdist: " + pdist + " rdist: " + rdist);
+            // the oddity in the rdist comparison is intended to express "half-open"-ness of rectangles
+            // (backSign === 1 ? 0 : 1) - this is now gone - must be possible to move to perpendicularly abutting regions
+            if (pdist <= collect.mindist && rdist >= 0) {
+                if (pdist === collect.mindist && rdist * backSign > collect.minrdist) {
+                    return;
+                }
+                collect.minrdist = rdist * backSign;
+                collect.mindist = pdist;
+                collect.minelem = cacheelem;
+            }
+        }
+        var collect = makePenCollect();
+        var backcollect = makePenCollect();
+        var lockedcollect = makePenCollect();
+
+        for (var i = 0; i < targets.length; ++ i) {
+            var elem = targets[i];
+            var isPure = elem.owner && elem.element === elem.owner.parentElement;
+            if (elem.clazz === "hidden" || forSelection && isPure) {
+                continue;
+            }
+            else if (!forSelection && elem.clazz === "locked") {
+                accPen(lockedcollect, elem, 1);
+            }
+            else {
+                accPen(collect, elem, 1);
+                accPen(backcollect, elem, -1);
+            }
+            //fluid.log("Element " + i + " " + dumpelem(elem) + " mindist " + collect.mindist);
+        }
+        var wrap = !collect.minelem || backcollect.mindist < collect.mindist;
+        
+        // disable wrap
+        wrap = wrap && !disableWrap;       
+                
+        var mincollect = wrap ? backcollect: collect;        
+        
+        var togo = {
+            wrapped: wrap,
+            cacheelem: mincollect.minelem
+        };
+        if (lockedcollect.mindist < mincollect.mindist) {
+            togo.lockedelem = lockedcollect.minelem;
+        }
+        return togo;
+    };
+})(jQuery, fluid_1_4);
+/*
+Copyright 2007-2009 University of Toronto
+Copyright 2007-2010 University of Cambridge
+Copyright 2010 OCAD University
+Copyright 2010 Lucendo Development Ltd.
+
+Licensed under the Educational Community License (ECL), Version 2.0 or the New
+BSD license. You may not use this file except in compliance with one these
+Licenses.
+
+You may obtain a copy of the ECL 2.0 License and BSD License at
+https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
+*/
+
+// Declare dependencies
+/*global fluid_1_4:true, jQuery*/
+
+// JSLint options 
+/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
+
+var fluid_1_4 = fluid_1_4 || {};
+
+(function ($, fluid) {
+    
+    var defaultAvatarCreator = function (item, cssClass, dropWarning) {
+        fluid.dom.cleanseScripts(fluid.unwrap(item));
+        var avatar = $(item).clone();
+        
+        fluid.dom.iterateDom(avatar.get(0), function (node) {
+            node.removeAttribute("id");
+            if (node.tagName.toLowerCase() === "input") {
+                node.setAttribute("disabled", "disabled");
+            }
+        });
+        
+        avatar.removeAttr("id");
+        avatar.removeClass("ui-droppable");
+        avatar.addClass(cssClass);
+        
+        if (dropWarning) {
+            // Will a 'div' always be valid in this position?
+            var avatarContainer = $(document.createElement("div"));
+            avatarContainer.append(avatar);
+            avatarContainer.append(dropWarning);
+            avatar = avatarContainer;
+        }
+        $("body").append(avatar);
+        if (!$.browser.safari) {
+            // FLUID-1597: Safari appears incapable of correctly determining the dimensions of elements
+            avatar.css("display", "block").width(item.offsetWidth).height(item.offsetHeight);
+        }
+        
+        if ($.browser.opera) { // FLUID-1490. Without this detect, curCSS explodes on the avatar on Firefox.
+            avatar.hide();
+        }
+        return avatar;
+    };
+    
+    function bindHandlersToContainer(container, keyDownHandler, keyUpHandler, mouseMoveHandler) {
+        var actualKeyDown = keyDownHandler;
+        var advancedPrevention = false;
+
+        // FLUID-1598 and others: Opera will refuse to honour a "preventDefault" on a keydown.
+        // http://forums.devshed.com/javascript-development-115/onkeydown-preventdefault-opera-485371.html
+        if ($.browser.opera) {
+            container.keypress(function (evt) {
+                if (advancedPrevention) {
+                    advancedPrevention = false;
+                    evt.preventDefault();
+                    return false;
+                }
+            });
+            actualKeyDown = function (evt) {
+                var oldret = keyDownHandler(evt);
+                if (oldret === false) {
+                    advancedPrevention = true;
+                }
+            };
+        }
+        container.keydown(actualKeyDown);
+        container.keyup(keyUpHandler);
+    }
+    
+    function addRolesToContainer(that) {
+        that.container.attr("role", that.options.containerRole.container);
+        that.container.attr("aria-multiselectable", "false");
+        that.container.attr("aria-readonly", "false");
+        that.container.attr("aria-disabled", "false");
+        // FLUID-3707: We require to have BOTH application role as well as our named role
+        // This however breaks the component completely under NVDA and causes it to perpetually drop back into "browse mode"
+        //that.container.wrap("<div role=\"application\"></div>");
+    }
+    
+    function createAvatarId(parentId) {
+        // Generating the avatar's id to be containerId_avatar
+        // This is safe since there is only a single avatar at a time
+        return parentId + "_avatar";
+    }
+    
+    var adaptKeysets = function (options) {
+        if (options.keysets && !(options.keysets instanceof Array)) {
+            options.keysets = [options.keysets];    
+        }
+    };
+    
+    /**
+     * @param container - A jQueryable designator for the root node of the reorderer (a selector, a DOM node, or a jQuery instance)
+     * @param options - an object containing any of the available options:
+     *                  containerRole - indicates the role, or general use, for this instance of the Reorderer
+     *                  keysets - an object containing sets of keycodes to use for directional navigation. Must contain:
+     *                            modifier - a function that returns a boolean, indicating whether or not the required modifier(s) are activated
+     *                            up
+     *                            down
+     *                            right
+     *                            left
+     *                  styles - an object containing class names for styling the Reorderer
+     *                                  defaultStyle
+     *                                  selected
+     *                                  dragging
+     *                                  hover
+     *                                  dropMarker
+     *                                  mouseDrag
+     *                                  avatar
+     *                  avatarCreator - a function that returns a valid DOM node to be used as the dragging avatar
+     */
+    fluid.reorderer = function (container, options) {
+        if (!container) {
+            fluid.fail("Reorderer initialised with no container");
+        }
+        var thatReorderer = fluid.initView("fluid.reorderer", container, options);
+        options = thatReorderer.options;
+                
+        var dropManager = fluid.dropManager();   
+                
+        thatReorderer.layoutHandler = fluid.initSubcomponent(thatReorderer,
+            "layoutHandler", [thatReorderer.container, options, dropManager, thatReorderer.dom]);
+        
+        thatReorderer.activeItem = undefined;
+
+        adaptKeysets(options);
+ 
+        var kbDropWarning = thatReorderer.locate("dropWarning");
+        var mouseDropWarning;
+        if (kbDropWarning) {
+            mouseDropWarning = kbDropWarning.clone();
+        }
+
+        var isMove = function (evt) {
+            var keysets = options.keysets;
+            for (var i = 0; i < keysets.length; i++) {
+                if (keysets[i].modifier(evt)) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        
+        var isActiveItemMovable = function () {
+            return $.inArray(thatReorderer.activeItem, thatReorderer.dom.fastLocate("movables")) >= 0;
+        };
+        
+        var setDropEffects = function (value) {
+            thatReorderer.dom.fastLocate("dropTargets").attr("aria-dropeffect", value);
+        };
+        
+        var styles = options.styles;
+        
+        var noModifier = function (evt) {
+            return (!evt.ctrlKey && !evt.altKey && !evt.shiftKey && !evt.metaKey);
+        };
+        
+        var handleDirectionKeyDown = function (evt) {
+            var item = thatReorderer.activeItem;
+            if (!item) {
+                return true;
+            }
+            var keysets = options.keysets;
+            for (var i = 0; i < keysets.length; i++) {
+                var keyset = keysets[i];
+                var keydir = fluid.keyForValue(keyset, evt.keyCode);
+                if (!keydir) {
+                    continue;
+                }
+                var isMovement = keyset.modifier(evt);
+                
+                var dirnum = fluid.keycodeDirection[keydir];
+                var relativeItem = thatReorderer.layoutHandler.getRelativePosition(item, dirnum, !isMovement);  
+                if (!relativeItem) {
+                    continue;
+                }
+                
+                if (isMovement) {
+                    var prevent = thatReorderer.events.onBeginMove.fire(item);
+                    if (prevent === false) {
+                        return false;
+                    }
+                    if (kbDropWarning.length > 0) {
+                        if (relativeItem.clazz === "locked") {
+                            thatReorderer.events.onShowKeyboardDropWarning.fire(item, kbDropWarning);
+                            kbDropWarning.show();                       
+                        }
+                        else {
+                            kbDropWarning.hide();
+                        }
+                    }
+                    if (relativeItem.element) {
+                        thatReorderer.requestMovement(relativeItem, item);
+                    }
+            
+                } else if (noModifier(evt)) {
+                    item.blur();
+                    $(relativeItem.element).focus();
+                }
+                return false;
+            }
+            return true;
+        };
+
+        // unsupported, NON-API function
+        thatReorderer.handleKeyDown = function (evt) {
+            if (!thatReorderer.activeItem || thatReorderer.activeItem !== evt.target) {
+                return true;
+            }
+            // If the key pressed is ctrl, and the active item is movable we want to restyle the active item.
+            var jActiveItem = $(thatReorderer.activeItem);
+            if (!jActiveItem.hasClass(styles.dragging) && isMove(evt)) {
+               // Don't treat the active item as dragging unless it is a movable.
+                if (isActiveItemMovable()) {
+                    jActiveItem.removeClass(styles.selected);
+                    jActiveItem.addClass(styles.dragging);
+                    jActiveItem.attr("aria-grabbed", "true");
+                    setDropEffects("move");
+                }
+                return false;
+            }
+            // The only other keys we listen for are the arrows.
+            return handleDirectionKeyDown(evt);
+        };
+
+        // unsupported, NON-API function
+        thatReorderer.handleKeyUp = function (evt) {
+            if (!thatReorderer.activeItem || thatReorderer.activeItem !== evt.target) {
+                return true;
+            }
+            var jActiveItem = $(thatReorderer.activeItem);
+            
+            // Handle a key up event for the modifier
+            if (jActiveItem.hasClass(styles.dragging) && !isMove(evt)) {
+                if (kbDropWarning) {
+                    kbDropWarning.hide();
+                }
+                jActiveItem.removeClass(styles.dragging);
+                jActiveItem.addClass(styles.selected);
+                jActiveItem.attr("aria-grabbed", "false");
+                setDropEffects("none");
+                return false;
+            }
+            
+            return false;
+        };
+
+        var dropMarker;
+
+        var createDropMarker = function (tagName) {
+            var dropMarker = $(document.createElement(tagName));
+            dropMarker.addClass(options.styles.dropMarker);
+            dropMarker.hide();
+            return dropMarker;
+        };
+        // unsupported, NON-API function
+        thatReorderer.requestMovement = function (requestedPosition, item) {
+            item = fluid.unwrap(item);
+          // Temporary censoring to get around ModuleLayout inability to update relative to self.
+            if (!requestedPosition || fluid.unwrap(requestedPosition.element) === item) {
+                return;
+            }
+            var activeItem = $(thatReorderer.activeItem);
+            
+            // Fixes FLUID-3288.
+            // Need to unbind the blur event as safari will call blur on movements.
+            // This caused the user to have to double tap the arrow keys to move.
+            activeItem.unbind("blur.fluid.reorderer");
+            
+            thatReorderer.events.onMove.fire(item, requestedPosition);
+            dropManager.geometricMove(item, requestedPosition.element, requestedPosition.position);
+            //$(thatReorderer.activeItem).removeClass(options.styles.selected);
+           
+            // refocus on the active item because moving places focus on the body
+            activeItem.focus();
+            
+            thatReorderer.refresh();
+            
+            dropManager.updateGeometry(thatReorderer.layoutHandler.getGeometricInfo());
+
+            thatReorderer.events.afterMove.fire(item, requestedPosition, thatReorderer.dom.fastLocate("movables"));
+        };
+
+        var hoverStyleHandler = function (item, state) {
+            thatReorderer.dom.fastLocate("grabHandle", item)[state ? "addClass":"removeClass"](styles.hover);
+        };
+        /**
+         * Takes a $ object and adds 'movable' functionality to it
+         */
+        function initMovable(item) {
+            var styles = options.styles;
+            item.attr("aria-grabbed", "false");
+
+            item.mouseover(
+                function () {
+                    thatReorderer.events.onHover.fire(item, true);
+                }
+            );
+        
+            item.mouseout(
+                function () {
+                    thatReorderer.events.onHover.fire(item, false);
+                }
+            );
+            var avatar;
+        
+            thatReorderer.dom.fastLocate("grabHandle", item).draggable({
+                refreshPositions: false,
+                scroll: true,
+                helper: function () {
+                    var dropWarningEl;
+                    if (mouseDropWarning) {
+                        dropWarningEl = mouseDropWarning[0];
+                    }
+                    avatar = $(options.avatarCreator(item[0], styles.avatar, dropWarningEl));
+                    avatar.attr("id", createAvatarId(thatReorderer.container.id));
+                    return avatar;
+                },
+                start: function (e, ui) {
+                    var prevent = thatReorderer.events.onBeginMove.fire(item);
+                    if (prevent === false) {
+                        return false;
+                    }
+                    var handle = thatReorderer.dom.fastLocate("grabHandle", item)[0];
+                    var handlePos = fluid.dom.computeAbsolutePosition(handle);
+                    var handleWidth = handle.offsetWidth;
+                    var handleHeight = handle.offsetHeight;
+                    item.focus();
+                    item.removeClass(options.styles.selected);
+                    item.addClass(options.styles.mouseDrag);
+                    item.attr("aria-grabbed", "true");
+                    setDropEffects("move");
+                    dropManager.startDrag(e, handlePos, handleWidth, handleHeight);
+                    avatar.show();
+                },
+                stop: function (e, ui) {
+                    item.removeClass(options.styles.mouseDrag);
+                    item.addClass(options.styles.selected);
+                    $(thatReorderer.activeItem).attr("aria-grabbed", "false");
+                    var markerNode = fluid.unwrap(dropMarker);
+                    if (markerNode.parentNode) {
+                        markerNode.parentNode.removeChild(markerNode);
+                    }
+                    avatar.hide();
+                    ui.helper = null;
+                    setDropEffects("none");
+                    dropManager.endDrag();
+                    
+                    thatReorderer.requestMovement(dropManager.lastPosition(), item);
+                    // refocus on the active item because moving places focus on the body
+                    thatReorderer.activeItem.focus();
+                },
+                handle: thatReorderer.dom.fastLocate("grabHandle", item)
+            });
+        }
+           
+        function changeSelectedToDefault(jItem, styles) {
+            jItem.removeClass(styles.selected);
+            jItem.removeClass(styles.dragging);
+            jItem.addClass(styles.defaultStyle);
+            jItem.attr("aria-selected", "false");
+        }
+           
+        var selectItem = function (anItem) {
+            thatReorderer.events.onSelect.fire(anItem);
+            var styles = options.styles;
+            // Set the previous active item back to its default state.
+            if (thatReorderer.activeItem && thatReorderer.activeItem !== anItem) {
+                changeSelectedToDefault($(thatReorderer.activeItem), styles);
+            }
+            // Then select the new item.
+            thatReorderer.activeItem = anItem;
+            var jItem = $(anItem);
+            jItem.removeClass(styles.defaultStyle);
+            jItem.addClass(styles.selected);
+            jItem.attr("aria-selected", "true");
+        };
+   
+        var initSelectables = function () {
+            var handleBlur = function (evt) {
+                changeSelectedToDefault($(this), options.styles);
+                return evt.stopPropagation();
+            };
+        
+            var handleFocus = function (evt) {
+                selectItem(this);
+                return evt.stopPropagation();
+            };
+            
+            var selectables = thatReorderer.dom.fastLocate("selectables");
+            for (var i = 0; i < selectables.length; ++ i) {
+                var selectable = $(selectables[i]);
+                if (!$.data(selectable[0], "fluid.reorderer.selectable-initialised")) { 
+                    selectable.addClass(styles.defaultStyle);
+            
+                    selectable.bind("blur.fluid.reorderer", handleBlur);
+                    selectable.focus(handleFocus);
+                    selectable.click(function (evt) {
+                        var handle = fluid.unwrap(thatReorderer.dom.fastLocate("grabHandle", this));
+                        if (fluid.dom.isContainer(handle, evt.target)) {
+                            $(this).focus();
+                        }
+                    });
+                    
+                    selectable.attr("role", options.containerRole.item);
+                    selectable.attr("aria-selected", "false");
+                    selectable.attr("aria-disabled", "false");
+                    $.data(selectable[0], "fluid.reorderer.selectable-initialised", true);
+                }
+            }
+            if (!thatReorderer.selectableContext) {
+                thatReorderer.selectableContext = fluid.selectable(thatReorderer.container, {
+                    selectableElements: selectables,
+                    selectablesTabindex: thatReorderer.options.selectablesTabindex,
+                    direction: null
+                });
+            }
+        };
+    
+        var dropChangeListener = function (dropTarget) {
+            fluid.moveDom(dropMarker, dropTarget.element, dropTarget.position);
+            dropMarker.css("display", "");
+            if (mouseDropWarning) {
+                if (dropTarget.lockedelem) {
+                    mouseDropWarning.show();
+                }
+                else {
+                    mouseDropWarning.hide();
+                }
+            }
+        };
+    
+        var initItems = function () {
+            var movables = thatReorderer.dom.fastLocate("movables");
+            var dropTargets = thatReorderer.dom.fastLocate("dropTargets");
+            initSelectables();
+        
+            // Setup movables
+            for (var i = 0; i < movables.length; i++) {
+                var item = movables[i];
+                if (!$.data(item, "fluid.reorderer.movable-initialised")) { 
+                    initMovable($(item));
+                    $.data(item, "fluid.reorderer.movable-initialised", true);
+                }
+            }
+
+            // In order to create valid html, the drop marker is the same type as the node being dragged.
+            // This creates a confusing UI in cases such as an ordered list. 
+            // drop marker functionality should be made pluggable. 
+            if (movables.length > 0 && !dropMarker) {
+                dropMarker = createDropMarker(movables[0].tagName);
+            }
+            
+            dropManager.updateGeometry(thatReorderer.layoutHandler.getGeometricInfo());
+            
+            dropManager.dropChangeFirer.addListener(dropChangeListener, "fluid.Reorderer");
+            // Set up dropTargets
+            dropTargets.attr("aria-dropeffect", "none");  
+
+        };
+
+
+        // Final initialization of the Reorderer at the end of the construction process 
+        if (thatReorderer.container) {
+            bindHandlersToContainer(thatReorderer.container, 
+                thatReorderer.handleKeyDown,
+                thatReorderer.handleKeyUp);
+            addRolesToContainer(thatReorderer);
+            fluid.tabbable(thatReorderer.container);
+            initItems();
+        }
+
+        if (options.afterMoveCallbackUrl) {
+            thatReorderer.events.afterMove.addListener(function () {
+                var layoutHandler = thatReorderer.layoutHandler;
+                var model = layoutHandler.getModel ? layoutHandler.getModel():
+                     options.acquireModel(thatReorderer);
+                $.post(options.afterMoveCallbackUrl, JSON.stringify(model));
+            }, "postModel");
+        }
+        thatReorderer.events.onHover.addListener(hoverStyleHandler, "style");
+
+        thatReorderer.refresh = function () {
+            thatReorderer.dom.refresh("movables");
+            thatReorderer.dom.refresh("selectables");
+            thatReorderer.dom.refresh("grabHandle", thatReorderer.dom.fastLocate("movables"));
+            thatReorderer.dom.refresh("stylisticOffset", thatReorderer.dom.fastLocate("movables"));
+            thatReorderer.dom.refresh("dropTargets");
+            thatReorderer.events.onRefresh.fire();
+            initItems();
+            thatReorderer.selectableContext.selectables = thatReorderer.dom.fastLocate("selectables");
+            thatReorderer.selectableContext.selectablesUpdated(thatReorderer.activeItem);
+        };
+        
+        fluid.initDependents(thatReorderer);
+
+        thatReorderer.refresh();
+
+        return thatReorderer;
+    };
+    
+    /**
+     * Constants for key codes in events.
+     */    
+    fluid.reorderer.keys = {
+        TAB: 9,
+        ENTER: 13,
+        SHIFT: 16,
+        CTRL: 17,
+        ALT: 18,
+        META: 19,
+        SPACE: 32,
+        LEFT: 37,
+        UP: 38,
+        RIGHT: 39,
+        DOWN: 40,
+        i: 73,
+        j: 74,
+        k: 75,
+        m: 77
+    };
+    
+    /**
+     * The default key sets for the Reorderer. Should be moved into the proper component defaults.
+     */
+    fluid.reorderer.defaultKeysets = [{
+        modifier : function (evt) {
+            return evt.ctrlKey;
+        },
+        up : fluid.reorderer.keys.UP,
+        down : fluid.reorderer.keys.DOWN,
+        right : fluid.reorderer.keys.RIGHT,
+        left : fluid.reorderer.keys.LEFT
+    },
+    {
+        modifier : function (evt) {
+            return evt.ctrlKey;
+        },
+        up : fluid.reorderer.keys.i,
+        down : fluid.reorderer.keys.m,
+        right : fluid.reorderer.keys.k,
+        left : fluid.reorderer.keys.j
+    }];
+    
+    /**
+     * These roles are used to add ARIA roles to orderable items. This list can be extended as needed,
+     * but the values of the container and item roles must match ARIA-specified roles.
+     */  
+    fluid.reorderer.roles = {
+        GRID: { container: "grid", item: "gridcell" },
+        LIST: { container: "list", item: "listitem" },
+        REGIONS: { container: "main", item: "article" }
+    };
+    
+    // Simplified API for reordering lists and grids.
+    var simpleInit = function (container, layoutHandler, options) {
+        options = options || {};
+        options.layoutHandler = layoutHandler;
+        return fluid.reorderer(container, options);
+    };
+    
+    fluid.reorderList = function (container, options) {
+        return simpleInit(container, "fluid.listLayoutHandler", options);
+    };
+    
+    fluid.reorderGrid = function (container, options) {
+        return simpleInit(container, "fluid.gridLayoutHandler", options); 
+    };
+    
+    fluid.reorderer.SHUFFLE_GEOMETRIC_STRATEGY = "shuffleProjectFrom";
+    fluid.reorderer.GEOMETRIC_STRATEGY         = "projectFrom";
+    fluid.reorderer.LOGICAL_STRATEGY           = "logicalFrom";
+    fluid.reorderer.WRAP_LOCKED_STRATEGY       = "lockedWrapFrom";
+    fluid.reorderer.NO_STRATEGY = null;
+    
+    // unsupported, NON-API function
+    fluid.reorderer.relativeInfoGetter = function (orientation, coStrategy, contraStrategy, dropManager, dom, disableWrap) {
+        return function (item, direction, forSelection) {
+            var dirorient = fluid.directionOrientation(direction);
+            var strategy = dirorient === orientation ? coStrategy: contraStrategy;
+            return strategy !== null ? dropManager[strategy](item, direction, forSelection, disableWrap) : null;
+        };
+    };
+    
+    fluid.defaults("fluid.reorderer", {
+        styles: {
+            defaultStyle: "fl-reorderer-movable-default",
+            selected: "fl-reorderer-movable-selected",
+            dragging: "fl-reorderer-movable-dragging",
+            mouseDrag: "fl-reorderer-movable-dragging",
+            hover: "fl-reorderer-movable-hover",
+            dropMarker: "fl-reorderer-dropMarker",
+            avatar: "fl-reorderer-avatar"
+        },
+        selectors: {
+            dropWarning: ".flc-reorderer-dropWarning",
+            movables: ".flc-reorderer-movable",
+            grabHandle: "",
+            stylisticOffset: ""
+        },
+        avatarCreator: defaultAvatarCreator,
+        keysets: fluid.reorderer.defaultKeysets,
+        layoutHandler: {
+            type: "fluid.listLayoutHandler"
+        },
+        
+        events: {
+            onShowKeyboardDropWarning: null,
+            onSelect: null,
+            onBeginMove: "preventable",
+            onMove: null,
+            afterMove: null,
+            onHover: null,
+            onRefresh: null
+        },
+        
+        mergePolicy: {
+            keysets: "replace",
+            "selectors.labelSource": "selectors.grabHandle",
+            "selectors.selectables": "selectors.movables",
+            "selectors.dropTargets": "selectors.movables"
+        },
+        components: {
+            labeller: {
+                type: "fluid.reorderer.labeller",
+                options: {
+                    dom: "{reorderer}.dom",
+                    getGeometricInfo: "{reorderer}.layoutHandler.getGeometricInfo",
+                    orientation: "{reorderer}.options.orientation",
+                    layoutType: "{reorderer}.options.layoutHandler" // TODO, get rid of "global defaults"
+                }          
+            }
+        },
+        
+        // The user option to enable or disable wrapping of elements within the container
+        disableWrap: false        
+        
+    });
+
+
+    /*******************
+     * Layout Handlers *
+     *******************/
+
+    // unsupported, NON-API function
+    fluid.reorderer.makeGeometricInfoGetter = function (orientation, sentinelize, dom) {
+        return function () {
+            var that = {
+                sentinelize: sentinelize,
+                extents: [{
+                    orientation: orientation,
+                    elements: dom.fastLocate("dropTargets")
+                }],
+                elementMapper: function (element) {
+                    return $.inArray(element, dom.fastLocate("movables")) === -1 ? "locked": null;
+                },
+                elementIndexer: function (element) {
+                    var selectables = dom.fastLocate("selectables");
+                    return {
+                        elementClass: that.elementMapper(element),
+                        index: $.inArray(element, selectables),
+                        length: selectables.length
+                    };
+                }
+            };
+            return that;
+        };
+    };
+    
+    fluid.defaults(true, "fluid.listLayoutHandler", 
+        {orientation:         fluid.orientation.VERTICAL,
+         containerRole:       fluid.reorderer.roles.LIST,
+         selectablesTabindex: -1,
+         sentinelize:         true
+        });
+    
+    // Public layout handlers.
+    fluid.listLayoutHandler = function (container, options, dropManager, dom) {
+        var that = {};
+
+        that.getRelativePosition = 
+          fluid.reorderer.relativeInfoGetter(options.orientation, 
+                fluid.reorderer.LOGICAL_STRATEGY, null, dropManager, dom, options.disableWrap);
+        
+        that.getGeometricInfo = fluid.reorderer.makeGeometricInfoGetter(options.orientation, options.sentinelize, dom);
+        
+        return that;
+    }; // End ListLayoutHandler
+
+    fluid.defaults(true, "fluid.gridLayoutHandler", 
+        {orientation:         fluid.orientation.HORIZONTAL,
+         containerRole:       fluid.reorderer.roles.GRID,
+         selectablesTabindex: -1,
+         sentinelize:         false
+         });
+    /*
+     * Items in the Lightbox are stored in a list, but they are visually presented as a grid that
+     * changes dimensions when the window changes size. As a result, when the user presses the up or
+     * down arrow key, what lies above or below depends on the current window size.
+     * 
+     * The GridLayoutHandler is responsible for handling changes to this virtual 'grid' of items
+     * in the window, and of informing the Lightbox of which items surround a given item.
+     */
+    fluid.gridLayoutHandler = function (container, options, dropManager, dom) {
+        var that = {};
+
+        that.getRelativePosition = 
+           fluid.reorderer.relativeInfoGetter(options.orientation, 
+                 options.disableWrap ? fluid.reorderer.SHUFFLE_GEOMETRIC_STRATEGY : fluid.reorderer.LOGICAL_STRATEGY, fluid.reorderer.SHUFFLE_GEOMETRIC_STRATEGY, 
+                 dropManager, dom, options.disableWrap);
+        
+        that.getGeometricInfo = fluid.reorderer.makeGeometricInfoGetter(options.orientation, options.sentinelize, dom);
+        
+        return that;
+    }; // End of GridLayoutHandler
+
+    fluid.defaults("fluid.reorderer.labeller", {
+        strings: {
+            overallTemplate: "%recentStatus %item %position %movable",
+            position:        "%index of %length",
+            position_moduleLayoutHandler: "%index of %length in %moduleCell %moduleIndex of %moduleLength",
+            moduleCell_0:    "row", // NB, these keys must agree with fluid.a11y.orientation constants
+            moduleCell_1:    "column",
+            movable:         "movable",
+            fixed:           "fixed",
+            recentStatus:    "moved from position %position"
+        },
+        components: {
+            resolver: {
+                type: "fluid.messageResolver",
+                options: {
+                    messageBase: "{labeller}.options.strings"
+                }
+            }
+        },
+        invokers: {
+            renderLabel: {
+                funcName: "fluid.reorderer.labeller.renderLabel",
+                args: ["{labeller}", "@0", "@1"]
+            }  
+        }
+    });
+
+    // unsupported, NON-API function
+    // Convert from 0-based to 1-based indices for announcement
+    fluid.reorderer.indexRebaser = function (indices) {
+        indices.index++;
+        if (indices.moduleIndex !== undefined) {
+            indices.moduleIndex++;
+        }
+        return indices;
+    };
+
+    /*************
+     * Labelling *
+     *************/
+     
+    fluid.reorderer.labeller = function (options) {
+        var that = fluid.initLittleComponent("fluid.reorderer.labeller", options);
+        fluid.initDependents(that);
+        that.dom = that.options.dom;
+        
+        that.moduleCell = that.resolver.resolve("moduleCell_" + that.options.orientation);
+        var layoutType = fluid.computeNickName(that.options.layoutType);
+        that.positionTemplate = that.resolver.lookup(["position_" + layoutType, "position"]);
+        
+        var movedMap = {};
+        
+        that.returnedOptions = {
+            listeners: {
+                onRefresh: function () {
+                    var selectables = that.dom.locate("selectables");
+                    fluid.each(selectables, function (selectable) {
+                        var labelOptions = {};
+                        var id = fluid.allocateSimpleId(selectable);
+                        var moved = movedMap[id];
+                        var label = that.renderLabel(selectable);
+                        var plainLabel = label;
+                        if (moved) {
+                            moved.newRender = plainLabel;
+                            label = that.renderLabel(selectable, moved.oldRender.position);
+                            $(selectable).one("focusout", function () {
+                                if (movedMap[id]) {
+                                    var oldLabel = movedMap[id].newRender.label;
+                                    delete movedMap[id];
+                                    fluid.updateAriaLabel(selectable, oldLabel);
+                                }
+                            });
+                            labelOptions.dynamicLabel = true;
+                        }
+                        fluid.updateAriaLabel(selectable, label.label, labelOptions);
+                    });
+                },
+                onMove: function (item, newPosition) {
+                    fluid.clear(movedMap); // if we somehow were fooled into missing a defocus, at least clear the map on a 2nd move
+                    var movingId = fluid.allocateSimpleId(item);
+                    movedMap[movingId] = {
+                        oldRender: that.renderLabel(item)
+                    };
+                }
+            }
+        };
+        return that;
+    };
+    
+    fluid.reorderer.labeller.renderLabel = function (that, selectable, recentPosition) {
+        var geom = that.options.getGeometricInfo();
+        var indices = fluid.reorderer.indexRebaser(geom.elementIndexer(selectable));
+        indices.moduleCell = that.moduleCell;
+            
+        var elementClass = geom.elementMapper(selectable);
+        var labelSource = that.dom.locate("labelSource", selectable);
+        var recentStatus;
+        if (recentPosition) {
+            recentStatus = that.resolver.resolve("recentStatus", {position: recentPosition});
+        }
+        var topModel = {
+            item: typeof(labelSource) === "string" ? labelSource: fluid.dom.getElementText(fluid.unwrap(labelSource)),
+            position: that.positionTemplate.resolveFunc(that.positionTemplate.template, indices),
+            movable: that.resolver.resolve(elementClass === "locked" ? "fixed" : "movable"),
+            recentStatus: recentStatus || ""
+        };
+        
+        var template = that.resolver.lookup(["overallTemplate"]);
+        var label = template.resolveFunc(template.template, topModel);
+        return {
+            position: topModel.position,
+            label: label
+        };
+    };
+
+})(jQuery, fluid_1_4);
+/*
+Copyright 2008-2009 University of Cambridge
+Copyright 2008-2009 University of Toronto
+Copyright 2010 Lucendo Development Ltd.
+
+Licensed under the Educational Community License (ECL), Version 2.0 or the New
+BSD license. You may not use this file except in compliance with one these
+Licenses.
+
+You may obtain a copy of the ECL 2.0 License and BSD License at
+https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
+*/
+
+// Declare dependencies
+/*global fluid_1_4:true, jQuery*/
+
+// JSLint options 
+/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
+
+var fluid_1_4 = fluid_1_4 || {};
+
+(function ($, fluid) {
+    
+    var deriveLightboxCellBase = function (namebase, index) {
+        return namebase + "lightbox-cell:" + index + ":";
+    };
+            
+    var addThumbnailActivateHandler = function (container) {
+        var enterKeyHandler = function (evt) {
+            if (evt.which === fluid.reorderer.keys.ENTER) {
+                var thumbnailAnchors = $("a", evt.target);
+                document.location = thumbnailAnchors.attr("href");
+            }
+        };
+        
+        container.keypress(enterKeyHandler);
+    };
+    
+    // Custom query method seeks all tags descended from a given root with a 
+    // particular tag name, whose id matches a regex.
+    var seekNodesById = function (rootnode, tagname, idmatch) {
+        var inputs = rootnode.getElementsByTagName(tagname);
+        var togo = [];
+        for (var i = 0; i < inputs.length; i += 1) {
+            var input = inputs[i];
+            var id = input.id;
+            if (id && id.match(idmatch)) {
+                togo.push(input);
+            }
+        }
+        return togo;
+    };
+    
+    var createImageCellFinder = function (parentNode, containerId) {
+        parentNode = fluid.unwrap(parentNode);
+        
+        var lightboxCellNamePattern = "^" + deriveLightboxCellBase(containerId, "[0-9]+") + "$";
+        
+        return function () {
+            // This orderable finder assumes that the lightbox thumbnails are 'div' elements
+            return seekNodesById(parentNode, "div", lightboxCellNamePattern);
+        };
+    };
+    
+    var seekForm = function (container) {
+        return fluid.findAncestor(container, function (element) {
+            return $(element).is("form");
+        });
+    };
+    
+    var seekInputs = function (container, reorderform) {
+        return seekNodesById(reorderform, 
+                             "input", 
+                             "^" + deriveLightboxCellBase(container.attr("id"), "[^:]*") + "reorder-index$");
+    };
+    
+    var mapIdsToNames = function (container, reorderform) {
+        var inputs = seekInputs(container, reorderform);
+        for (var i = 0; i < inputs.length; i++) {
+            var input = inputs[i];
+            var name = input.name;
+            input.name = name || input.id;
+        }
+    };
+    
+    /**
+     * Returns a default afterMove listener using the id-based, form-driven scheme for communicating with the server.
+     * It is implemented by nesting hidden form fields inside each thumbnail container. The value of these form elements
+     * represent the order for each image. This default listener submits the form's default 
+     * action via AJAX.
+     * 
+     * @param {jQueryable} container the Image Reorderer's container element 
+     */
+    var createIDAfterMoveListener = function (container) {
+        var reorderform = seekForm(container);
+        mapIdsToNames(container, reorderform);
+        
+        return function () {
+            var inputs, i;
+            inputs = seekInputs(container, reorderform);
+            
+            for (i = 0; i < inputs.length; i += 1) {
+                inputs[i].value = i;
+            }
+        
+            if (reorderform && reorderform.action) {
+                var order = $(reorderform).serialize();
+                $.post(reorderform.action, 
+                       order,
+                       function (type, data, evt) { /* No-op response */ });
+            }
+        };
+    };
+
+    
+    var setDefaultValue = function (target, path, value) {
+        var previousValue = fluid.get(target, path);
+        var valueToSet = previousValue || value;
+        fluid.set(target, path, valueToSet);
+    };
+    
+    // Public Lightbox API
+    /**
+     * Creates a new Lightbox instance from the specified parameters, providing full control over how
+     * the Lightbox is configured.
+     * 
+     * @param {Object} container 
+     * @param {Object} options 
+     */
+    fluid.reorderImages = function (container, options) {
+        // Instantiate a mini-Image Reorderer component, then feed its options to the real Reorderer.
+        var that = fluid.initView("fluid.reorderImages", container, options);
+        
+        // If the user didn't specify their own afterMove or movables options,
+        // set up defaults for them using the old id-based scheme.
+        // Backwards API compatiblity. Remove references to afterMoveCallback by Infusion 1.5.
+        setDefaultValue(that, "options.listeners.afterMove", 
+                        that.options.afterMoveCallback || createIDAfterMoveListener(that.container));
+        setDefaultValue(that, "options.selectors.movables", 
+                        createImageCellFinder(that.container, that.container.attr("id")));
+        
+        var reorderer = fluid.reorderer(that.container, that.options);
+        
+        fluid.tabindex($("a", that.container), -1);
+        addThumbnailActivateHandler(that.container);
+        
+        return reorderer;
+    };
+   
+    // This function now deprecated. Please use fluid.reorderImages() instead.
+    fluid.lightbox = fluid.reorderImages;
+    
+    fluid.defaults("fluid.reorderImages", {
+        layoutHandler: "fluid.gridLayoutHandler",
+
+        selectors: {
+            labelSource: ".flc-reorderer-imageTitle"
+        }
+    });
+
+})(jQuery, fluid_1_4);
+/*
+Copyright 2008-2009 University of Cambridge
+Copyright 2008-2009 University of Toronto
+Copyright 2010-2011 OCAD University
+Copyright 2010 Lucendo Development Ltd.
+
+Licensed under the Educational Community License (ECL), Version 2.0 or the New
+BSD license. You may not use this file except in compliance with one these
+Licenses.
+
+You may obtain a copy of the ECL 2.0 License and BSD License at
+https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
+*/
+
+// Declare dependencies
+/*global fluid_1_4:true, jQuery*/
+
+// JSLint options 
+/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
+
+var fluid_1_4 = fluid_1_4 || {};
+
+(function ($, fluid) {
+    
+    fluid.registerNamespace("fluid.moduleLayout");
+
+    /**
+     * Calculate the location of the item and the column in which it resides.
+     * @return  An object with column index and item index (within that column) properties.
+     *          These indices are -1 if the item does not exist in the grid.
+     */
+    // unsupported - NON-API function
+    fluid.moduleLayout.findColumnAndItemIndices = function (item, layout) {
+        return fluid.find(layout.columns,
+            function (column, colIndex) {
+                var index = $.inArray(item, column.elements);
+                return index === -1 ? undefined : {columnIndex: colIndex, itemIndex: index};
+            }, {columnIndex: -1, itemIndex: -1});
+    };
+    // unsupported - NON-API function
+    fluid.moduleLayout.findColIndex = function (item, layout) {
+        return fluid.find(layout.columns,
+            function (column, colIndex) {
+                return item === column.container ? colIndex : undefined;
+            }, -1);
+    };
+
+    /**
+     * Move an item within the layout object. 
+     */
+    // unsupported - NON-API function
+    fluid.moduleLayout.updateLayout = function (item, target, position, layout) {
+        item = fluid.unwrap(item);
+        target = fluid.unwrap(target);
+        var itemIndices = fluid.moduleLayout.findColumnAndItemIndices(item, layout);
+        layout.columns[itemIndices.columnIndex].elements.splice(itemIndices.itemIndex, 1);
+        var targetCol;
+        if (position === fluid.position.INSIDE) {
+            targetCol = layout.columns[fluid.moduleLayout.findColIndex(target, layout)].elements;
+            targetCol.splice(targetCol.length, 0, item);
+
+        } else {
+            var relativeItemIndices = fluid.moduleLayout.findColumnAndItemIndices(target, layout);
+            targetCol = layout.columns[relativeItemIndices.columnIndex].elements;
+            position = fluid.normalisePosition(position, 
+                  itemIndices.columnIndex === relativeItemIndices.columnIndex, 
+                  relativeItemIndices.itemIndex, itemIndices.itemIndex);
+            var relative = position === fluid.position.BEFORE ? 0 : 1;
+            targetCol.splice(relativeItemIndices.itemIndex + relative, 0, item);
+        }
+    };
+       
+    /**
+     * Builds a layout object from a set of columns and modules.
+     * @param {jQuery} container
+     * @param {jQuery} columns
+     * @param {jQuery} portlets
+     */
+    fluid.moduleLayout.layoutFromFlat = function (container, columns, portlets) {
+        var layout = {};
+        layout.container = container;
+        layout.columns = fluid.transform(columns, 
+            function (column) {
+                return {
+                    container: column,
+                    elements: $.makeArray(portlets.filter(function () {
+                          // is this a bug in filter? would have expected "this" to be 1st arg
+                        return fluid.dom.isContainer(column, this);
+                    }))
+                };
+            });
+        return layout;
+    };
+      
+    /**
+     * Builds a layout object from a serialisable "layout" object consisting of id lists
+     */
+    fluid.moduleLayout.layoutFromIds = function (idLayout) {
+        return {
+            container: fluid.byId(idLayout.id),
+            columns: fluid.transform(idLayout.columns, function (column) {
+                return {
+                    container: fluid.byId(column.id),
+                    elements: fluid.transform(column.children, fluid.byId)
+                };
+            })
+        };
+    };
+      
+    /**
+     * Serializes the current layout into a structure of ids
+     */
+    fluid.moduleLayout.layoutToIds = function (idLayout) {
+        return {
+            id: fluid.getId(idLayout.container),
+            columns: fluid.transform(idLayout.columns, function (column) {
+                return {
+                    id: fluid.getId(column.container),
+                    children: fluid.transform(column.elements, fluid.getId)
+                };
+            })
+        };
+    };
+    
+    var defaultOnShowKeyboardDropWarning = function (item, dropWarning) {
+        if (dropWarning) {
+            var offset = $(item).offset();
+            dropWarning = $(dropWarning);
+            dropWarning.css("position", "absolute");
+            dropWarning.css("top", offset.top);
+            dropWarning.css("left", offset.left);
+        }
+    };
+    
+    fluid.defaults(true, "fluid.moduleLayoutHandler", 
+        {orientation: fluid.orientation.VERTICAL,
+         containerRole: fluid.reorderer.roles.REGIONS,
+         selectablesTabindex: -1,
+         sentinelize:         true
+         });
+       
+    /**
+     * Module Layout Handler for reordering content modules.
+     * 
+     * General movement guidelines:
+     * 
+     * - Arrowing sideways will always go to the top (moveable) module in the column
+     * - Moving sideways will always move to the top available drop target in the column
+     * - Wrapping is not necessary at this first pass, but is ok
+     */
+    fluid.moduleLayoutHandler = function (container, options, dropManager, dom) {
+        var that = {};
+        
+        function computeLayout() {
+            var togo;
+            if (options.selectors.modules) {
+                togo = fluid.moduleLayout.layoutFromFlat(container, dom.locate("columns"), dom.locate("modules"));
+            }
+            if (!togo) {
+                var idLayout = fluid.get(options, "moduleLayout.layout");
+                fluid.moduleLayout.layoutFromIds(idLayout);
+            }
+            return togo;
+        }
+        var layout = computeLayout();
+        that.layout = layout;
+        
+        function isLocked(item) {
+            var lockedModules = options.selectors.lockedModules ? dom.fastLocate("lockedModules") : [];
+            return $.inArray(item, lockedModules) !== -1;
+        }
+
+        that.getRelativePosition  = 
+           fluid.reorderer.relativeInfoGetter(options.orientation, 
+                 fluid.reorderer.WRAP_LOCKED_STRATEGY, fluid.reorderer.GEOMETRIC_STRATEGY, 
+                 dropManager, dom, options.disableWrap);
+                 
+        that.getGeometricInfo = function () {
+            var extents = [];
+            var togo = {extents: extents,
+                        sentinelize: options.sentinelize};
+            togo.elementMapper = function (element) {
+                return isLocked(element) ? "locked" : null;
+            };
+            togo.elementIndexer = function (element) {
+                var indices = fluid.moduleLayout.findColumnAndItemIndices(element, that.layout);
+                return {
+                    index:        indices.itemIndex,
+                    length:       layout.columns[indices.columnIndex].elements.length,
+                    moduleIndex:  indices.columnIndex,
+                    moduleLength: layout.columns.length
+                };
+            };
+            for (var col = 0; col < layout.columns.length; col++) {
+                var column = layout.columns[col];
+                var thisEls = {
+                    orientation: options.orientation,
+                    elements: $.makeArray(column.elements),
+                    parentElement: column.container
+                };
+              //  fluid.log("Geometry col " + col + " elements " + fluid.dumpEl(thisEls.elements) + " isLocked [" + 
+              //       fluid.transform(thisEls.elements, togo.elementMapper).join(", ") + "]");
+                extents.push(thisEls);
+            }
+
+            return togo;
+        };
+        
+        function computeModules(all) {
+            return function () {
+                var modules = fluid.accumulate(layout.columns, function (column, list) {
+                    return list.concat(column.elements); // note that concat will not work on a jQuery
+                }, []);
+                if (!all) {
+                    fluid.remove_if(modules, isLocked);
+                }
+                return modules;
+            };
+        }
+        
+        that.returnedOptions = {
+            selectors: {
+                movables: computeModules(false),
+                dropTargets: computeModules(false),
+                selectables: computeModules(true)
+            },
+            listeners: {
+                onMove: {
+                    priority: "last",
+                    listener: function (item, requestedPosition) {
+                        fluid.moduleLayout.updateLayout(item, requestedPosition.element, requestedPosition.position, layout);
+                    }
+                },
+                onRefresh: function () {
+                    layout = computeLayout();
+                    that.layout = layout;
+                },
+                "onShowKeyboardDropWarning.setPosition": defaultOnShowKeyboardDropWarning
+            }
+        };
+        
+        that.getModel = function () {
+            return fluid.moduleLayout.layoutToIds(layout);
+        };
+              
+        return that;
+    };
+})(jQuery, fluid_1_4);
+/*
+Copyright 2008-2009 University of Cambridge
+Copyright 2008-2009 University of Toronto
+
+Licensed under the Educational Community License (ECL), Version 2.0 or the New
+BSD license. You may not use this file except in compliance with one these
+Licenses.
+
+You may obtain a copy of the ECL 2.0 License and BSD License at
+https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
+*/
+
+// Declare dependencies
+/*global fluid_1_4:true, jQuery*/
+
+// JSLint options 
+/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
+
+var fluid_1_4 = fluid_1_4 || {};
+
+(function ($, fluid) {
+ 
+    /**
+     * Simple way to create a layout reorderer.
+     * @param {selector} a jQueryable (selector, element, jQuery) for the layout container
+     * @param {Object} a map of selectors for columns and modules within the layout
+     * @param {Function} a function to be called when the order changes 
+     * @param {Object} additional configuration options
+     */
+    fluid.reorderLayout = function (container, userOptions) {
+        var assembleOptions = {
+            layoutHandler: "fluid.moduleLayoutHandler",
+            selectors: {
+                columns: ".flc-reorderer-column",
+                modules: ".flc-reorderer-module"
+            }
+        };
+        var options = $.extend(true, assembleOptions, userOptions);
+        return fluid.reorderer(container, options);
+    };    
+})(jQuery, fluid_1_4);
+/*
+Copyright 2009 University of Cambridge
+Copyright 2009 University of Toronto
+
+Licensed under the Educational Community License (ECL), Version 2.0 or the New
+BSD license. You may not use this file except in compliance with one these
+Licenses.
+
+You may obtain a copy of the ECL 2.0 License and BSD License at
+https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
+*/
+
+// Declare dependencies
+/*global fluid_1_4:true, jQuery*/
+
+// JSLint options 
+/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
+
+var fluid_1_4 = fluid_1_4 || {};
+
+(function ($, fluid) {
+
+    /*
+     *  TODO: 
+     *  - get and implement a design for the table of contents 
+     *  - make the toc template pluggable
+     *  - make sure getting headings using something other then a selector works
+     *  - move interesting parts of the template to the defaults ie. link
+     */ 
+    
+
+    /**
+     * Inserts an anchor into the page in front of the element.
+     * @param {Object} el
+     */    
+    var insertAnchor = function (el) {
+        var a = $("<a name='" + el.text() + "' />", el[0].ownerDocument);
+        el.before(a);
+    };
+    
+    /**
+     * Creates a generic tree node
+     */
+    var createNode = function (id) {
+        var node = {
+            ID: id,
+            children: []
+        };
+        return node;
+    };
+
+    /**
+     * Creates the renderer tree that matches the table of contents template
+     * @param {jQuery Object} headings - the headings to be put into the table of contents
+     */
+    var createTree = function (headings, levels) {
+        
+        // Builds the tree recursively 
+        var generateTree = function (nodes, items, level) {
+            if (items.length === 0) {
+                return;
+            }
+            
+            var item = items[0];
+            
+            if (level === item.level) {
+                nodes[nodes.length - 1].push(item.leaf);
+                items.shift();
+                return generateTree(nodes, items, level);
+            }
+            
+            if (level < item.level) {
+                var prefix = level > -1 ? "level" + (level + 1) + ":" : "";
+                var postfix = level === -1 ? "s:" : "s";
+                var name = prefix + "level" + (level + 2) + postfix;
+                var myNode = createNode(name);
+                nodes[nodes.length - 1].push(myNode);
+                nodes.push(myNode.children);
+                return generateTree(nodes, items, level + 1);
+            }
+            
+            if (level > item.level) {
+                nodes.pop();
+                return generateTree(nodes, items, level - 1);
+            }
+        };
+
+        var tree = {
+            children: []
+        };
+        
+        // Leaf nodes for the renderer tree from the headings
+        var items = fluid.transform(headings, function (heading) {
+                var level = $.inArray(heading.tagName, levels);
+                var text = $(heading).text();
+                return {
+                    level: level,
+                    leaf: {
+                        ID: "level" + (level + 1) + ":item",
+                        children: [{
+                            ID: "link",
+                            linktext: text,
+                            target: "#" + text
+                        }]
+                    }
+                };
+            });
+
+        generateTree([tree.children], items, -1);
+        
+        return tree;
+    };
+    
+    var buildTOC = function (container, headings, levels, templateURL, afterRender) {
+        // Insert anchors into the page that the table of contents will link to
+        headings.each(function (i, el) {
+            insertAnchor($(el));
+        });
+        
+        // Data structure needed by fetchResources
+        var resources = {
+            toc: {
+                href: templateURL
+            }
+        };
+        
+        // Get the template, create the tree and render the table of contents
+        fluid.fetchResources(resources, function () {
+            var templates = fluid.parseTemplates(resources, ["toc"], {});
+            var node = $("<div></div>", container[0].ownerDocument);
+            fluid.reRender(templates, node, createTree(headings, levels), {});
+            container.prepend(node);
+            afterRender.fire(node);
+        });
+    };
+
+    fluid.tableOfContents = function (container, options) {
+        var that = fluid.initView("fluid.tableOfContents", container, options);
+
+        // TODO: need better name for tocNode. and node, while you're at it. 
+        //       also, should the DOM be exposed in this way? Is there a better way to handle this?
+        that.events.afterRender.addListener(function (node) {
+            that.tocNode = $(node);
+        });
+
+        buildTOC(that.container, that.locate("headings"), that.options.levels, that.options.templateUrl, that.events.afterRender);
+
+        // TODO: is it weird to have hide and show on a component? 
+        that.hide = function () {
+            if (that.tocNode) {
+                that.tocNode.hide();
+            }
+        };
+        
+        that.show = function () {
+            if (that.tocNode) {
+                that.tocNode.show();
+            }
+        };
+
+        return that;
+    };
+    
+    fluid.defaults("fluid.tableOfContents", {  
+        selectors: {
+            headings: ":header"
+        },
+        events: {
+            afterRender: null
+        },
+        templateUrl: "../html/TableOfContents.html",
+        levels: ["H1", "H2", "H3", "H4", "H5", "H6"]
+    });
+
+})(jQuery, fluid_1_4);
 /*
 Copyright 2008-2009 University of Cambridge
 Copyright 2008-2009 University of Toronto
@@ -21080,386 +26485,6 @@ https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
 */
 
 // Declare dependencies
-/*global fluid_1_4:true, jQuery*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {    
-    
-    var animateDisplay = function (elm, animation, defaultAnimation) {
-        animation = (animation) ? animation : defaultAnimation;
-        elm.animate(animation.params, animation.duration, animation.callback);
-    };
-    
-    var animateProgress = function (elm, width, speed) {
-        // de-queue any left over animations
-        elm.queue("fx", []); 
-        
-        elm.animate({ 
-            width: width,
-            queue: false
-        }, 
-        speed);
-    };
-    
-    var showProgress = function (that, animation) {
-        if (animation === false) {
-            that.displayElement.show();
-        } else {
-            animateDisplay(that.displayElement, animation, that.options.showAnimation);
-        }
-    };
-    
-    var hideProgress = function (that, delay, animation) {
-        
-        delay = (delay === null || isNaN(delay)) ? that.options.delay : delay;
-        
-        if (delay) {
-            // use a setTimeout to delay the hide for n millies, note use of recursion
-            var timeOut = setTimeout(function () {
-                hideProgress(that, 0, animation);
-            }, delay);
-        } else {
-            if (animation === false) {
-                that.displayElement.hide();
-            } else {
-                animateDisplay(that.displayElement, animation, that.options.hideAnimation);
-            }
-        }   
-    };
-    
-    var updateWidth = function (that, newWidth, dontAnimate) {
-        dontAnimate  = dontAnimate || false;
-        var currWidth = that.indicator.width();
-        var direction = that.options.animate;
-        if ((newWidth > currWidth) && (direction === "both" || direction === "forward") && !dontAnimate) {
-            animateProgress(that.indicator, newWidth, that.options.speed);
-        } else if ((newWidth < currWidth) && (direction === "both" || direction === "backward") && !dontAnimate) {
-            animateProgress(that.indicator, newWidth, that.options.speed);
-        } else {
-            that.indicator.width(newWidth);
-        }
-    };
-         
-    var percentToPixels = function (that, percent) {
-        // progress does not support percents over 100, also all numbers are rounded to integers
-        return Math.round((Math.min(percent, 100) * that.progressBar.innerWidth()) / 100);
-    };
-    
-    var refreshRelativeWidth = function (that)  {
-        var pixels = Math.max(percentToPixels(that, parseFloat(that.storedPercent)), that.options.minWidth);
-        updateWidth(that, pixels, true);
-    };
-        
-    var initARIA = function (ariaElement, ariaBusyText) {
-        ariaElement.attr("role", "progressbar");
-        ariaElement.attr("aria-valuemin", "0");
-        ariaElement.attr("aria-valuemax", "100");
-        ariaElement.attr("aria-valuenow", "0");
-        //Empty value for ariaBusyText will default to aria-valuenow.
-        if (ariaBusyText) {
-            ariaElement.attr("aria-valuetext", "");
-        }
-        ariaElement.attr("aria-busy", "false");
-    };
-    
-    var updateARIA = function (that, percent) {
-        var str = that.options.strings;
-        var busy = percent < 100 && percent > 0;
-        that.ariaElement.attr("aria-busy", busy);
-        that.ariaElement.attr("aria-valuenow", percent);   
-        //Empty value for ariaBusyText will default to aria-valuenow.
-        if (str.ariaBusyText) {
-            if (busy) {
-                var busyString = fluid.stringTemplate(str.ariaBusyText, {percentComplete : percent});           
-                that.ariaElement.attr("aria-valuetext", busyString);
-            } else if (percent === 100) {
-                // FLUID-2936: JAWS doesn't currently read the "Progress is complete" message to the user, even though we set it here.
-                that.ariaElement.attr("aria-valuetext", str.ariaDoneText);
-            }
-        }
-    };
-        
-    var updateText = function (label, value) {
-        label.html(value);
-    };
-    
-    var repositionIndicator = function (that) {
-        that.indicator.css("top", that.progressBar.position().top)
-            .css("left", 0)
-            .height(that.progressBar.height());
-        refreshRelativeWidth(that);
-    };
-        
-    var updateProgress = function (that, percent, labelText, animationForShow) {
-        
-        // show progress before updating, jQuery will handle the case if the object is already displayed
-        showProgress(that, animationForShow);
-            
-        // do not update if the value of percent is falsey
-        if (percent !== null) {
-            that.storedPercent = percent;
-        
-            var pixels = Math.max(percentToPixels(that, parseFloat(percent)), that.options.minWidth);   
-            updateWidth(that, pixels);
-        }
-        
-        if (labelText !== null) {
-            updateText(that.label, labelText);
-        }
-        
-        // update ARIA
-        if (that.ariaElement) {
-            updateARIA(that, percent);
-        }
-    };
-        
-    var setupProgress = function (that) {
-        that.displayElement = that.locate("displayElement");
-
-        // hide file progress in case it is showing
-        if (that.options.initiallyHidden) {
-            that.displayElement.hide();
-        }
-
-        that.progressBar = that.locate("progressBar");
-        that.label = that.locate("label");
-        that.indicator = that.locate("indicator");
-        that.ariaElement = that.locate("ariaElement");
-        
-        that.indicator.width(that.options.minWidth);
-
-        that.storedPercent = 0;
-                
-        // initialize ARIA
-        if (that.ariaElement) {
-            initARIA(that.ariaElement, that.options.strings.ariaBusyText);
-        }
-        
-        // afterProgressHidden:  
-        // Registering listener with the callback provided by the user and reinitializing
-        // the event trigger function. 
-        // Note: callback depricated as of 1.5, use afterProgressHidden event
-        if (that.options.hideAnimation.callback) {
-            that.events.afterProgressHidden.addListener(that.options.hideAnimation.callback);           
-        }
-        
-        // triggers the afterProgressHidden event    
-        // Note: callback depricated as of 1.5, use afterProgressHidden event
-        that.options.hideAnimation.callback = that.events.afterProgressHidden.fire;
-
-        
-        // onProgressBegin:
-        // Registering listener with the callback provided by the user and reinitializing
-        // the event trigger function.  
-        // Note: callback depricated as of 1.5, use onProgressBegin event
-        if (that.options.showAnimation.callback) {
-            that.events.onProgressBegin.addListener(that.options.showAnimation.callback);                      
-        } 
-            
-        // triggers the onProgressBegin event
-        // Note: callback depricated as of 1.5, use onProgressBegin event
-        that.options.showAnimation.callback = that.events.onProgressBegin.fire;
-    };
-           
-    /**
-    * Instantiates a new Progress component.
-    * 
-    * @param {jQuery|Selector|Element} container the DOM element in which the Uploader lives
-    * @param {Object} options configuration options for the component.
-    */
-    fluid.progress = function (container, options) {
-        var that = fluid.initView("fluid.progress", container, options);
-        setupProgress(that);
-        
-        /**
-         * Shows the progress bar if is currently hidden.
-         * 
-         * @param {Object} animation a custom animation used when showing the progress bar
-         */
-        that.show = function (animation) {
-            showProgress(that, animation);
-        };
-        
-        /**
-         * Hides the progress bar if it is visible.
-         * 
-         * @param {Number} delay the amount of time to wait before hiding
-         * @param {Object} animation a custom animation used when hiding the progress bar
-         */
-        that.hide = function (delay, animation) {
-            hideProgress(that, delay, animation);
-        };
-        
-        /**
-         * Updates the state of the progress bar.
-         * This will automatically show the progress bar if it is currently hidden.
-         * Percentage is specified as a decimal value, but will be automatically converted if needed.
-         * 
-         * 
-         * @param {Number|String} percentage the current percentage, specified as a "float-ish" value 
-         * @param {String} labelValue the value to set for the label; this can be an HTML string
-         * @param {Object} animationForShow the animation to use when showing the progress bar if it is hidden
-         */
-        that.update = function (percentage, labelValue, animationForShow) {
-            updateProgress(that, percentage, labelValue, animationForShow);
-        };
-        
-        that.refreshView = function () {
-            repositionIndicator(that);
-        };
-                        
-        return that;  
-    };
-      
-    fluid.defaults("fluid.progress", {
-        gradeNames: "fluid.viewComponent",
-        selectors: {
-            displayElement: ".flc-progress", // required, the element that gets displayed when progress is displayed, could be the indicator or bar or some larger outer wrapper as in an overlay effect
-            progressBar: ".flc-progress-bar", //required
-            indicator: ".flc-progress-indicator", //required
-            label: ".flc-progress-label", //optional
-            ariaElement: ".flc-progress-bar" // usually required, except in cases where there are more than one progressor for the same data such as a total and a sub-total
-        },
-        
-        strings: {
-            //Empty value for ariaBusyText will default to aria-valuenow.
-            ariaBusyText: "Progress is %percentComplete percent complete",
-            ariaDoneText: "Progress is complete."
-        },
-        
-        // progress display and hide animations, use the jQuery animation primatives, set to false to use no animation
-        // animations must be symetrical (if you hide with width, you'd better show with width) or you get odd effects
-        // see jQuery docs about animations to customize
-        showAnimation: {
-            params: {
-                opacity: "show"
-            }, 
-            duration: "slow",
-            //callback has been deprecated and will be removed as of 1.5, instead use onProgressBegin event 
-            callback: null 
-        }, // equivalent of $().fadeIn("slow")
-        
-        hideAnimation: {
-            params: {
-                opacity: "hide"
-            }, 
-            duration: "slow", 
-            //callback has been deprecated and will be removed as of 1.5, instead use afterProgressHidden event 
-            callback: null
-        }, // equivalent of $().fadeOut("slow")
-        
-        events: {            
-            onProgressBegin: null,
-            afterProgressHidden: null            
-        },
-
-        minWidth: 5, // 0 length indicators can look broken if there is a long pause between updates
-        delay: 0, // the amount to delay the fade out of the progress
-        speed: 200, // default speed for animations, pretty fast
-        animate: "forward", // suppport "forward", "backward", and "both", any other value is no animation either way
-        initiallyHidden: true, // supports progress indicators which may always be present
-        updatePosition: false
-    });
-    
-})(jQuery, fluid_1_4);
-/*
-Copyright 2008-2009 University of Toronto
-Copyright 2010-2011 OCAD University
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global window, fluid_1_4:true, jQuery, swfobject*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {
-    fluid.registerNamespace("fluid.browser");
-    
-    fluid.browser.binaryXHR = function () {
-        var canSendBinary = window.FormData || 
-            (window.XMLHttpRequest && 
-                window.XMLHttpRequest.prototype &&
-                window.XMLHttpRequest.prototype.sendAsBinary);
-        return canSendBinary ? fluid.typeTag("fluid.browser.supportsBinaryXHR") : undefined;
-    };
-    
-    fluid.browser.formData  = function () {
-        return window.FormData ? fluid.typeTag("fluid.browser.supportsFormData") : undefined;
-    };
-    
-    fluid.browser.flash = function () {
-        var hasModernFlash = (typeof(swfobject) !== "undefined") && (swfobject.getFlashPlayerVersion().major > 8);
-        return hasModernFlash ? fluid.typeTag("fluid.browser.supportsFlash") : undefined;
-    };
-    
-    fluid.progressiveChecker = function (options) {
-        var that = fluid.initLittleComponent("fluid.progressiveChecker", options);
-        return fluid.find(that.options.checks, function(check) {
-            if (check.feature) {
-                return fluid.typeTag(check.contextName);
-            }}, that.options.defaultTypeTag
-        );
-    };
-    
-    fluid.progressiveCheckerForComponent = function (options) {
-        var that = fluid.initLittleComponent("fluid.progressiveCheckerForComponent", options);
-        var defaults = fluid.defaults(that.options.componentName);
-        return fluid.progressiveChecker(fluid.expandOptions(defaults.progressiveCheckerOptions, that));  
-    };
-    
-    fluid.defaults("fluid.progressiveChecker", {
-        checks: [], // [{"feature": "{IoC Expression}", "contextName": "context.name"}]
-        defaultTypeTag: undefined
-    });
-    
-    
-    /**********************************************************
-     * This code runs immediately upon inclusion of this file *
-     **********************************************************/
-    
-    // Use JavaScript to hide any markup that is specifically in place for cases when JavaScript is off.
-    // Note: the use of fl-ProgEnhance-basic is deprecated, and replaced by fl-progEnhance-basic.
-    // It is included here for backward compatibility only.
-    $("head").append("<style type='text/css'>.fl-progEnhance-basic, .fl-ProgEnhance-basic { display: none; } .fl-progEnhance-enhanced, .fl-ProgEnhance-enhanced { display: block; }</style>");
-    
-    // Browser feature detection--adds corresponding type tags to the static environment,
-    // which can be used to define appropriate demands blocks for components using the IoC system.
-    var features = {
-        supportsBinaryXHR: fluid.browser.binaryXHR(),
-        supportsFormData: fluid.browser.formData(),
-        supportsFlash: fluid.browser.flash()
-    };
-    fluid.merge(null, fluid.staticEnvironment, features);
-    
-})(jQuery, fluid_1_4);
-/*
-Copyright 2008-2009 University of Toronto
-Copyright 2008-2009 University of California, Berkeley
-Copyright 2010-2011 OCAD University
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
 /*global window, fluid_1_4:true, jQuery*/
 
 // JSLint options 
@@ -21720,14 +26745,14 @@ var fluid_1_4 = fluid_1_4 || {};
         
         that.events.onFileError.addListener(function (file, error) {
             if (error === fluid.uploader.errorConstants.UPLOAD_STOPPED) {
-                that.queue.isUploading = false;
+                file.filestatus = fluid.uploader.fileStatusConstants.CANCELLED;
                 return;
-            }
-            
-            file.filestatus = fluid.uploader.fileStatusConstants.ERROR;
-            if (that.queue.isUploading) {
-                that.queue.currentBatch.totalBytesUploaded += file.size;
-                that.queue.currentBatch.numFilesErrored++;
+            } else {
+                file.filestatus = fluid.uploader.fileStatusConstants.ERROR;
+                if (that.queue.isUploading) {
+                    that.queue.currentBatch.totalBytesUploaded += file.size;
+                    that.queue.currentBatch.numFilesErrored++;
+                }
             }
         });
 
@@ -21769,13 +26794,17 @@ var fluid_1_4 = fluid_1_4 || {};
         return that.uploaderImpl;
     };
     
+    fluid.uploaderImpl = function () {
+        fluid.fail("Error creating uploader component - please make sure that a progressiveCheckerForComponent for \"fluid.uploader\" is registered either in the "
+          + "static environment or else is visible in the current component tree");
+    };
+    
     fluid.defaults("fluid.uploader", {
         gradeNames: ["fluid.viewComponent"],
         components: {
             uploaderContext: {
                 type: "fluid.progressiveCheckerForComponent",
-                options: {componentName: "fluid.uploader"},
-                priority: "first"
+                options: {componentName: "fluid.uploader"}
             },
             uploaderImpl: {
                 type: "fluid.uploaderImpl",
@@ -21794,7 +26823,7 @@ var fluid_1_4 = fluid_1_4 || {};
                     contextName: "fluid.uploader.swfUpload"
                 }
             ],
-            defaultTypeTag: fluid.typeTag("fluid.uploader.singleFile")
+            defaultContextName: "fluid.uploader.singleFile"
         }
     });
     
@@ -23288,7 +28317,7 @@ var fluid_1_4 = fluid_1_4 || {};
                         afterFileDialog: "{multiFileUploader}.events.afterFileDialog",
                         afterFileQueued: "{multiFileUploader}.events.afterFileQueued",
                         onQueueError: "{multiFileUploader}.events.onQueueError"
-                   }
+                    }
                 }
             },
             
@@ -23311,8 +28340,7 @@ var fluid_1_4 = fluid_1_4 || {};
         // Used for browsers that rely on File.getAsBinary(), such as Firefox 3.6,
         // which load the entire file to be loaded into memory.
         // Set this option to a sane limit (100MB) so your users won't experience crashes or slowdowns (FLUID-3937).
-        legacyBrowserFileLimit: 100000,
-    
+        legacyBrowserFileLimit: 100000
     });
     
     
@@ -23325,7 +28353,6 @@ var fluid_1_4 = fluid_1_4 || {};
     };
     
     fluid.uploader.html5Strategy.fileErrorHandler = function (file, events, xhr) {
-        file.filestatus = fluid.uploader.fileStatusConstants.ERROR;
         events.onFileError.fire(file, 
                                 fluid.uploader.errorConstants.UPLOAD_FAILED,
                                 xhr.status,
@@ -23334,7 +28361,6 @@ var fluid_1_4 = fluid_1_4 || {};
     };
     
     fluid.uploader.html5Strategy.fileStopHandler = function (file, events, xhr) {
-        file.filestatus = fluid.uploader.fileStatusConstants.CANCELLED;
         events.onFileError.fire(file, 
                                 fluid.uploader.errorConstants.UPLOAD_STOPPED,
                                 xhr.status,
@@ -23356,9 +28382,12 @@ var fluid_1_4 = fluid_1_4 || {};
         return that;
     };
     
-    var createFileUploadXHR = function (file, events) {
+    fluid.uploader.html5Strategy.createFileUploadXHR = function () {
         var xhr = new XMLHttpRequest();
-
+        return xhr;
+    };
+    
+    fluid.uploader.html5Strategy.monitorFileUploadXHR = function (file, events, xhr) {
         xhr.onreadystatechange = function () {
             if (xhr.readyState === 4) {
                 var status = xhr.status;
@@ -23402,11 +28431,13 @@ var fluid_1_4 = fluid_1_4 || {};
         
         that.uploadFile = function (file) {
             that.events.onFileStart.fire(file);
-            that.currentXHR = createFileUploadXHR(file, that.events);
+            var xhr = that.createXHR();
+            that.currentXHR = fluid.uploader.html5Strategy.monitorFileUploadXHR(file, that.events, xhr);
             that.doUpload(file, that.queueSettings, that.currentXHR);            
         };
 
         that.stop = function () {
+            that.queue.isUploading = false;
             that.currentXHR.abort();         
         };
         
@@ -23421,7 +28452,8 @@ var fluid_1_4 = fluid_1_4 || {};
             options: 1  
         },                
         invokers: {
-            doUpload: "fluid.uploader.html5Strategy.doUpload"
+            doUpload: "fluid.uploader.html5Strategy.doUpload",
+            createXHR: "fluid.uploader.html5Strategy.createFileUploadXHR"
         }
     });
     
@@ -23490,6 +28522,10 @@ var fluid_1_4 = fluid_1_4 || {};
         funcName: "fluid.uploader.html5Strategy.doManualMultipartUpload",
         args: ["@0", "@1", "@2"]
     });
+    
+    fluid.demands("fluid.uploader.html5Strategy.createFileUploadXHR", "fluid.uploader.html5Strategy.remote", {
+        funcName: "fluid.uploader.html5Strategy.createFileUploadXHR"
+    });    
     
     // Configuration for FF4, Chrome, and Safari 4+, all of which support FormData correctly.
     fluid.demands("fluid.uploader.html5Strategy.doUpload", [
@@ -23654,7 +28690,7 @@ var fluid_1_4 = fluid_1_4 || {};
     
     fluid.defaults("fluid.uploader.html5Strategy.browseButtonView", {
         gradeNames: "fluid.viewComponent",
-        multiFileInputMarkup: "<input type='file' multiple='' class='flc-uploader-html5-input fl-hidden' />",
+        multiFileInputMarkup: "<input type='file' multiple='' class='flc-uploader-html5-input' />",
         
         queueSettings: {},
         
@@ -23855,4890 +28891,4 @@ var fluid_1_4 = fluid_1_4 || {};
         ]
     });
     
-})(jQuery, fluid_1_4);
-/*
- * jQuery UI Tooltip @VERSION
- *
- * Copyright 2010, AUTHORS.txt
- * Dual licensed under the MIT or GPL Version 2 licenses.
- * http://jquery.org/license
- *
- * http://docs.jquery.com/UI/Tooltip
- *
- * Depends:
- *	jquery.ui.core.js
- *	jquery.ui.widget.js
- *	jquery.ui.position.js
- */
-(function($) {
-
-var increments = 0;
-
-$.widget("ui.tooltip", {
-	options: {
-		items: "[title]",
-		content: function() {
-			return $(this).attr("title");
-		},
-		position: {
-			my: "left center",
-			at: "right center",
-			offset: "15 0"
-		}
-	},
-	_create: function() {
-		var self = this;
-		this.tooltip = $("<div></div>")
-			.attr("id", "ui-tooltip-" + increments++)
-			.attr("role", "tooltip")
-			.attr("aria-hidden", "true")
-			.addClass("ui-tooltip ui-widget ui-corner-all ui-widget-content")
-			.appendTo(document.body)
-			.hide();
-		this.tooltipContent = $("<div></div>")
-			.addClass("ui-tooltip-content")
-			.appendTo(this.tooltip);
-		this.opacity = this.tooltip.css("opacity");
-		this.element
-			.bind("focus.tooltip mouseover.tooltip", function(event) {
-				self.open( event );
-			})
-			.bind("blur.tooltip mouseout.tooltip", function(event) {
-				self.close( event );
-			});
-	},
-	
-	enable: function() {
-		this.options.disabled = false;
-	},
-	
-	disable: function() {
-		this.options.disabled = true;
-	},
-	
-	destroy: function() {
-		this.tooltip.remove();
-		$.Widget.prototype.destroy.apply(this, arguments);
-	},
-	
-	widget: function() {
-		return this.element.pushStack(this.tooltip.get());
-	},
-	
-	open: function(event) {
-		var target = $(event && event.target || this.element).closest(this.options.items);
-		// already visible? possible when both focus and mouseover events occur
-		if (this.current && this.current[0] == target[0])
-			return;
-		var self = this;
-		this.current = target;
-		this.currentTitle = target.attr("title");
-		var content = this.options.content.call(target[0], function(response) {
-			// IE may instantly serve a cached response, need to give it a chance to finish with _show before that
-			setTimeout(function() {
-				// ignore async responses that come in after the tooltip is already hidden
-				if (self.current == target)
-					self._show(event, target, response);
-			}, 13);
-		});
-		if (content) {
-			self._show(event, target, content);
-		}
-	},
-	
-	_show: function(event, target, content) {
-		if (!content)
-			return;
-		
-		target.attr("title", "");
-		
-		if (this.options.disabled)
-			return;
-			
-		this.tooltipContent.html(content);
-		this.tooltip.css({
-			top: 0,
-			left: 0
-		}).show().position( $.extend({
-			of: target
-		}, this.options.position )).hide();
-		
-		this.tooltip.attr("aria-hidden", "false");
-		target.attr("aria-describedby", this.tooltip.attr("id"));
-
-		this.tooltip.stop(false, true).fadeIn();
-
-		this._trigger( "open", event );
-	},
-	
-	close: function(event) {
-		if (!this.current)
-			return;
-		
-		var current = this.current.attr("title", this.currentTitle);
-		this.current = null;
-		
-		if (this.options.disabled)
-			return;
-		
-		current.removeAttr("aria-describedby");
-		this.tooltip.attr("aria-hidden", "true");
-		
-		this.tooltip.stop(false, true).fadeOut();
-		
-		this._trigger( "close", event );
-	}
-	
-});
-
-})(jQuery);/*
-Copyright 2010 OCAD University
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global fluid_1_4:true, jQuery*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {
-    
-    var createContentFunc = function (content) {
-        return typeof content === "function" ? content : function () {
-            return content;
-        };
-    };
-
-    var setup = function (that) {
-        that.container.tooltip({
-            content: createContentFunc(that.options.content),
-            position: that.options.position,
-            items: that.options.items,
-            open: function (event) {
-                var tt = $(event.target).tooltip("widget");
-                tt.stop(false, true);
-                tt.hide();
-                if (that.options.delay) {
-                    tt.delay(that.options.delay).fadeIn("default", that.events.afterOpen.fire());
-                } else {
-                    tt.show();
-                    that.events.afterOpen.fire();
-                }
-            },
-            close: function (event) {
-                var tt = $(event.target).tooltip("widget");
-                tt.stop(false, true);
-                tt.hide();
-                tt.clearQueue();
-                that.events.afterClose.fire();
-            } 
-        });
-        
-        that.elm = that.container.tooltip("widget");
-        
-        that.elm.addClass(that.options.styles.tooltip);
-    };
-
-    fluid.tooltip = function (container, options) {
-        var that = fluid.initView("fluid.tooltip", container, options);
-        
-        /**
-         * Updates the contents displayed in the tooltip
-         * 
-         * @param {Object} content, the content to be displayed in the tooltip
-         */
-        that.updateContent = function (content) {
-            that.container.tooltip("option", "content", createContentFunc(content));
-        };
-        
-        /**
-         * Destroys the underlying jquery ui tooltip
-         */
-        that.destroy = function () {
-            that.container.tooltip("destroy");
-        };
-        
-        /**
-         * Manually displays the tooltip
-         */
-        that.open = function () {
-            that.container.tooltip("open");
-        };
-        
-        /**
-         * Manually hides the tooltip
-         */
-        that.close = function () {
-            that.container.tooltip("close");
-        };
-        
-        setup(that);
-        
-        return that;
-    };
-    
-    fluid.defaults("fluid.tooltip", {
-        styles: {
-            tooltip: ""
-        },
-        
-        events: {
-            afterOpen: null,
-            afterClose: null  
-        },
-        
-        content: "",
-        
-        position: {
-            my: "left top",
-            at: "left bottom",
-            offset: "0 5"
-        },
-        
-        items: "*",
-        
-        delay: 300
-    });
-
-})(jQuery, fluid_1_4);
-/* Copyright (c) 2006 Brandon Aaron (http://brandonaaron.net)
- * Dual licensed under the MIT (http://www.opensource.org/licenses/mit-license.php) 
- * and GPL (http://www.opensource.org/licenses/gpl-license.php) licenses.
- *
- * $LastChangedDate$
- * $Rev$
- *
- * Version 2.1
- */
-
-(function($){
-
-/**
- * The bgiframe is chainable and applies the iframe hack to get 
- * around zIndex issues in IE6. It will only apply itself in IE 
- * and adds a class to the iframe called 'bgiframe'. The iframe
- * is appeneded as the first child of the matched element(s) 
- * with a tabIndex and zIndex of -1.
- * 
- * By default the plugin will take borders, sized with pixel units,
- * into account. If a different unit is used for the border's width,
- * then you will need to use the top and left settings as explained below.
- *
- * NOTICE: This plugin has been reported to cause perfromance problems
- * when used on elements that change properties (like width, height and
- * opacity) a lot in IE6. Most of these problems have been caused by 
- * the expressions used to calculate the elements width, height and 
- * borders. Some have reported it is due to the opacity filter. All 
- * these settings can be changed if needed as explained below.
- *
- * @example $('div').bgiframe();
- * @before <div><p>Paragraph</p></div>
- * @result <div><iframe class="bgiframe".../><p>Paragraph</p></div>
- *
- * @param Map settings Optional settings to configure the iframe.
- * @option String|Number top The iframe must be offset to the top
- * 		by the width of the top border. This should be a negative 
- *      number representing the border-top-width. If a number is 
- * 		is used here, pixels will be assumed. Otherwise, be sure
- *		to specify a unit. An expression could also be used. 
- * 		By default the value is "auto" which will use an expression 
- * 		to get the border-top-width if it is in pixels.
- * @option String|Number left The iframe must be offset to the left
- * 		by the width of the left border. This should be a negative 
- *      number representing the border-left-width. If a number is 
- * 		is used here, pixels will be assumed. Otherwise, be sure
- *		to specify a unit. An expression could also be used. 
- * 		By default the value is "auto" which will use an expression 
- * 		to get the border-left-width if it is in pixels.
- * @option String|Number width This is the width of the iframe. If
- *		a number is used here, pixels will be assume. Otherwise, be sure
- * 		to specify a unit. An experssion could also be used.
- *		By default the value is "auto" which will use an experssion
- * 		to get the offsetWidth.
- * @option String|Number height This is the height of the iframe. If
- *		a number is used here, pixels will be assume. Otherwise, be sure
- * 		to specify a unit. An experssion could also be used.
- *		By default the value is "auto" which will use an experssion
- * 		to get the offsetHeight.
- * @option Boolean opacity This is a boolean representing whether or not
- * 		to use opacity. If set to true, the opacity of 0 is applied. If
- *		set to false, the opacity filter is not applied. Default: true.
- * @option String src This setting is provided so that one could change 
- *		the src of the iframe to whatever they need.
- *		Default: "javascript:false;"
- *
- * @name bgiframe
- * @type jQuery
- * @cat Plugins/bgiframe
- * @author Brandon Aaron (brandon.aaron@gmail.com || http://brandonaaron.net)
- */
-$.fn.bgIframe = $.fn.bgiframe = function(s) {
-	// This is only for IE6
-	if ( $.browser.msie && parseInt($.browser.version) <= 6 ) {
-		s = $.extend({
-			top     : 'auto', // auto == .currentStyle.borderTopWidth
-			left    : 'auto', // auto == .currentStyle.borderLeftWidth
-			width   : 'auto', // auto == offsetWidth
-			height  : 'auto', // auto == offsetHeight
-			opacity : true,
-			src     : 'javascript:false;'
-		}, s || {});
-		var prop = function(n){return n&&n.constructor==Number?n+'px':n;},
-		    html = '<iframe class="bgiframe"frameborder="0"tabindex="-1"src="'+s.src+'"'+
-		               'style="display:block;position:absolute;z-index:-1;'+
-			               (s.opacity !== false?'filter:Alpha(Opacity=\'0\');':'')+
-					       'top:'+(s.top=='auto'?'expression(((parseInt(this.parentNode.currentStyle.borderTopWidth)||0)*-1)+\'px\')':prop(s.top))+';'+
-					       'left:'+(s.left=='auto'?'expression(((parseInt(this.parentNode.currentStyle.borderLeftWidth)||0)*-1)+\'px\')':prop(s.left))+';'+
-					       'width:'+(s.width=='auto'?'expression(this.parentNode.offsetWidth+\'px\')':prop(s.width))+';'+
-					       'height:'+(s.height=='auto'?'expression(this.parentNode.offsetHeight+\'px\')':prop(s.height))+';'+
-					'"/>';
-		return this.each(function() {
-			if ( $('> iframe.bgiframe', this).length == 0 )
-				this.insertBefore( document.createElement(html), this.firstChild );
-		});
-	}
-	return this;
-};
-
-// Add browser.version if it doesn't exist
-if (!$.browser.version)
-	$.browser.version = navigator.userAgent.toLowerCase().match(/.+(?:rv|it|ra|ie)[\/: ]([\d.]+)/)[1];
-
-})(jQuery);/*
-Copyright 2008-2009 University of Cambridge
-Copyright 2008-2010 University of Toronto
-Copyright 2010 Lucendo Development Ltd.
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global fluid_1_4:true, jQuery*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {
-    
-  // The three states of the undo component
-    var STATE_INITIAL = "state_initial", 
-        STATE_CHANGED = "state_changed",
-        STATE_REVERTED = "state_reverted";
-  
-    function defaultRenderer(that, targetContainer) {
-        var str = that.options.strings;
-        var markup = "<span class='flc-undo'>" + 
-            "<a href='#' class='flc-undo-undoControl'>" + str.undo + "</a>" + 
-            "<a href='#' class='flc-undo-redoControl'>" + str.redo + "</a>" + 
-            "</span>";
-        var markupNode = $(markup).attr({
-            "role": "region",  
-            "aria-live": "polite", 
-            "aria-relevant": "all"
-        });
-        targetContainer.append(markupNode);
-        return markupNode;
-    }
-    
-    function refreshView(that) {
-        if (that.state === STATE_INITIAL) {
-            that.locate("undoContainer").hide();
-            that.locate("redoContainer").hide();
-        }
-        else if (that.state === STATE_CHANGED) {
-            that.locate("undoContainer").show();
-            that.locate("redoContainer").hide();
-        }
-        else if (that.state === STATE_REVERTED) {
-            that.locate("undoContainer").hide();
-            that.locate("redoContainer").show();          
-        }
-    }
-   
-    
-    var bindHandlers = function (that) { 
-        that.locate("undoControl").click( 
-            function () {
-                if (that.state !== STATE_REVERTED) {
-                    fluid.model.copyModel(that.extremalModel, that.component.model);
-                    that.component.updateModel(that.initialModel, that);
-                    that.state = STATE_REVERTED;
-                    refreshView(that);
-                    that.locate("redoControl").focus();
-                }
-                return false;
-            }
-        );
-        that.locate("redoControl").click( 
-            function () {
-                if (that.state !== STATE_CHANGED) {
-                    that.component.updateModel(that.extremalModel, that);
-                    that.state = STATE_CHANGED;
-                    refreshView(that);
-                    that.locate("undoControl").focus();
-                }
-                return false;
-            }
-        );
-        return {
-            modelChanged: function (newModel, oldModel, source) {
-                if (source !== that) {
-                    that.state = STATE_CHANGED;
-                
-                    fluid.model.copyModel(that.initialModel, oldModel);
-                
-                    refreshView(that);
-                }
-            }
-        };
-    };
-    
-    /**
-     * Decorates a target component with the function of "undoability"
-     * 
-     * @param {Object} component a "model-bearing" standard Fluid component to receive the "undo" functionality
-     * @param {Object} options a collection of options settings
-     */
-    fluid.undoDecorator = function (component, userOptions) {
-        var that = fluid.initLittleComponent("undo", userOptions);
-        that.container = that.options.renderer(that, component.container);
-        fluid.initDomBinder(that);
-        fluid.tabindex(that.locate("undoControl"), 0);
-        fluid.tabindex(that.locate("redoControl"), 0);
-        
-        that.component = component;
-        that.initialModel = {};
-        that.extremalModel = {};
-        fluid.model.copyModel(that.initialModel, component.model);
-        fluid.model.copyModel(that.extremalModel, component.model);
-        
-        that.state = STATE_INITIAL;
-        refreshView(that);
-        var listeners = bindHandlers(that);
-        
-        that.returnedOptions = {
-            listeners: listeners
-        };
-        return that;
-    };
-  
-    fluid.defaults("undo", {  
-        selectors: {
-            undoContainer: ".flc-undo-undoControl",
-            undoControl: ".flc-undo-undoControl",
-            redoContainer: ".flc-undo-redoControl",
-            redoControl: ".flc-undo-redoControl"
-        },
-        
-        strings: {
-            undo: "undo edit",
-            redo: "redo edit"
-        },
-                    
-        renderer: defaultRenderer
-    });
-        
-})(jQuery, fluid_1_4);
-/*
-Copyright 2008-2009 University of Cambridge
-Copyright 2008-2010 University of Toronto
-Copyright 2008-2009 University of California, Berkeley
-Copyright 2010 OCAD University
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global fluid_1_4:true, jQuery*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {
-    
-    function sendKey(control, event, virtualCode, charCode) {
-        var kE = document.createEvent("KeyEvents");
-        kE.initKeyEvent(event, 1, 1, null, 0, 0, 0, 0, virtualCode, charCode);
-        control.dispatchEvent(kE);
-    }
-    
-    /** Set the caret position to the end of a text field's value, also taking care
-     * to scroll the field so that this position is visible.
-     * @param {DOM node} control The control to be scrolled (input, or possibly textarea)
-     * @param value The current value of the control
-     */
-    fluid.setCaretToEnd = function (control, value) {
-        var pos = value ? value.length : 0;
-
-        try {
-            control.focus();
-        // see http://www.quirksmode.org/dom/range_intro.html - in Opera, must detect setSelectionRange first, 
-        // since its support for Microsoft TextRange is buggy
-            if (control.setSelectionRange) {
-
-                control.setSelectionRange(pos, pos);
-                if ($.browser.mozilla && pos > 0) {
-                  // ludicrous fix for Firefox failure to scroll to selection position, inspired by
-                  // http://bytes.com/forum/thread496726.html
-                    sendKey(control, "keypress", 92, 92); // type in a junk character
-                    sendKey(control, "keydown", 8, 0); // delete key must be dispatched exactly like this
-                    sendKey(control, "keypress", 8, 0);
-                }
-            }
-
-            else if (control.createTextRange) {
-                var range = control.createTextRange();
-                range.move("character", pos);
-                range.select();
-            }
-        }
-        catch (e) {} 
-    };
-
-    var switchToViewMode = function (that) {
-        that.editContainer.hide();
-        that.displayModeRenderer.show();
-    };
-    
-    var cancel = function (that) {
-        if (that.isEditing()) {
-            // Roll the edit field back to its old value and close it up.
-            // This setTimeout is necessary on Firefox, since any attempt to modify the 
-            // input control value during the stack processing the ESCAPE key will be ignored.
-            setTimeout(function () {
-                that.editView.value(that.model.value);
-            }, 1);
-            switchToViewMode(that);
-            that.events.afterFinishEdit.fire(that.model.value, that.model.value, 
-                that.editField[0], that.viewEl[0]);
-        }
-    };
-    
-    var finish = function (that) {
-        var newValue = that.editView.value();
-        var oldValue = that.model.value;
-
-        var viewNode = that.viewEl[0];
-        var editNode = that.editField[0];
-        var ret = that.events.onFinishEdit.fire(newValue, oldValue, editNode, viewNode);
-        if (ret === false) {
-            return;
-        }
-        
-        that.updateModelValue(newValue);
-        that.events.afterFinishEdit.fire(newValue, oldValue, editNode, viewNode);
-        
-        switchToViewMode(that);
-    };
-    
-    /** 
-     * Do not allow the textEditButton to regain focus upon completion unless
-     * the keypress is enter or esc.
-     */  
-    var bindEditFinish = function (that) {
-        if (that.options.submitOnEnter === undefined) {
-            that.options.submitOnEnter = "textarea" !== fluid.unwrap(that.editField).nodeName.toLowerCase();
-        }
-        function keyCode(evt) {
-            // Fix for handling arrow key presses. See FLUID-760.
-            return evt.keyCode ? evt.keyCode : (evt.which ? evt.which : 0);          
-        }
-        var escHandler = function (evt) {
-            var code = keyCode(evt);
-            if (code === $.ui.keyCode.ESCAPE) {
-                that.textEditButton.focus(0);
-                cancel(that);
-                return false;
-            }
-        };
-        var finishHandler = function (evt) {
-            var code = keyCode(evt);
-            
-            if (code !== $.ui.keyCode.ENTER) {
-                that.textEditButton.blur();
-                return true;
-            }
-            else {
-                finish(that);
-                that.textEditButton.focus(0);
-            }
-            
-            return false;
-        };
-        if (that.options.submitOnEnter) {
-            that.editContainer.keypress(finishHandler);
-        }
-        that.editContainer.keydown(escHandler);
-    };
-
-    var bindBlurHandler = function (that) {
-        if (that.options.blurHandlerBinder) {
-            that.options.blurHandlerBinder(that);
-        }
-        else {
-            var blurHandler = function (evt) {
-                if (that.isEditing()) {
-                    finish(that);
-                }
-                return false;
-            };
-            that.editField.blur(blurHandler);
-        }
-    };
-
-    var initializeEditView = function (that, initial) {
-        if (!that.editInitialized) { 
-            fluid.inlineEdit.renderEditContainer(that, !that.options.lazyEditView || !initial);
-            
-            if (!that.options.lazyEditView || !initial) {
-                that.editView = fluid.initSubcomponent(that, "editView", that.editField);
-                
-                $.extend(true, that.editView, fluid.initSubcomponent(that, "editAccessor", that.editField));
-        
-                bindEditFinish(that);
-                bindBlurHandler(that);
-                that.editView.refreshView(that);
-                that.editInitialized = true;
-            }
-        }
-    };
-    
-    var edit = function (that) {
-        initializeEditView(that, false);
-      
-        var viewEl = that.viewEl;
-        var displayText = that.displayView.value();
-        that.updateModelValue(that.model.value === "" ? "" : displayText);
-        if (that.options.applyEditPadding) {
-            that.editField.width(Math.max(viewEl.width() + that.options.paddings.edit, that.options.paddings.minimumEdit));
-        }
-
-        that.displayModeRenderer.hide();
-        that.editContainer.show();                  
-
-        // Work around for FLUID-726
-        // Without 'setTimeout' the finish handler gets called with the event and the edit field is inactivated.       
-        setTimeout(function () {
-            fluid.setCaretToEnd(that.editField[0], that.editView.value());
-            if (that.options.selectOnEdit) {
-                that.editField[0].select();
-            }
-        }, 0);
-        that.events.afterBeginEdit.fire();
-    };
-
-    var clearEmptyViewStyles = function (textEl, styles, originalViewPadding) {
-        textEl.removeClass(styles.defaultViewStyle);
-        textEl.css('padding-right', originalViewPadding);
-        textEl.removeClass(styles.emptyDefaultViewText);
-    };
-    
-    var showDefaultViewText = function (that) {
-        that.displayView.value(that.options.defaultViewText);
-        that.viewEl.css('padding-right', that.existingPadding);
-        that.viewEl.addClass(that.options.styles.defaultViewStyle);
-    };
-
-    var showNothing = function (that) {
-        that.displayView.value("");
-        
-        // workaround for FLUID-938:
-        // IE can not style an empty inline element, so force element to be display: inline-block
-        if ($.browser.msie) {
-            if (that.viewEl.css('display') === 'inline') {
-                that.viewEl.css('display', "inline-block");
-            }
-        }
-    };
-
-    var showEditedText = function (that) {
-        that.displayView.value(that.model.value);
-        clearEmptyViewStyles(that.viewEl, that.options.styles, that.existingPadding);
-    };
-    
-    var refreshView = function (that, source) {
-        that.displayView.refreshView(that, source);
-        if (that.editView) {
-            that.editView.refreshView(that, source);
-        }
-    };
-    
-    var initModel = function (that, value) {
-        that.model.value = value;
-        that.refreshView();
-    };
-    
-    var updateModelValue = function (that, newValue, source) {
-        var comparator = that.options.modelComparator;
-        var unchanged = comparator ? comparator(that.model.value, newValue) : 
-            that.model.value === newValue;
-        if (!unchanged) {
-            var oldModel = $.extend(true, {}, that.model);
-            that.model.value = newValue;
-            that.events.modelChanged.fire(that.model, oldModel, source);
-            that.refreshView(source);
-        }
-    };
-        
-    var makeIsEditing = function (that) {
-        var isEditing = false;
-
-        that.events.onBeginEdit.addListener(function () {
-            isEditing = true;
-        });
-        that.events.afterFinishEdit.addListener(function () {
-            isEditing = false; 
-        });
-        return function () {
-            return isEditing;
-        };
-    };
-    
-    var makeEditHandler = function (that) {
-        return function () {
-            var prevent = that.events.onBeginEdit.fire();
-            if (prevent === false) {
-                return false;
-            }
-            edit(that);
-            
-            return true;
-        }; 
-    };    
-    
-    // Initialize the tooltip once the document is ready.
-    // For more details, see http://issues.fluidproject.org/browse/FLUID-1030
-    var initTooltips = function (that) {
-        var tooltipOptions = {
-            content: that.options.tooltipText,
-            position: {
-                my: "left top",
-                at: "left bottom",
-                offset: "0 5"
-            },
-            target: "*",
-            delay: that.options.tooltipDelay,
-            styles: {
-                tooltip: that.options.styles.tooltip
-            }     
-        };
-        
-        fluid.tooltip(that.viewEl, tooltipOptions);
-        
-        if (that.textEditButton) {
-            fluid.tooltip(that.textEditButton, tooltipOptions);
-        }
-    };
-    
-    var calculateInitialPadding = function (viewEl) {
-        var padding = viewEl.css("padding-right");
-        return padding ? parseFloat(padding) : 0;
-    };
-    
-    var setupInlineEdit = function (componentContainer, that) {
-        // Hide the edit container to start
-        if (that.editContainer) {
-            that.editContainer.hide();
-        }
-        
-        // Add tooltip handler if required and available
-        if (that.tooltipEnabled()) {
-            initTooltips(that);
-        }
-        
-        // Setup any registered decorators for the component.
-        that.decorators = fluid.initSubcomponents(that, "componentDecorators", 
-            [that, fluid.COMPONENT_OPTIONS]);
-    };
-    
-    /**
-     * Creates a whole list of inline editors.
-     */
-    var setupInlineEdits = function (editables, options) {
-        var editors = [];
-        editables.each(function (idx, editable) {
-            editors.push(fluid.inlineEdit($(editable), options));
-        });
-        
-        return editors;
-    };
-    
-    /**
-     * Instantiates a new Inline Edit component
-     * 
-     * @param {Object} componentContainer a selector, jquery, or a dom element representing the component's container
-     * @param {Object} options a collection of options settings
-     */
-    fluid.inlineEdit = function (componentContainer, userOptions) {   
-        var that = fluid.initView("inlineEdit", componentContainer, userOptions);
-        
-        that.viewEl = fluid.inlineEdit.setupDisplayText(that);
-        
-        that.displayView = fluid.initSubcomponent(that, "displayView", that.viewEl);
-        $.extend(true, that.displayView, fluid.initSubcomponent(that, "displayAccessor", that.viewEl));
-
-        /**
-         * The current value of the inline editable text. The "model" in MVC terms.
-         */
-        that.model = {value: ""};
-       
-        /**
-         * Switches to edit mode.
-         */
-        that.edit = makeEditHandler(that);
-        
-        /**
-         * Determines if the component is currently in edit mode.
-         * 
-         * @return true if edit mode shown, false if view mode is shown
-         */
-        that.isEditing = makeIsEditing(that);
-        
-        /**
-         * Finishes editing, switching back to view mode.
-         */
-        that.finish = function () {
-            finish(that);
-        };
-
-        /**
-         * Cancels the in-progress edit and switches back to view mode.
-         */
-        that.cancel = function () {
-            cancel(that);
-        };
-
-        /**
-         * Determines if the tooltip feature is enabled.
-         * 
-         * @return true if the tooltip feature is turned on, false if not
-         */
-        that.tooltipEnabled = function () {
-            return that.options.useTooltip && $.fn.tooltip;
-        };
-        
-        /**
-         * Updates the state of the inline editor in the DOM, based on changes that may have
-         * happened to the model.
-         * 
-         * @param {Object} source
-         */
-        that.refreshView = function (source) {
-            refreshView(that, source);
-        };
-        
-        /**
-         * Pushes external changes to the model into the inline editor, refreshing its
-         * rendering in the DOM. The modelChanged event will fire.
-         * 
-         * @param {String} newValue The bare value of the model, that is, the string being edited
-         * @param {Object} source An optional "source" (perhaps a DOM element) which triggered this event
-         */
-        that.updateModelValue = function (newValue, source) {
-            updateModelValue(that, newValue, source);
-        };
-        
-        /**
-         * Pushes external changes to the model into the inline editor, refreshing its
-         * rendering in the DOM. The modelChanged event will fire.
-         * 
-         * @param {Object} newValue The full value of the new model, that is, a model object which contains the editable value as the element named "value"
-         * @param {Object} source An optional "source" (perhaps a DOM element) which triggered this event
-         */
-        that.updateModel = function (newModel, source) {
-            updateModelValue(that, newModel.value, source);
-        };
-        
-        that.existingPadding = calculateInitialPadding(that.viewEl);
-        
-        initModel(that, that.displayView.value());
-        
-        that.displayModeRenderer = that.options.displayModeRenderer(that);  
-        initializeEditView(that, true);
-        setupInlineEdit(componentContainer, that);
-        
-        return that;
-    };
-    
-    /**
-     * Set up and style the edit field.  If an edit field is not provided,
-     * default markup is created for the edit field 
-     * 
-     * @param {string} editStyle The default styling for the edit field
-     * @param {Object} editField The edit field markup provided by the integrator
-     * 
-     * @return eField The styled edit field   
-     */
-    fluid.inlineEdit.setupEditField = function (editStyle, editField) {
-        var eField = $(editField);
-        eField = eField.length ? eField : $("<input type='text' class='flc-inlineEdit-edit'/>");
-        eField.addClass(editStyle);
-        return eField;
-    };
-
-    /**
-     * Set up the edit container and append the edit field to the container.  If an edit container
-     * is not provided, default markup is created.
-     * 
-     * @param {Object} displayContainer The display mode container 
-     * @param {Object} editField The edit field that is to be appended to the edit container 
-     * @param {Object} editContainer The edit container markup provided by the integrator   
-     * 
-     * @return eContainer The edit container containing the edit field   
-     */
-    fluid.inlineEdit.setupEditContainer = function (displayContainer, editField, editContainer) {
-        var eContainer = $(editContainer);
-        eContainer = eContainer.length ? eContainer : $("<span></span>");
-        displayContainer.after(eContainer);
-        eContainer.append(editField);
-        
-        return eContainer;
-    };
-    
-    /**
-     * Default renderer for the edit mode view.
-     * 
-     * @return {Object} container The edit container containing the edit field
-     *                  field The styled edit field  
-     */
-    fluid.inlineEdit.defaultEditModeRenderer = function (that) {
-        var editField = fluid.inlineEdit.setupEditField(that.options.styles.edit, that.editField);
-        var editContainer = fluid.inlineEdit.setupEditContainer(that.displayModeRenderer, editField, that.editContainer);
-        var editModeInstruction = fluid.inlineEdit.setupEditModeInstruction(that.options.styles.editModeInstruction, that.options.strings.editModeInstruction);
-        
-        var id = fluid.allocateSimpleId(editModeInstruction);
-        editField.attr("aria-describedby", id);
-
-        fluid.inlineEdit.positionEditModeInstruction(editModeInstruction, editContainer, editField);
-              
-        // Package up the container and field for the component.
-        return {
-            container: editContainer,
-            field: editField 
-        };
-    };
-    
-    /**
-     * Configures the edit container and view, and uses the component's editModeRenderer to render
-     * the edit container.
-     *  
-     * @param {boolean} lazyEditView If true, will delay rendering of the edit container;
-     *                                            Default is false 
-     */
-    fluid.inlineEdit.renderEditContainer = function (that, lazyEditView) {
-        that.editContainer = that.locate("editContainer");
-        that.editField = that.locate("edit");
-        if (that.editContainer.length !== 1) {
-            if (that.editContainer.length > 1) {
-                fluid.fail("InlineEdit did not find a unique container for selector " + that.options.selectors.editContainer +
-                   ": " + fluid.dumpEl(that.editContainer));
-            }
-        }
-        
-        if (!lazyEditView) {
-            return; 
-        } // do not invoke the renderer, unless this is the "final" effective time
-        
-        var editElms = that.options.editModeRenderer(that);
-        if (editElms) {
-            that.editContainer = editElms.container;
-            that.editField = editElms.field;
-        }
-    };
-
-    /**
-     * Set up the edit mode instruction with aria in edit mode
-     * 
-     * @param {String} editModeInstructionStyle The default styling for the instruction
-     * @param {String} editModeInstructionText The default instruction text
-     * 
-     * @return {jQuery} The displayed instruction in edit mode
-     */
-    fluid.inlineEdit.setupEditModeInstruction = function (editModeInstructionStyle, editModeInstructionText) {
-        var editModeInstruction = $("<p></p>");
-        editModeInstruction.addClass(editModeInstructionStyle);
-        editModeInstruction.text(editModeInstructionText);
-
-        return editModeInstruction;
-    };
-
-    /**
-     * Positions the edit mode instruction directly beneath the edit container
-     * 
-     * @param {Object} editModeInstruction The displayed instruction in edit mode
-     * @param {Object} editContainer The edit container in edit mode
-     * @param {Object} editField The edit field in edit mode
-     */    
-    fluid.inlineEdit.positionEditModeInstruction = function (editModeInstruction, editContainer, editField) {
-        editContainer.append(editModeInstruction);
-        
-        editField.focus(function () {
-            editModeInstruction.show();
-
-            var editFieldPosition = editField.offset();
-            editModeInstruction.css({left: editFieldPosition.left});
-            editModeInstruction.css({top: editFieldPosition.top + editField.height() + 5});
-        });
-    };  
-    
-    /**
-     * Set up and style the display mode container for the viewEl and the textEditButton 
-     * 
-     * @param {Object} styles The default styling for the display mode container
-     * @param {Object} displayModeWrapper The markup used to generate the display mode container
-     * 
-     * @return {jQuery} The styled display mode container
-     */
-    fluid.inlineEdit.setupDisplayModeContainer = function (styles, displayModeWrapper) {
-        var displayModeContainer = $(displayModeWrapper);  
-        displayModeContainer = displayModeContainer.length ? displayModeContainer : $("<span></span>");  
-        displayModeContainer.addClass(styles.displayView);
-        
-        return displayModeContainer;
-    };
-    
-    /**
-     * Retrieve the display text from the DOM.  
-     * 
-     * @return {jQuery} The display text
-     */
-    fluid.inlineEdit.setupDisplayText = function (that) {
-        var viewEl = that.locate("text");
-
-        /*
-         *  Remove the display from the tab order to prevent users to think they
-         *  are able to access the inline edit field, but they cannot since the 
-         *  keyboard event binding is only on the button.
-         */
-        viewEl.attr("tabindex", "-1");
-        viewEl.addClass(that.options.styles.text);
-        
-        return viewEl;
-    };
-    
-    /**
-     * Set up the textEditButton.  Append a background image with appropriate
-     * descriptive text to the button.
-     * 
-     * @return {jQuery} The accessible button located after the display text
-     */
-    fluid.inlineEdit.setupTextEditButton = function (that) {
-        var opts = that.options;
-        var textEditButton = that.locate("textEditButton");
-        
-        if  (textEditButton.length === 0) {
-            var markup = $("<a href='#_' class='flc-inlineEdit-textEditButton'></a>");
-            markup.addClass(opts.styles.textEditButton);
-            markup.text(opts.tooltipText);            
-            
-            /**
-             * Set text for the button and listen
-             * for modelChanged to keep it updated
-             */ 
-            fluid.inlineEdit.updateTextEditButton(markup, that.model.value || opts.defaultViewText, opts.strings.textEditButton);
-            that.events.modelChanged.addListener(function () {
-                fluid.inlineEdit.updateTextEditButton(markup, that.model.value || opts.defaultViewText, opts.strings.textEditButton);
-            });        
-            
-            that.locate("text").after(markup);
-            
-            // Refresh the textEditButton with the newly appended options
-            textEditButton = that.locate("textEditButton");
-        } 
-        return textEditButton;
-    };    
-
-    /**
-     * Update the textEditButton text with the current value of the field.
-     * 
-     * @param {Object} textEditButton the textEditButton
-     * @param {String} model The current value of the inline editable text
-     * @param {Object} strings Text option for the textEditButton
-     */
-    fluid.inlineEdit.updateTextEditButton = function (textEditButton, value, stringTemplate) {
-        var buttonText = fluid.stringTemplate(stringTemplate, {
-            text: value
-        });
-        textEditButton.text(buttonText);
-    };
-    
-    /**
-     * Bind mouse hover event handler to the display mode container.  
-     * 
-     * @param {Object} displayModeRenderer The display mode container
-     * @param {String} invitationStyle The default styling for the display mode container on mouse hover
-     */
-    fluid.inlineEdit.bindHoverHandlers = function (displayModeRenderer, invitationStyle) {
-        var over = function (evt) {
-            displayModeRenderer.addClass(invitationStyle);
-        };     
-        var out = function (evt) {
-            displayModeRenderer.removeClass(invitationStyle);
-        };
-        displayModeRenderer.hover(over, out);
-    };    
-    
-    /**
-     * Bind keyboard focus and blur event handlers to an element
-     * 
-     * @param {Object} element The element to which the event handlers are bound
-     * @param {Object} displayModeRenderer The display mode container
-     * @param {Ojbect} styles The default styling for the display mode container on mouse hover
-     */    
-    fluid.inlineEdit.bindHighlightHandler = function (element, displayModeRenderer, styles) {
-        element = $(element);
-        
-        var focusOn = function () {
-            displayModeRenderer.addClass(styles.focus);
-            displayModeRenderer.addClass(styles.invitation);
-        };
-        var focusOff = function () {
-            displayModeRenderer.removeClass(styles.focus);
-            displayModeRenderer.removeClass(styles.invitation);
-        };
-        
-        element.focus(focusOn);
-        element.blur(focusOff);
-    };        
-    
-    /**
-     * Bind mouse click handler to an element
-     * 
-     * @param {Object} element The element to which the event handler is bound
-     * @param {Object} edit Function to invoke the edit mode
-     * 
-     * @return {boolean} Returns false if entering edit mode
-     */
-    fluid.inlineEdit.bindMouseHandlers = function (element, edit) {
-        element = $(element);
-        
-        var triggerGuard = fluid.inlineEdit.makeEditTriggerGuard(element, edit);
-        element.click(function (e) {
-            triggerGuard(e);
-            return false;
-        });
-    };
-
-    /**
-     * Bind keyboard press handler to an element
-     * 
-     * @param {Object} element The element to which the event handler is bound
-     * @param {Object} edit Function to invoke the edit mode
-     * 
-     * @return {boolean} Returns false if entering edit mode
-     */    
-    fluid.inlineEdit.bindKeyboardHandlers = function (element, edit) {
-        element = $(element);
-        element.attr("role", "button");
-        
-        var guard = fluid.inlineEdit.makeEditTriggerGuard(element, edit);
-        fluid.activatable(element, function (event) {
-            return guard(event);
-        });
-    };
-    
-    /**
-     * Creates an event handler that will trigger the edit mode if caused by something other
-     * than standard HTML controls. The event handler will return false if entering edit mode.
-     * 
-     * @param {Object} element The element to trigger the edit mode
-     * @param {Object} edit Function to invoke the edit mode
-     * 
-     * @return {function} The event handler function
-     */    
-    fluid.inlineEdit.makeEditTriggerGuard = function (element, edit) {
-        var selector = fluid.unwrap(element);
-        return function (event) {
-            // FLUID-2017 - avoid triggering edit mode when operating standard HTML controls. Ultimately this
-            // might need to be extensible, in more complex authouring scenarios.
-            var outer = fluid.findAncestor(event.target, function (elem) {
-                if (/input|select|textarea|button|a/i.test(elem.nodeName) || elem === selector) {
-                    return true; 
-                }
-            });
-            if (outer === selector) {
-                edit();
-                return false;
-            }
-        };
-    };
-    
-    /**
-     * Render the display mode view.  
-     * 
-     * @return {jQuery} The display container containing the display text and 
-     *                             textEditbutton for display mode view
-     */
-    fluid.inlineEdit.defaultDisplayModeRenderer = function (that) {
-        var styles = that.options.styles;
-        
-        var displayModeWrapper = fluid.inlineEdit.setupDisplayModeContainer(styles);
-        var displayModeRenderer = that.viewEl.wrap(displayModeWrapper).parent();
-        
-        that.textEditButton = fluid.inlineEdit.setupTextEditButton(that);
-        displayModeRenderer.append(that.textEditButton);
-        
-        // Add event handlers.
-        fluid.inlineEdit.bindHoverHandlers(displayModeRenderer, styles.invitation);
-        fluid.inlineEdit.bindMouseHandlers(that.viewEl, that.edit);
-        fluid.inlineEdit.bindMouseHandlers(that.textEditButton, that.edit);
-        fluid.inlineEdit.bindKeyboardHandlers(that.textEditButton, that.edit);
-        fluid.inlineEdit.bindHighlightHandler(that.viewEl, displayModeRenderer, styles);
-        fluid.inlineEdit.bindHighlightHandler(that.textEditButton, displayModeRenderer, styles);
-        
-        return displayModeRenderer;
-    };    
-    
-    fluid.inlineEdit.standardAccessor = function (element) {
-        var nodeName = element.nodeName.toLowerCase();
-        var func = "input" === nodeName || "textarea" === nodeName ? "val" : "text";
-        return {
-            value: function (newValue) {
-                return $(element)[func](newValue);
-            }
-        };
-    };
-    
-    fluid.inlineEdit.standardDisplayView = function (viewEl) {
-        var that = {
-            refreshView: function (componentThat, source) {
-                if (componentThat.model.value) {
-                    showEditedText(componentThat);
-                } else if (componentThat.options.defaultViewText) {
-                    showDefaultViewText(componentThat);
-                } else {
-                    showNothing(componentThat);
-                }
-                // If necessary, pad the view element enough that it will be evident to the user.
-                if ($.trim(componentThat.viewEl.text()).length === 0) {
-                    componentThat.viewEl.addClass(componentThat.options.styles.emptyDefaultViewText);
-                    
-                    if (componentThat.existingPadding < componentThat.options.paddings.minimumView) {
-                        componentThat.viewEl.css('padding-right', componentThat.options.paddings.minimumView);
-                    }
-                }
-            }
-        };
-        return that;
-    };
-    
-    fluid.inlineEdit.standardEditView = function (editField) {
-        var that = {
-            refreshView: function (componentThat, source) {
-                if (!source || componentThat.editField && componentThat.editField.index(source) === -1) {
-                    componentThat.editView.value(componentThat.model.value);
-                }
-            }
-        };
-        $.extend(true, that, fluid.inlineEdit.standardAccessor(editField));
-        return that;
-    };
-    
-    /**
-     * Instantiates a list of InlineEdit components.
-     * 
-     * @param {Object} componentContainer the element containing the inline editors
-     * @param {Object} options configuration options for the components
-     */
-    fluid.inlineEdits = function (componentContainer, options) {
-        options = options || {};
-        var selectors = $.extend({}, fluid.defaults("inlineEdits").selectors, options.selectors);
-        
-        // Bind to the DOM.
-        var container = fluid.container(componentContainer);
-        var editables = $(selectors.editables, container);
-        
-        return setupInlineEdits(editables, options);
-    };
-    
-    fluid.defaults("inlineEdit", {  
-        selectors: {
-            text: ".flc-inlineEdit-text",
-            editContainer: ".flc-inlineEdit-editContainer",
-            edit: ".flc-inlineEdit-edit",
-            textEditButton: ".flc-inlineEdit-textEditButton"
-        },
-        
-        styles: {
-            text: "fl-inlineEdit-text",
-            edit: "fl-inlineEdit-edit",
-            invitation: "fl-inlineEdit-invitation",
-            defaultViewStyle: "fl-inlineEdit-emptyText-invitation",
-            emptyDefaultViewText: "fl-inlineEdit-emptyDefaultViewText",
-            focus: "fl-inlineEdit-focus",
-            tooltip: "fl-inlineEdit-tooltip",
-            editModeInstruction: "fl-inlineEdit-editModeInstruction",
-            displayView: "fl-inlineEdit-simple-editableText fl-inlineEdit-textContainer",
-            textEditButton: "fl-offScreen-hidden"
-        },
-        
-        events: {
-            modelChanged: null,
-            onBeginEdit: "preventable",
-            afterBeginEdit: null,
-            onFinishEdit: "preventable",
-            afterFinishEdit: null,
-            afterInitEdit: null
-        },
-
-        strings: {
-            textEditButton: "Edit text %text",
-            editModeInstruction: "Escape to cancel, Enter or Tab when finished"
-        },
-        
-        paddings: {
-            edit: 10,
-            minimumEdit: 80,
-            minimumView: 60
-        },
-        
-        applyEditPadding: true,
-        
-        blurHandlerBinder: null,
-        
-        // set this to true or false to cause unconditional submission, otherwise it will
-        // be inferred from the edit element tag type.
-        submitOnEnter: undefined,
-        
-        modelComparator: null,
-        
-        displayAccessor: {
-            type: "fluid.inlineEdit.standardAccessor"
-        },
-        
-        displayView: {
-            type: "fluid.inlineEdit.standardDisplayView"
-        },
-        
-        editAccessor: {
-            type: "fluid.inlineEdit.standardAccessor"
-        },
-        
-        editView: {
-            type: "fluid.inlineEdit.standardEditView"
-        },
-        
-        displayModeRenderer: fluid.inlineEdit.defaultDisplayModeRenderer,
-            
-        editModeRenderer: fluid.inlineEdit.defaultEditModeRenderer,
-        
-        lazyEditView: false,
-        
-        // this is here for backwards API compatibility, but should be in the strings block
-        defaultViewText: "Click here to edit",
-
-        /** View Mode Tooltip Settings **/
-        useTooltip: true,
-        
-        // this is here for backwards API compatibility, but should be in the strings block
-        tooltipText: "Select or press Enter to edit",
-        
-        tooltipDelay: 1000,
-
-        selectOnEdit: false        
-    });
-    
-    fluid.defaults("inlineEdits", {
-        selectors: {
-            editables: ".flc-inlineEditable"
-        }
-    });
-})(jQuery, fluid_1_4);
-/*
-Copyright 2008-2009 University of Cambridge
-Copyright 2008-2010 University of Toronto
-Copyright 2010 OCAD University
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global fluid, fluid_1_4:true, CKEDITOR, jQuery, FCKeditor, FCKeditorAPI, FCKeditor_OnComplete, tinyMCE*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {
-
-    /*************************************
-     * Shared Rich Text Editor functions *
-     *************************************/
-     
-    fluid.inlineEdit.makeViewAccessor = function (editorGetFn, setValueFn, getValueFn) {
-        return function (editField) {
-            return {
-                value: function (newValue) {
-                    var editor = editorGetFn(editField);
-                    if (!editor) {
-                        if (newValue) {
-                            $(editField).val(newValue);
-                        }
-                        return "";
-                    }
-                    if (newValue) {
-                        setValueFn(editField, editor, newValue);
-                    }
-                    else {
-                        return getValueFn(editor);
-                    }
-                }
-            };
-        };
-    };
-    
-    fluid.inlineEdit.richTextViewAccessor = function (element) {
-        return {
-            value: function (newValue) {
-                return $(element).html(newValue);
-            }
-        };
-    };        
-    
-    var configureInlineEdit = function (configurationName, container, options) {
-        var defaults = fluid.defaults(configurationName); 
-        var assembleOptions = fluid.merge(defaults ? defaults.mergePolicy: null, {}, defaults, options);
-        return fluid.inlineEdit(container, assembleOptions);
-    };
-
-    fluid.inlineEdit.normalizeHTML = function (value) {
-        var togo = $.trim(value.replace(/\s+/g, " "));
-        togo = togo.replace(/\s+<\//g, "</");
-        togo = togo.replace(/\<(\S+)[^\>\s]*\>/g, function (match) {
-            return match.toLowerCase();
-        });
-        return togo;
-    };
-    
-    fluid.inlineEdit.htmlComparator = function (el1, el2) {
-        return fluid.inlineEdit.normalizeHTML(el1) ===
-           fluid.inlineEdit.normalizeHTML(el2);
-    };
-    
-    fluid.inlineEdit.bindRichTextHighlightHandler = function (element, displayModeRenderer, invitationStyle) {
-        element = $(element);
-        
-        var focusOn = function () {
-            displayModeRenderer.addClass(invitationStyle);
-        };
-        var focusOff = function () {
-            displayModeRenderer.removeClass(invitationStyle);
-        };
-        
-        element.focus(focusOn);
-        element.blur(focusOff);
-    };        
-    
-    fluid.inlineEdit.setupRichTextEditButton = function (that) {
-        var opts = that.options;
-        var textEditButton = that.locate("textEditButton");
-        
-        if  (textEditButton.length === 0) {
-            var markup = $("<a href='#_' class='flc-inlineEdit-textEditButton'></a>");
-            markup.text(opts.strings.textEditButton);
-            
-            that.locate("text").after(markup);
-            
-            // Refresh the textEditButton with the newly appended options
-            textEditButton = that.locate("textEditButton");
-        } 
-        return textEditButton;
-    };    
-    
-    /**
-     * Wrap the display text and the textEditButton with the display mode container  
-     * for better style control.
-     */
-    fluid.inlineEdit.richTextDisplayModeRenderer = function (that) {
-        var styles = that.options.styles;
-        
-        var displayModeWrapper = fluid.inlineEdit.setupDisplayModeContainer(styles);
-        var displayModeRenderer = that.viewEl.wrap(displayModeWrapper).parent();
-        
-        that.textEditButton = fluid.inlineEdit.setupRichTextEditButton(that);
-        displayModeRenderer.append(that.textEditButton);
-        displayModeRenderer.addClass(styles.focus);
-        
-        // Add event handlers.
-        fluid.inlineEdit.bindHoverHandlers(displayModeRenderer, styles.invitation);
-        fluid.inlineEdit.bindMouseHandlers(that.textEditButton, that.edit);
-        fluid.inlineEdit.bindKeyboardHandlers(that.textEditButton, that.edit);
-        fluid.inlineEdit.bindRichTextHighlightHandler(that.viewEl, displayModeRenderer, styles.invitation);
-        fluid.inlineEdit.bindRichTextHighlightHandler(that.textEditButton, displayModeRenderer, styles.invitation);
-        
-        return displayModeRenderer;
-    };        
-
-   
-    /************************
-     * Tiny MCE Integration *
-     ************************/
-    
-    /**
-     * Instantiate a rich-text InlineEdit component that uses an instance of TinyMCE.
-     * 
-     * @param {Object} componentContainer the element containing the inline editors
-     * @param {Object} options configuration options for the components
-     */
-    fluid.inlineEdit.tinyMCE = function (container, options) {
-        var inlineEditor = configureInlineEdit("fluid.inlineEdit.tinyMCE", container, options);
-        tinyMCE.init(inlineEditor.options.tinyMCE);
-        return inlineEditor;
-    };
-        
-    fluid.inlineEdit.tinyMCE.getEditor = function (editField) {
-        return tinyMCE.get(editField.id);
-    };
-    
-    fluid.inlineEdit.tinyMCE.setValue = function (editField, editor, value) {
-        // without this, there is an intermittent race condition if the editor has been created on this event.
-        $(editField).val(value); 
-        editor.setContent(value, {format : 'raw'});
-    };
-    
-    fluid.inlineEdit.tinyMCE.getValue = function (editor) {
-        return editor.getContent();
-    };
-    
-    var flTinyMCE = fluid.inlineEdit.tinyMCE; // Shorter alias for awfully long fully-qualified names.
-    flTinyMCE.viewAccessor = fluid.inlineEdit.makeViewAccessor(flTinyMCE.getEditor, 
-                                                               flTinyMCE.setValue,
-                                                               flTinyMCE.getValue);
-   
-    fluid.inlineEdit.tinyMCE.blurHandlerBinder = function (that) {
-        function focusEditor(editor) {
-            setTimeout(function () {
-                tinyMCE.execCommand('mceFocus', false, that.editField[0].id);
-                if ($.browser.mozilla && $.browser.version.substring(0, 3) === "1.8") {
-                    // Have not yet found any way to make this work on FF2.x - best to do nothing,
-                    // for FLUID-2206
-                    //var body = editor.getBody();
-                    //fluid.setCaretToEnd(body.firstChild, "");
-                    return;
-                }
-                editor.selection.select(editor.getBody(), 1);
-                editor.selection.collapse(0);
-            }, 10);
-        }
-        
-        that.events.afterInitEdit.addListener(function (editor) {
-            focusEditor(editor);
-            var editorBody = editor.getBody();
-
-            // NB - this section has no effect - on most browsers no focus events
-            // are delivered to the actual body
-            fluid.deadMansBlur(that.editField, 
-                {exclusions: {body: $(editorBody)}, 
-                    handler: function () {
-                        that.cancel();
-                    }
-                });
-        });
-            
-        that.events.afterBeginEdit.addListener(function () {
-            var editor = tinyMCE.get(that.editField[0].id);
-            if (editor) {
-                focusEditor(editor);
-            } 
-        });
-    };
-   
-    fluid.inlineEdit.tinyMCE.editModeRenderer = function (that) {
-        var options = that.options.tinyMCE;
-        options.elements = fluid.allocateSimpleId(that.editField);
-        var oldinit = options.init_instance_callback;
-        
-        options.init_instance_callback = function (instance) {
-            that.events.afterInitEdit.fire(instance);
-            if (oldinit) {
-                oldinit();
-            }
-        };
-        
-        tinyMCE.init(options);
-    };
-    
-    fluid.defaults("fluid.inlineEdit.tinyMCE", {
-        tinyMCE : {
-            mode: "exact", 
-            theme: "simple"
-        },
-        useTooltip: true,
-        selectors: {
-            edit: "textarea" 
-        },
-        styles: {
-            invitation: "fl-inlineEdit-richText-invitation",
-            displayView: "fl-inlineEdit-textContainer",
-            text: ""
-                
-        },
-        strings: {
-            textEditButton: "Edit"
-        },
-        displayAccessor: {
-            type: "fluid.inlineEdit.richTextViewAccessor"
-        },
-        editAccessor: {
-            type: "fluid.inlineEdit.tinyMCE.viewAccessor"
-        },
-        lazyEditView: true,
-        defaultViewText: "Click Edit",
-        modelComparator: fluid.inlineEdit.htmlComparator,
-        blurHandlerBinder: fluid.inlineEdit.tinyMCE.blurHandlerBinder,
-        displayModeRenderer: fluid.inlineEdit.richTextDisplayModeRenderer,
-        editModeRenderer: fluid.inlineEdit.tinyMCE.editModeRenderer
-    });
-    
-    
-    /*****************************
-     * FCKEditor 2.x Integration *
-     *****************************/
-         
-    /**
-     * Instantiate a rich-text InlineEdit component that uses an instance of FCKeditor.
-     * Support for FCKEditor 2.x is now deprecated. We recommend the use of the simpler and more
-     * accessible CKEditor 3 instead.
-     * 
-     * @param {Object} componentContainer the element containing the inline editors
-     * @param {Object} options configuration options for the components
-     */
-    fluid.inlineEdit.FCKEditor = function (container, options) {
-        return configureInlineEdit("fluid.inlineEdit.FCKEditor", container, options);
-    };
-    
-    fluid.inlineEdit.FCKEditor.getEditor = function (editField) {
-        var editor = typeof(FCKeditorAPI) === "undefined" ? null: FCKeditorAPI.GetInstance(editField.id);
-        return editor;
-    };
-    
-    fluid.inlineEdit.FCKEditor.complete = fluid.event.getEventFirer();
-    
-    fluid.inlineEdit.FCKEditor.complete.addListener(function (editor) {
-        var editField = editor.LinkedField;
-        var that = $.data(editField, "fluid.inlineEdit.FCKEditor");
-        if (that && that.events) {
-            that.events.afterInitEdit.fire(editor);
-        }
-    });
-    
-    fluid.inlineEdit.FCKEditor.blurHandlerBinder = function (that) {
-        function focusEditor(editor) {
-            editor.Focus(); 
-        }
-        
-        that.events.afterInitEdit.addListener(
-            function (editor) {
-                focusEditor(editor);
-            }
-        );
-        that.events.afterBeginEdit.addListener(function () {
-            var editor = fluid.inlineEdit.FCKEditor.getEditor(that.editField[0]);
-            if (editor) {
-                focusEditor(editor);
-            } 
-        });
-
-    };
-    
-    fluid.inlineEdit.FCKEditor.editModeRenderer = function (that) {
-        var id = fluid.allocateSimpleId(that.editField);
-        $.data(fluid.unwrap(that.editField), "fluid.inlineEdit.FCKEditor", that);
-        var oFCKeditor = new FCKeditor(id);
-        // The Config object and the FCKEditor object itself expose different configuration sets,
-        // which possess a member "BasePath" with different meanings. Solve FLUID-2452, FLUID-2438
-        // by auto-inferring the inner path for Config (method from http://drupal.org/node/344230 )
-        var opcopy = fluid.copy(that.options.FCKEditor);
-        opcopy.BasePath = opcopy.BasePath + "editor/";
-        $.extend(true, oFCKeditor.Config, opcopy);
-        // somehow, some properties like Width and Height are set on the object itself
-
-        $.extend(true, oFCKeditor, that.options.FCKEditor);
-        oFCKeditor.Config.fluidInstance = that;
-        oFCKeditor.ReplaceTextarea();
-    };
-
-    fluid.inlineEdit.FCKEditor.setValue = function (editField, editor, value) {
-        editor.SetHTML(value);
-    };
-    
-    fluid.inlineEdit.FCKEditor.getValue = function (editor) {
-        return editor.GetHTML();
-    };
-    
-    var flFCKEditor = fluid.inlineEdit.FCKEditor;
-    
-    flFCKEditor.viewAccessor = fluid.inlineEdit.makeViewAccessor(flFCKEditor.getEditor,
-                                                                 flFCKEditor.setValue,
-                                                                 flFCKEditor.getValue);
-    
-    fluid.defaults("fluid.inlineEdit.FCKEditor", {
-        selectors: {
-            edit: "textarea" 
-        },
-        styles: {
-            invitation: "fl-inlineEdit-richText-invitation",
-            displayView: "fl-inlineEdit-textContainer",
-            text: ""
-        },
-        strings: {
-            textEditButton: "Edit"
-        },        
-        displayAccessor: {
-            type: "fluid.inlineEdit.richTextViewAccessor"
-        },
-        editAccessor: {
-            type: "fluid.inlineEdit.FCKEditor.viewAccessor"
-        },
-        lazyEditView: true,
-        defaultViewText: "Click Edit",
-        modelComparator: fluid.inlineEdit.htmlComparator,
-        blurHandlerBinder: fluid.inlineEdit.FCKEditor.blurHandlerBinder,
-        displayModeRenderer: fluid.inlineEdit.richTextDisplayModeRenderer,
-        editModeRenderer: fluid.inlineEdit.FCKEditor.editModeRenderer,
-        FCKEditor: {
-            BasePath: "fckeditor/"    
-        }
-    });
-    
-    
-    /****************************
-     * CKEditor 3.x Integration *
-     ****************************/
-    
-    fluid.inlineEdit.CKEditor = function (container, options) {
-        return configureInlineEdit("fluid.inlineEdit.CKEditor", container, options);
-    };
-    
-    fluid.inlineEdit.CKEditor.getEditor = function (editField) {
-        return CKEDITOR.instances[editField.id];
-    };
-    
-    fluid.inlineEdit.CKEditor.setValue = function (editField, editor, value) {
-        editor.setData(value);
-    };
-    
-    fluid.inlineEdit.CKEditor.getValue = function (editor) {
-        return editor.getData();
-    };
-    
-    var flCKEditor = fluid.inlineEdit.CKEditor;
-    flCKEditor.viewAccessor = fluid.inlineEdit.makeViewAccessor(flCKEditor.getEditor,
-                                                                flCKEditor.setValue,
-                                                                flCKEditor.getValue);
-                             
-    fluid.inlineEdit.CKEditor.focus = function (editor) {
-        setTimeout(function () {
-            // CKEditor won't focus itself except in a timeout.
-            editor.focus();
-        }, 0);
-    };
-    
-    // Special hacked HTML normalisation for CKEditor which spuriously inserts whitespace
-    // just after the first opening tag
-    fluid.inlineEdit.CKEditor.normalizeHTML = function (value) {
-        var togo = fluid.inlineEdit.normalizeHTML(value);
-        var angpos = togo.indexOf(">");
-        if (angpos !== -1 && angpos < togo.length - 1) {
-            if (togo.charAt(angpos + 1) !== " ") {
-                togo = togo.substring(0, angpos + 1) + " " + togo.substring(angpos + 1);
-            }
-        }
-        return togo;
-    };
-    
-    fluid.inlineEdit.CKEditor.htmlComparator = function (el1, el2) {
-        return fluid.inlineEdit.CKEditor.normalizeHTML(el1) ===
-           fluid.inlineEdit.CKEditor.normalizeHTML(el2);
-    };
-                                    
-    fluid.inlineEdit.CKEditor.blurHandlerBinder = function (that) {
-        that.events.afterInitEdit.addListener(fluid.inlineEdit.CKEditor.focus);
-        that.events.afterBeginEdit.addListener(function () {
-            var editor = fluid.inlineEdit.CKEditor.getEditor(that.editField[0]);
-            if (editor) {
-                fluid.inlineEdit.CKEditor.focus(editor);
-            }
-        });
-    };
-    
-    fluid.inlineEdit.CKEditor.editModeRenderer = function (that) {
-        var id = fluid.allocateSimpleId(that.editField);
-        $.data(fluid.unwrap(that.editField), "fluid.inlineEdit.CKEditor", that);
-        var editor = CKEDITOR.replace(id, that.options.CKEditor);
-        editor.on("instanceReady", function (e) {
-            fluid.inlineEdit.CKEditor.focus(e.editor);
-            that.events.afterInitEdit.fire(e.editor);
-        });
-    };                                                     
-    
-    fluid.defaults("fluid.inlineEdit.CKEditor", {
-        selectors: {
-            edit: "textarea" 
-        },
-        styles: {
-            invitation: "fl-inlineEdit-richText-invitation",
-            displayView: "fl-inlineEdit-textContainer",
-            text: ""
-        },
-        strings: {
-            textEditButton: "Edit"
-        },        
-        displayAccessor: {
-            type: "fluid.inlineEdit.richTextViewAccessor"
-        },
-        editAccessor: {
-            type: "fluid.inlineEdit.CKEditor.viewAccessor"
-        },
-        lazyEditView: true,
-        defaultViewText: "Click Edit",
-        modelComparator: fluid.inlineEdit.CKEditor.htmlComparator,
-        blurHandlerBinder: fluid.inlineEdit.CKEditor.blurHandlerBinder,
-        displayModeRenderer: fluid.inlineEdit.richTextDisplayModeRenderer,
-        editModeRenderer: fluid.inlineEdit.CKEditor.editModeRenderer,
-        CKEditor: {
-            // CKEditor-specific configuration goes here.
-        }
-    });
- 
-    
-    /************************
-     * Dropdown Integration *
-     ************************/    
-    /**
-     * Instantiate a drop-down InlineEdit component
-     * 
-     * @param {Object} container
-     * @param {Object} options
-     */
-    fluid.inlineEdit.dropdown = function (container, options) {
-        return configureInlineEdit("fluid.inlineEdit.dropdown", container, options);
-    };
-
-    fluid.inlineEdit.dropdown.editModeRenderer = function (that) {
-        var id = fluid.allocateSimpleId(that.editField);
-        that.editField.selectbox({
-            finishHandler: function () {
-                that.finish();
-            }
-        });
-        return {
-            container: that.editContainer,
-            field: $("input.selectbox", that.editContainer) 
-        };
-    };
-   
-    fluid.inlineEdit.dropdown.blurHandlerBinder = function (that) {
-        fluid.deadMansBlur(that.editField, {
-            exclusions: {selectBox: $("div.selectbox-wrapper", that.editContainer)},
-            handler: function () {
-                that.cancel();
-            }
-        });
-    };
-    
-    fluid.defaults("fluid.inlineEdit.dropdown", {
-        applyEditPadding: false,
-        blurHandlerBinder: fluid.inlineEdit.dropdown.blurHandlerBinder,
-        editModeRenderer: fluid.inlineEdit.dropdown.editModeRenderer
-    });
-})(jQuery, fluid_1_4);
-
-
-// This must be written outside any scope as a result of the FCKEditor event model.
-// Do not overwrite this function, if you wish to add your own listener to FCK completion,
-// register it with the standard fluid event firer at fluid.inlineEdit.FCKEditor.complete
-function FCKeditor_OnComplete(editorInstance) {
-    fluid.inlineEdit.FCKEditor.complete.fire(editorInstance);
-}
-/*
-Copyright 2008-2010 University of Cambridge
-Copyright 2008-2010 University of Toronto
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global fluid_1_4:true, jQuery*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {
-    /** 
-     * Returns the absolute position of a supplied DOM node in pixels.
-     * Implementation taken from quirksmode http://www.quirksmode.org/js/findpos.html
-     */
-    fluid.dom.computeAbsolutePosition = function (element) {
-        var curleft = 0, curtop = 0;
-        if (element.offsetParent) {
-            do {
-                curleft += element.offsetLeft;
-                curtop += element.offsetTop;
-                element = element.offsetParent;
-            } while (element);
-            return [curleft, curtop];
-        }
-    };
-    
-    /** 
-     * Cleanse the children of a DOM node by removing all <script> tags.
-     * This is necessary to prevent the possibility that these blocks are
-     * reevaluated if the node were reattached to the document. 
-     */
-    fluid.dom.cleanseScripts = function (element) {
-        var cleansed = $.data(element, fluid.dom.cleanseScripts.MARKER);
-        if (!cleansed) {
-            fluid.dom.iterateDom(element, function (node) {
-                return node.tagName.toLowerCase() === "script"? "delete" : null;
-            });
-            $.data(element, fluid.dom.cleanseScripts.MARKER, true);
-        }
-    };  
-    fluid.dom.cleanseScripts.MARKER = "fluid-scripts-cleansed";
-
-    /**
-     * Inserts newChild as the next sibling of refChild.
-     * @param {Object} newChild
-     * @param {Object} refChild
-     */
-    fluid.dom.insertAfter = function (newChild, refChild) {
-        var nextSib = refChild.nextSibling;
-        if (!nextSib) {
-            refChild.parentNode.appendChild(newChild);
-        }
-        else {
-            refChild.parentNode.insertBefore(newChild, nextSib);
-        }
-    };
-    
-    // The following two functions taken from http://developer.mozilla.org/En/Whitespace_in_the_DOM
-    /**
-     * Determine whether a node's text content is entirely whitespace.
-     *
-     * @param node  A node implementing the |CharacterData| interface (i.e.,
-     *              a |Text|, |Comment|, or |CDATASection| node
-     * @return     True if all of the text content of |nod| is whitespace,
-     *             otherwise false.
-     */
-    fluid.dom.isWhitespaceNode = function (node) {
-       // Use ECMA-262 Edition 3 String and RegExp features
-        return !(/[^\t\n\r ]/.test(node.data));
-    };
-    
-    /**
-     * Determine if a node should be ignored by the iterator functions.
-     *
-     * @param nod  An object implementing the DOM1 |Node| interface.
-     * @return     true if the node is:
-     *                1) A |Text| node that is all whitespace
-     *                2) A |Comment| node
-     *             and otherwise false.
-     */
-    fluid.dom.isIgnorableNode = function (node) {
-        return (node.nodeType === 8) || // A comment node
-         ((node.nodeType === 3) && fluid.dom.isWhitespaceNode(node)); // a text node, all ws
-    };
-
-})(jQuery, fluid_1_4);
-/*
-Copyright 2008-2010 University of Cambridge
-Copyright 2008-2010 University of Toronto
-Copyright 2010 OCAD University
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global window, fluid_1_4:true, jQuery*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {
-    
-    fluid.orientation = {
-        HORIZONTAL: 4,
-        VERTICAL: 1
-    };
-    
-    fluid.rectSides = {
-        // agree with fluid.orientation
-        4: ["left", "right"],
-        1: ["top", "bottom"],
-        // agree with fluid.direction
-        8: "top",
-        12: "bottom",
-        2: "left",
-        3: "right"
-    };
-    
-    /**
-     * This is the position, relative to a given drop target, that a dragged item should be dropped.
-     */
-    fluid.position = {
-        BEFORE: -1,
-        AFTER: 1,
-        INSIDE: 2,
-        REPLACE: 3
-    };
-    
-    /**
-     * For incrementing/decrementing a count or index, or moving in a rectilinear direction.
-     */
-    fluid.direction = {
-        NEXT: 1,
-        PREVIOUS: -1,
-        UP: 8,
-        DOWN: 12,
-        LEFT: 2,
-        RIGHT: 3
-    };
-    
-    fluid.directionSign = function (direction) {
-        return direction === fluid.direction.UP || direction === fluid.direction.LEFT ? 
-             fluid.direction.PREVIOUS : fluid.direction.NEXT;
-    };
-    
-    fluid.directionAxis = function (direction) {
-        return direction === fluid.direction.LEFT || direction === fluid.direction.RIGHT ?
-            0 : 1; 
-    };
-    
-    fluid.directionOrientation = function (direction) {
-        return fluid.directionAxis(direction) ? fluid.orientation.VERTICAL : fluid.orientation.HORIZONTAL;
-    };
-    
-    fluid.keycodeDirection = {
-        up: fluid.direction.UP,
-        down: fluid.direction.DOWN,
-        left: fluid.direction.LEFT,
-        right: fluid.direction.RIGHT
-    };
-    
-    // moves a single node in the DOM to a new position relative to another
-    fluid.moveDom = function (source, target, position) {
-        source = fluid.unwrap(source);
-        target = fluid.unwrap(target);
-        
-        var scan;
-        // fluid.log("moveDom source " + fluid.dumpEl(source) + " target " + fluid.dumpEl(target) + " position " + position);     
-        if (position === fluid.position.INSIDE) {
-            target.appendChild(source);
-        }
-        else if (position === fluid.position.BEFORE) {
-            for (scan = target.previousSibling; ; scan = scan.previousSibling) {
-                if (!scan || !fluid.dom.isIgnorableNode(scan)) {
-                    if (scan !== source) {
-                        fluid.dom.cleanseScripts(source);
-                        target.parentNode.insertBefore(source, target);    
-                    }
-                    break;
-                }
-            }
-        }
-        else if (position === fluid.position.AFTER) {
-            for (scan = target.nextSibling; ; scan = scan.nextSibling) {
-                if (!scan || !fluid.dom.isIgnorableNode(scan)) {
-                    if (scan !== source) {
-                        fluid.dom.cleanseScripts(source);
-                        fluid.dom.insertAfter(source, target);
-                    }
-                    break;
-                }
-            }
-        }
-        else {
-            fluid.fail("Unrecognised position supplied to fluid.moveDom: " + position);
-        }
-    };
-    
-    // unsupported, NON-API function
-    fluid.normalisePosition = function (position, samespan, targeti, sourcei) {
-        // convert a REPLACE into a primitive BEFORE/AFTER
-        if (position === fluid.position.REPLACE) {
-            position = samespan && targeti >= sourcei ? fluid.position.AFTER: fluid.position.BEFORE;
-        }
-        return position;
-    };
-    
-    fluid.permuteDom = function (element, target, position, sourceelements, targetelements) {
-        element = fluid.unwrap(element);
-        target = fluid.unwrap(target);
-        var sourcei = $.inArray(element, sourceelements);
-        if (sourcei === -1) {
-            fluid.fail("Error in permuteDom: source element " + fluid.dumpEl(element) + 
-                " not found in source list " + fluid.dumpEl(sourceelements));
-        }
-        var targeti = $.inArray(target, targetelements);
-        if (targeti === -1) {
-            fluid.fail("Error in permuteDom: target element " + fluid.dumpEl(target) + 
-                " not found in source list " + fluid.dumpEl(targetelements));
-        }
-        var samespan = sourceelements === targetelements;
-        position = fluid.normalisePosition(position, samespan, targeti, sourcei);
-
-        //fluid.log("permuteDom sourcei " + sourcei + " targeti " + targeti);
-        // cache the old neighbourhood of the element for the final move
-        var oldn = {};
-        oldn[fluid.position.AFTER] = element.nextSibling;
-        oldn[fluid.position.BEFORE] = element.previousSibling;
-        fluid.moveDom(sourceelements[sourcei], targetelements[targeti], position);
-        
-        // perform the leftward-moving, AFTER shift
-        var frontlimit = samespan ? targeti - 1: sourceelements.length - 2;
-        var i;
-        if (position === fluid.position.BEFORE && samespan) { 
-            // we cannot do skip processing if the element was "fused against the grain" 
-            frontlimit--;
-        }
-        if (!samespan || targeti > sourcei) {
-            for (i = frontlimit; i > sourcei; -- i) {
-                fluid.moveDom(sourceelements[i + 1], sourceelements[i], fluid.position.AFTER);
-            }
-            if (sourcei + 1 < sourceelements.length) {
-                fluid.moveDom(sourceelements[sourcei + 1], oldn[fluid.position.AFTER], fluid.position.BEFORE);
-            }
-        }
-        // perform the rightward-moving, BEFORE shift
-        var backlimit = samespan ? sourcei - 1: targetelements.length - 1;
-        if (position === fluid.position.AFTER) { 
-            // we cannot do skip processing if the element was "fused against the grain" 
-            targeti++;
-        }
-        if (!samespan || targeti < sourcei) {
-            for (i = targeti; i < backlimit; ++ i) {
-                fluid.moveDom(targetelements[i], targetelements[i + 1], fluid.position.BEFORE);
-            }
-            if (backlimit >= 0 && backlimit < targetelements.length - 1) {
-                fluid.moveDom(targetelements[backlimit], oldn[fluid.position.BEFORE], fluid.position.AFTER);
-            }                
-        }
-
-    };
-  
-    var curCss = function (a, name) {
-        return window.getComputedStyle ? window.getComputedStyle(a, null).getPropertyValue(name) : 
-          a.currentStyle[name];
-    };
-    
-    var isAttached = function (node) {
-        while (node && node.nodeName) {
-            if (node.nodeName === "BODY") {
-                return true;
-            }
-            node = node.parentNode;
-        }
-        return false;
-    };
-    
-    var generalHidden = function (a) {
-        return "hidden" === a.type || curCss(a, "display") === "none" || curCss(a, "visibility") === "hidden" || !isAttached(a);
-    };
-    
-
-    var computeGeometry = function (element, orientation, disposition) {
-        var elem = {};
-        elem.element = element;
-        elem.orientation = orientation;
-        if (disposition === fluid.position.INSIDE) {
-            elem.position = disposition;
-        }
-        if (generalHidden(element)) {
-            elem.clazz = "hidden";
-        }
-        var pos = fluid.dom.computeAbsolutePosition(element) || [0, 0];
-        var width = element.offsetWidth;
-        var height = element.offsetHeight;
-        elem.rect = {left: pos[0], top: pos[1]};
-        elem.rect.right = pos[0] + width;
-        elem.rect.bottom = pos[1] + height;
-        return elem;
-    };
-    
-    // A "suitable large" value for the sentinel blocks at the ends of spans
-    var SENTINEL_DIMENSION = 10000;
-
-    function dumprect(rect) {
-        return "Rect top: " + rect.top +
-                 " left: " + rect.left + 
-               " bottom: " + rect.bottom +
-                " right: " + rect.right;
-    }
-
-    function dumpelem(cacheelem) {
-        if (!cacheelem || !cacheelem.rect) {
-            return "null";
-        } else {
-            return dumprect(cacheelem.rect) + " position: " +
-            cacheelem.position +
-            " for " +
-            fluid.dumpEl(cacheelem.element);
-        }
-    }
-    
-   
-    // unsupported, NON-API function
-    fluid.dropManager = function () { 
-        var targets = [];
-        var cache = {};
-        var that = {};        
-        
-        var lastClosest;              
-        var lastGeometry;
-        var displacementX, displacementY;
-        
-        that.updateGeometry = function (geometricInfo) {
-            lastGeometry = geometricInfo;
-            targets = [];
-            cache = {};
-            var mapper = geometricInfo.elementMapper;
-            for (var i = 0; i < geometricInfo.extents.length; ++ i) {
-                var thisInfo = geometricInfo.extents[i];
-                var orientation = thisInfo.orientation;
-                var sides = fluid.rectSides[orientation];
-                
-                var processElement = function (element, sentB, sentF, disposition, j) {
-                    var cacheelem = computeGeometry(element, orientation, disposition);
-                    cacheelem.owner = thisInfo;
-                    if (cacheelem.clazz !== "hidden" && mapper) {
-                        cacheelem.clazz = mapper(element);
-                    }
-                    cache[fluid.dropManager.cacheKey(element)] = cacheelem;
-                    var backClass = fluid.dropManager.getRelativeClass(thisInfo.elements, j, fluid.position.BEFORE, cacheelem.clazz, mapper); 
-                    var frontClass = fluid.dropManager.getRelativeClass(thisInfo.elements, j, fluid.position.AFTER, cacheelem.clazz, mapper); 
-                    if (disposition === fluid.position.INSIDE) {
-                        targets[targets.length] = cacheelem;
-                    }
-                    else {
-                        fluid.dropManager.splitElement(targets, sides, cacheelem, disposition, backClass, frontClass);
-                    }
-                    // deal with sentinel blocks by creating near-copies of the end elements
-                    if (sentB && geometricInfo.sentinelize) {
-                        fluid.dropManager.sentinelizeElement(targets, sides, cacheelem, 1, disposition, backClass);
-                    }
-                    if (sentF && geometricInfo.sentinelize) {
-                        fluid.dropManager.sentinelizeElement(targets, sides, cacheelem, 0, disposition, frontClass);
-                    }
-                    //fluid.log(dumpelem(cacheelem));
-                    return cacheelem;
-                };
-                
-                var allHidden = true;
-                for (var j = 0; j < thisInfo.elements.length; ++ j) {
-                    var element = thisInfo.elements[j];
-                    var cacheelem = processElement(element, j === 0, j === thisInfo.elements.length - 1, 
-                            fluid.position.INTERLEAVED, j);
-                    if (cacheelem.clazz !== "hidden") {
-                        allHidden = false;
-                    }
-                }
-                if (allHidden && thisInfo.parentElement) {
-                    processElement(thisInfo.parentElement, true, true, 
-                            fluid.position.INSIDE);
-                }
-            }   
-        };
-        
-        that.startDrag = function (event, handlePos, handleWidth, handleHeight) {
-            var handleMidX = handlePos[0] + handleWidth / 2;
-            var handleMidY = handlePos[1] + handleHeight / 2;
-            var dX = handleMidX - event.pageX;
-            var dY = handleMidY - event.pageY;
-            that.updateGeometry(lastGeometry);
-            lastClosest = null;
-            displacementX = dX;
-            displacementY = dY;
-            $("body").bind("mousemove.fluid-dropManager", that.mouseMove);
-        };
-        
-        that.lastPosition = function () {
-            return lastClosest;
-        };
-        
-        that.endDrag = function () {
-            $("body").unbind("mousemove.fluid-dropManager");
-        };
-        
-        that.mouseMove = function (evt) {
-            var x = evt.pageX + displacementX;
-            var y = evt.pageY + displacementY;
-            //fluid.log("Mouse x " + x + " y " + y );
-            
-            var closestTarget = that.closestTarget(x, y, lastClosest);
-            if (closestTarget && closestTarget !== fluid.dropManager.NO_CHANGE) {
-                lastClosest = closestTarget;
-              
-                that.dropChangeFirer.fire(closestTarget);
-            }
-        };
-        
-        that.dropChangeFirer = fluid.event.getEventFirer();
-        
-        var blankHolder = {
-            element: null
-        };
-        
-        that.closestTarget = function (x, y, lastClosest) {
-            var mindistance = Number.MAX_VALUE;
-            var minelem = blankHolder;
-            var minlockeddistance = Number.MAX_VALUE;
-            var minlockedelem = blankHolder;
-            for (var i = 0; i < targets.length; ++ i) {
-                var cacheelem = targets[i];
-                if (cacheelem.clazz === "hidden") {
-                    continue;
-                }
-                var distance = fluid.geom.minPointRectangle(x, y, cacheelem.rect);
-                if (cacheelem.clazz === "locked") {
-                    if (distance < minlockeddistance) {
-                        minlockeddistance = distance;
-                        minlockedelem = cacheelem;
-                    }
-                } else {
-                    if (distance < mindistance) {
-                        mindistance = distance;
-                        minelem = cacheelem;
-                    }
-                    if (distance === 0) {
-                        break;
-                    }
-                }
-            }
-            if (!minelem) {
-                return minelem;
-            }
-            if (minlockeddistance >= mindistance) {
-                minlockedelem = blankHolder;
-            }
-            //fluid.log("PRE: mindistance " + mindistance + " element " + 
-            //   fluid.dumpEl(minelem.element) + " minlockeddistance " + minlockeddistance
-            //    + " locked elem " + dumpelem(minlockedelem));
-            if (lastClosest && lastClosest.position === minelem.position &&
-                fluid.unwrap(lastClosest.element) === fluid.unwrap(minelem.element) &&
-                fluid.unwrap(lastClosest.lockedelem) === fluid.unwrap(minlockedelem.element)
-                ) {
-                return fluid.dropManager.NO_CHANGE;
-            }
-            //fluid.log("mindistance " + mindistance + " minlockeddistance " + minlockeddistance);
-            return {
-                position: minelem.position,
-                element: minelem.element,
-                lockedelem: minlockedelem.element
-            };
-        };
-        
-        that.shuffleProjectFrom = function (element, direction, includeLocked, disableWrap) {
-            var togo = that.projectFrom(element, direction, includeLocked, disableWrap);
-            if (togo) {
-                togo.position = fluid.position.REPLACE;
-            }
-            return togo;
-        };
-        
-        that.projectFrom = function (element, direction, includeLocked, disableWrap) {
-            that.updateGeometry(lastGeometry);
-            var cacheelem = cache[fluid.dropManager.cacheKey(element)];
-            var projected = fluid.geom.projectFrom(cacheelem.rect, direction, targets, includeLocked, disableWrap);
-            if (!projected.cacheelem) {
-                return null;
-            }
-            var retpos = projected.cacheelem.position;
-            return {element: projected.cacheelem.element, 
-                     position: retpos ? retpos : fluid.position.BEFORE 
-                     };
-        };
-        
-        that.logicalFrom = function (element, direction, includeLocked, disableWrap) {
-            var orderables = that.getOwningSpan(element, fluid.position.INTERLEAVED, includeLocked);
-            return {element: fluid.dropManager.getRelativeElement(element, direction, orderables, disableWrap), 
-                position: fluid.position.REPLACE};
-        };
-           
-        that.lockedWrapFrom = function (element, direction, includeLocked, disableWrap) {
-            var base = that.logicalFrom(element, direction, includeLocked, disableWrap);
-            var selectables = that.getOwningSpan(element, fluid.position.INTERLEAVED, includeLocked);
-            var allElements = cache[fluid.dropManager.cacheKey(element)].owner.elements;
-            if (includeLocked || selectables[0] === allElements[0]) {
-                return base;
-            }
-            var directElement = fluid.dropManager.getRelativeElement(element, direction, allElements, disableWrap);
-            if (lastGeometry.elementMapper(directElement) === "locked") {
-                base.element = null;
-                base.clazz = "locked";  
-            }
-            return base;
-        }; 
-        
-        that.getOwningSpan = function (element, position, includeLocked) {
-            var owner = cache[fluid.dropManager.cacheKey(element)].owner; 
-            var elements = position === fluid.position.INSIDE ? [owner.parentElement] : owner.elements;
-            if (!includeLocked && lastGeometry.elementMapper) {
-                elements = $.makeArray(elements);
-                fluid.remove_if(elements, function (element) {
-                    return lastGeometry.elementMapper(element) === "locked";
-                });
-            }
-            return elements;
-        };
-        
-        that.geometricMove = function (element, target, position) {
-            var sourceElements = that.getOwningSpan(element, null, true);
-            var targetElements = that.getOwningSpan(target, position, true);
-            fluid.permuteDom(element, target, position, sourceElements, targetElements);
-        };              
-        
-        return that;
-    };    
-   
- 
-    fluid.dropManager.NO_CHANGE = "no change";
-    
-    fluid.dropManager.cacheKey = function (element) {
-        return fluid.allocateSimpleId(element);
-    };
-    
-    fluid.dropManager.sentinelizeElement = function (targets, sides, cacheelem, fc, disposition, clazz) {
-        var elemCopy = $.extend(true, {}, cacheelem);
-        elemCopy.rect[sides[fc]] = elemCopy.rect[sides[1 - fc]] + (fc ? 1: -1);
-        elemCopy.rect[sides[1 - fc]] = (fc ? -1 : 1) * SENTINEL_DIMENSION;
-        elemCopy.position = disposition === fluid.position.INSIDE ?
-           disposition : (fc ? fluid.position.BEFORE : fluid.position.AFTER);
-        elemCopy.clazz = clazz;
-        targets[targets.length] = elemCopy;
-    };
-    
-    fluid.dropManager.splitElement = function (targets, sides, cacheelem, disposition, clazz1, clazz2) {
-        var elem1 = $.extend(true, {}, cacheelem);
-        var elem2 = $.extend(true, {}, cacheelem);
-        var midpoint = (elem1.rect[sides[0]] + elem1.rect[sides[1]]) / 2;
-        elem1.rect[sides[1]] = midpoint; 
-        elem1.position = fluid.position.BEFORE;
-        
-        elem2.rect[sides[0]] = midpoint; 
-        elem2.position = fluid.position.AFTER;
-        
-        elem1.clazz = clazz1;
-        elem2.clazz = clazz2;
-        targets[targets.length] = elem1;
-        targets[targets.length] = elem2;
-    };
-    
-    // Expand this configuration point if we ever go back to a full "permissions" model
-    fluid.dropManager.getRelativeClass = function (thisElements, index, relative, thisclazz, mapper) {
-        index += relative;
-        if (index < 0 && thisclazz === "locked") {
-            return "locked";
-        }
-        if (index >= thisElements.length || mapper === null) {
-            return null;
-        } else {
-            relative = thisElements[index];
-            return mapper(relative) === "locked" && thisclazz === "locked" ? "locked" : null;
-        }
-    };
-    
-    fluid.dropManager.getRelativeElement = function (element, direction, elements, disableWrap) {
-        var folded = fluid.directionSign(direction);
-        
-        var index = $(elements).index(element) + folded;
-        if (index < 0) {
-            index += elements.length;
-        }
-        
-        // disable wrap
-        if (disableWrap) {                   
-            if (index === elements.length || index === (elements.length + folded)) {
-                return element;
-            }
-        }
-          
-        index %= elements.length;
-        return elements[index];              
-    };
-    
-    fluid.geom = fluid.geom || {};
-    
-    // These distance algorithms have been taken from
-    // http://www.cs.mcgill.ca/~cs644/Godfried/2005/Fall/fzamal/concepts.htm
-    
-    /** Returns the minimum squared distance between a point and a rectangle **/
-    fluid.geom.minPointRectangle = function (x, y, rectangle) {
-        var dx = x < rectangle.left ? (rectangle.left - x) : 
-                  (x > rectangle.right ? (x - rectangle.right) : 0);
-        var dy = y < rectangle.top ? (rectangle.top - y) : 
-                  (y > rectangle.bottom ? (y - rectangle.bottom) : 0);
-        return dx * dx + dy * dy;
-    };
-    
-    /** Returns the minimum squared distance between two rectangles **/
-    fluid.geom.minRectRect = function (rect1, rect2) {
-        var dx = rect1.right < rect2.left ? rect2.left - rect1.right : 
-                 rect2.right < rect1.left ? rect1.left - rect2.right :0;
-        var dy = rect1.bottom < rect2.top ? rect2.top - rect1.bottom : 
-                 rect2.bottom < rect1.top ? rect1.top - rect2.bottom :0;
-        return dx * dx + dy * dy;
-    };
-    
-    var makePenCollect = function () {
-        return {
-            mindist: Number.MAX_VALUE,
-            minrdist: Number.MAX_VALUE
-        };
-    };
-
-    /** Determine the one amongst a set of rectangle targets which is the "best fit"
-     * for an axial motion from a "base rectangle" (commonly arising from the case
-     * of cursor key navigation).
-     * @param {Rectangle} baserect The base rectangl from which the motion is to be referred
-     * @param {fluid.direction} direction  The direction of motion
-     * @param {Array of Rectangle holders} targets An array of objects "cache elements" 
-     * for which the member <code>rect</code> is the holder of the rectangle to be tested.
-     * @param disableWrap which is used to enable or disable wrapping of elements
-     * @return The cache element which is the most appropriate for the requested motion.
-     */
-    fluid.geom.projectFrom = function (baserect, direction, targets, forSelection, disableWrap) {
-        var axis = fluid.directionAxis(direction);
-        var frontSide = fluid.rectSides[direction];
-        var backSide = fluid.rectSides[axis * 15 + 5 - direction];
-        var dirSign = fluid.directionSign(direction);
-        
-        var penrect = {left: (7 * baserect.left + 1 * baserect.right) / 8,
-                       right: (5 * baserect.left + 3 * baserect.right) / 8,
-                       top: (7 * baserect.top + 1 * baserect.bottom) / 8,
-                       bottom: (5 * baserect.top + 3 * baserect.bottom) / 8};
-         
-        penrect[frontSide] = dirSign * SENTINEL_DIMENSION;
-        penrect[backSide] = -penrect[frontSide];
-        
-        function accPen(collect, cacheelem, backSign) {
-            var thisrect = cacheelem.rect;
-            var pdist = fluid.geom.minRectRect(penrect, thisrect);
-            var rdist = -dirSign * backSign * (baserect[backSign === 1 ? frontSide:backSide] - 
-                                                thisrect[backSign === 1 ? backSide:frontSide]);
-            // fluid.log("pdist: " + pdist + " rdist: " + rdist);
-            // the oddity in the rdist comparison is intended to express "half-open"-ness of rectangles
-            // (backSign === 1 ? 0 : 1) - this is now gone - must be possible to move to perpendicularly abutting regions
-            if (pdist <= collect.mindist && rdist >= 0) {
-                if (pdist === collect.mindist && rdist * backSign > collect.minrdist) {
-                    return;
-                }
-                collect.minrdist = rdist * backSign;
-                collect.mindist = pdist;
-                collect.minelem = cacheelem;
-            }
-        }
-        var collect = makePenCollect();
-        var backcollect = makePenCollect();
-        var lockedcollect = makePenCollect();
-
-        for (var i = 0; i < targets.length; ++ i) {
-            var elem = targets[i];
-            var isPure = elem.owner && elem.element === elem.owner.parentElement;
-            if (elem.clazz === "hidden" || forSelection && isPure) {
-                continue;
-            }
-            else if (!forSelection && elem.clazz === "locked") {
-                accPen(lockedcollect, elem, 1);
-            }
-            else {
-                accPen(collect, elem, 1);
-                accPen(backcollect, elem, -1);
-            }
-            //fluid.log("Element " + i + " " + dumpelem(elem) + " mindist " + collect.mindist);
-        }
-        var wrap = !collect.minelem || backcollect.mindist < collect.mindist;
-        
-        // disable wrap
-        wrap = wrap && !disableWrap;       
-                
-        var mincollect = wrap ? backcollect: collect;        
-        
-        var togo = {
-            wrapped: wrap,
-            cacheelem: mincollect.minelem
-        };
-        if (lockedcollect.mindist < mincollect.mindist) {
-            togo.lockedelem = lockedcollect.minelem;
-        }
-        return togo;
-    };
-})(jQuery, fluid_1_4);
-/*
-Copyright 2007-2009 University of Toronto
-Copyright 2007-2010 University of Cambridge
-Copyright 2010 OCAD University
-Copyright 2010 Lucendo Development Ltd.
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global fluid_1_4:true, jQuery*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {
-    
-    var defaultAvatarCreator = function (item, cssClass, dropWarning) {
-        fluid.dom.cleanseScripts(fluid.unwrap(item));
-        var avatar = $(item).clone();
-        
-        fluid.dom.iterateDom(avatar.get(0), function (node) {
-            node.removeAttribute("id");
-            if (node.tagName.toLowerCase() === "input") {
-                node.setAttribute("disabled", "disabled");
-            }
-        });
-        
-        avatar.removeAttr("id");
-        avatar.removeClass("ui-droppable");
-        avatar.addClass(cssClass);
-        
-        if (dropWarning) {
-            // Will a 'div' always be valid in this position?
-            var avatarContainer = $(document.createElement("div"));
-            avatarContainer.append(avatar);
-            avatarContainer.append(dropWarning);
-            avatar = avatarContainer;
-        }
-        $("body").append(avatar);
-        if (!$.browser.safari) {
-            // FLUID-1597: Safari appears incapable of correctly determining the dimensions of elements
-            avatar.css("display", "block").width(item.offsetWidth).height(item.offsetHeight);
-        }
-        
-        if ($.browser.opera) { // FLUID-1490. Without this detect, curCSS explodes on the avatar on Firefox.
-            avatar.hide();
-        }
-        return avatar;
-    };
-    
-    function bindHandlersToContainer(container, keyDownHandler, keyUpHandler, mouseMoveHandler) {
-        var actualKeyDown = keyDownHandler;
-        var advancedPrevention = false;
-
-        // FLUID-1598 and others: Opera will refuse to honour a "preventDefault" on a keydown.
-        // http://forums.devshed.com/javascript-development-115/onkeydown-preventdefault-opera-485371.html
-        if ($.browser.opera) {
-            container.keypress(function (evt) {
-                if (advancedPrevention) {
-                    advancedPrevention = false;
-                    evt.preventDefault();
-                    return false;
-                }
-            });
-            actualKeyDown = function (evt) {
-                var oldret = keyDownHandler(evt);
-                if (oldret === false) {
-                    advancedPrevention = true;
-                }
-            };
-        }
-        container.keydown(actualKeyDown);
-        container.keyup(keyUpHandler);
-    }
-    
-    function addRolesToContainer(that) {
-        that.container.attr("role", that.options.containerRole.container);
-        that.container.attr("aria-multiselectable", "false");
-        that.container.attr("aria-readonly", "false");
-        that.container.attr("aria-disabled", "false");
-        // FLUID-3707: We require to have BOTH application role as well as our named role
-        // This however breaks the component completely under NVDA and causes it to perpetually drop back into "browse mode"
-        //that.container.wrap("<div role=\"application\"></div>");
-    }
-    
-    function createAvatarId(parentId) {
-        // Generating the avatar's id to be containerId_avatar
-        // This is safe since there is only a single avatar at a time
-        return parentId + "_avatar";
-    }
-    
-    var adaptKeysets = function (options) {
-        if (options.keysets && !(options.keysets instanceof Array)) {
-            options.keysets = [options.keysets];    
-        }
-    };
-    
-    /**
-     * @param container - A jQueryable designator for the root node of the reorderer (a selector, a DOM node, or a jQuery instance)
-     * @param options - an object containing any of the available options:
-     *                  containerRole - indicates the role, or general use, for this instance of the Reorderer
-     *                  keysets - an object containing sets of keycodes to use for directional navigation. Must contain:
-     *                            modifier - a function that returns a boolean, indicating whether or not the required modifier(s) are activated
-     *                            up
-     *                            down
-     *                            right
-     *                            left
-     *                  styles - an object containing class names for styling the Reorderer
-     *                                  defaultStyle
-     *                                  selected
-     *                                  dragging
-     *                                  hover
-     *                                  dropMarker
-     *                                  mouseDrag
-     *                                  avatar
-     *                  avatarCreator - a function that returns a valid DOM node to be used as the dragging avatar
-     */
-    fluid.reorderer = function (container, options) {
-        if (!container) {
-            fluid.fail("Reorderer initialised with no container");
-        }
-        var thatReorderer = fluid.initView("fluid.reorderer", container, options);
-        options = thatReorderer.options;
-                
-        var dropManager = fluid.dropManager();   
-                
-        thatReorderer.layoutHandler = fluid.initSubcomponent(thatReorderer,
-            "layoutHandler", [thatReorderer.container, options, dropManager, thatReorderer.dom]);
-        
-        thatReorderer.activeItem = undefined;
-
-        adaptKeysets(options);
- 
-        var kbDropWarning = thatReorderer.locate("dropWarning");
-        var mouseDropWarning;
-        if (kbDropWarning) {
-            mouseDropWarning = kbDropWarning.clone();
-        }
-
-        var isMove = function (evt) {
-            var keysets = options.keysets;
-            for (var i = 0; i < keysets.length; i++) {
-                if (keysets[i].modifier(evt)) {
-                    return true;
-                }
-            }
-            return false;
-        };
-        
-        var isActiveItemMovable = function () {
-            return $.inArray(thatReorderer.activeItem, thatReorderer.dom.fastLocate("movables")) >= 0;
-        };
-        
-        var setDropEffects = function (value) {
-            thatReorderer.dom.fastLocate("dropTargets").attr("aria-dropeffect", value);
-        };
-        
-        var styles = options.styles;
-        
-        var noModifier = function (evt) {
-            return (!evt.ctrlKey && !evt.altKey && !evt.shiftKey && !evt.metaKey);
-        };
-        
-        var handleDirectionKeyDown = function (evt) {
-            var item = thatReorderer.activeItem;
-            if (!item) {
-                return true;
-            }
-            var keysets = options.keysets;
-            for (var i = 0; i < keysets.length; i++) {
-                var keyset = keysets[i];
-                var keydir = fluid.keyForValue(keyset, evt.keyCode);
-                if (!keydir) {
-                    continue;
-                }
-                var isMovement = keyset.modifier(evt);
-                
-                var dirnum = fluid.keycodeDirection[keydir];
-                var relativeItem = thatReorderer.layoutHandler.getRelativePosition(item, dirnum, !isMovement);  
-                if (!relativeItem) {
-                    continue;
-                }
-                
-                if (isMovement) {
-                    var prevent = thatReorderer.events.onBeginMove.fire(item);
-                    if (prevent === false) {
-                        return false;
-                    }
-                    if (kbDropWarning.length > 0) {
-                        if (relativeItem.clazz === "locked") {
-                            thatReorderer.events.onShowKeyboardDropWarning.fire(item, kbDropWarning);
-                            kbDropWarning.show();                       
-                        }
-                        else {
-                            kbDropWarning.hide();
-                        }
-                    }
-                    if (relativeItem.element) {
-                        thatReorderer.requestMovement(relativeItem, item);
-                    }
-            
-                } else if (noModifier(evt)) {
-                    item.blur();
-                    $(relativeItem.element).focus();
-                }
-                return false;
-            }
-            return true;
-        };
-
-        // unsupported, NON-API function
-        thatReorderer.handleKeyDown = function (evt) {
-            if (!thatReorderer.activeItem || thatReorderer.activeItem !== evt.target) {
-                return true;
-            }
-            // If the key pressed is ctrl, and the active item is movable we want to restyle the active item.
-            var jActiveItem = $(thatReorderer.activeItem);
-            if (!jActiveItem.hasClass(styles.dragging) && isMove(evt)) {
-               // Don't treat the active item as dragging unless it is a movable.
-                if (isActiveItemMovable()) {
-                    jActiveItem.removeClass(styles.selected);
-                    jActiveItem.addClass(styles.dragging);
-                    jActiveItem.attr("aria-grabbed", "true");
-                    setDropEffects("move");
-                }
-                return false;
-            }
-            // The only other keys we listen for are the arrows.
-            return handleDirectionKeyDown(evt);
-        };
-
-        // unsupported, NON-API function
-        thatReorderer.handleKeyUp = function (evt) {
-            if (!thatReorderer.activeItem || thatReorderer.activeItem !== evt.target) {
-                return true;
-            }
-            var jActiveItem = $(thatReorderer.activeItem);
-            
-            // Handle a key up event for the modifier
-            if (jActiveItem.hasClass(styles.dragging) && !isMove(evt)) {
-                if (kbDropWarning) {
-                    kbDropWarning.hide();
-                }
-                jActiveItem.removeClass(styles.dragging);
-                jActiveItem.addClass(styles.selected);
-                jActiveItem.attr("aria-grabbed", "false");
-                setDropEffects("none");
-                return false;
-            }
-            
-            return false;
-        };
-
-        var dropMarker;
-
-        var createDropMarker = function (tagName) {
-            var dropMarker = $(document.createElement(tagName));
-            dropMarker.addClass(options.styles.dropMarker);
-            dropMarker.hide();
-            return dropMarker;
-        };
-        // unsupported, NON-API function
-        thatReorderer.requestMovement = function (requestedPosition, item) {
-            item = fluid.unwrap(item);
-          // Temporary censoring to get around ModuleLayout inability to update relative to self.
-            if (!requestedPosition || fluid.unwrap(requestedPosition.element) === item) {
-                return;
-            }
-            var activeItem = $(thatReorderer.activeItem);
-            
-            // Fixes FLUID-3288.
-            // Need to unbind the blur event as safari will call blur on movements.
-            // This caused the user to have to double tap the arrow keys to move.
-            activeItem.unbind("blur.fluid.reorderer");
-            
-            thatReorderer.events.onMove.fire(item, requestedPosition);
-            dropManager.geometricMove(item, requestedPosition.element, requestedPosition.position);
-            //$(thatReorderer.activeItem).removeClass(options.styles.selected);
-           
-            // refocus on the active item because moving places focus on the body
-            activeItem.focus();
-            
-            thatReorderer.refresh();
-            
-            dropManager.updateGeometry(thatReorderer.layoutHandler.getGeometricInfo());
-
-            thatReorderer.events.afterMove.fire(item, requestedPosition, thatReorderer.dom.fastLocate("movables"));
-        };
-
-        var hoverStyleHandler = function (item, state) {
-            thatReorderer.dom.fastLocate("grabHandle", item)[state ? "addClass":"removeClass"](styles.hover);
-        };
-        /**
-         * Takes a $ object and adds 'movable' functionality to it
-         */
-        function initMovable(item) {
-            var styles = options.styles;
-            item.attr("aria-grabbed", "false");
-
-            item.mouseover(
-                function () {
-                    thatReorderer.events.onHover.fire(item, true);
-                }
-            );
-        
-            item.mouseout(
-                function () {
-                    thatReorderer.events.onHover.fire(item, false);
-                }
-            );
-            var avatar;
-        
-            thatReorderer.dom.fastLocate("grabHandle", item).draggable({
-                refreshPositions: false,
-                scroll: true,
-                helper: function () {
-                    var dropWarningEl;
-                    if (mouseDropWarning) {
-                        dropWarningEl = mouseDropWarning[0];
-                    }
-                    avatar = $(options.avatarCreator(item[0], styles.avatar, dropWarningEl));
-                    avatar.attr("id", createAvatarId(thatReorderer.container.id));
-                    return avatar;
-                },
-                start: function (e, ui) {
-                    var prevent = thatReorderer.events.onBeginMove.fire(item);
-                    if (prevent === false) {
-                        return false;
-                    }
-                    var handle = thatReorderer.dom.fastLocate("grabHandle", item)[0];
-                    var handlePos = fluid.dom.computeAbsolutePosition(handle);
-                    var handleWidth = handle.offsetWidth;
-                    var handleHeight = handle.offsetHeight;
-                    item.focus();
-                    item.removeClass(options.styles.selected);
-                    item.addClass(options.styles.mouseDrag);
-                    item.attr("aria-grabbed", "true");
-                    setDropEffects("move");
-                    dropManager.startDrag(e, handlePos, handleWidth, handleHeight);
-                    avatar.show();
-                },
-                stop: function (e, ui) {
-                    item.removeClass(options.styles.mouseDrag);
-                    item.addClass(options.styles.selected);
-                    $(thatReorderer.activeItem).attr("aria-grabbed", "false");
-                    var markerNode = fluid.unwrap(dropMarker);
-                    if (markerNode.parentNode) {
-                        markerNode.parentNode.removeChild(markerNode);
-                    }
-                    avatar.hide();
-                    ui.helper = null;
-                    setDropEffects("none");
-                    dropManager.endDrag();
-                    
-                    thatReorderer.requestMovement(dropManager.lastPosition(), item);
-                    // refocus on the active item because moving places focus on the body
-                    thatReorderer.activeItem.focus();
-                },
-                handle: thatReorderer.dom.fastLocate("grabHandle", item)
-            });
-        }
-           
-        function changeSelectedToDefault(jItem, styles) {
-            jItem.removeClass(styles.selected);
-            jItem.removeClass(styles.dragging);
-            jItem.addClass(styles.defaultStyle);
-            jItem.attr("aria-selected", "false");
-        }
-           
-        var selectItem = function (anItem) {
-            thatReorderer.events.onSelect.fire(anItem);
-            var styles = options.styles;
-            // Set the previous active item back to its default state.
-            if (thatReorderer.activeItem && thatReorderer.activeItem !== anItem) {
-                changeSelectedToDefault($(thatReorderer.activeItem), styles);
-            }
-            // Then select the new item.
-            thatReorderer.activeItem = anItem;
-            var jItem = $(anItem);
-            jItem.removeClass(styles.defaultStyle);
-            jItem.addClass(styles.selected);
-            jItem.attr("aria-selected", "true");
-        };
-   
-        var initSelectables = function () {
-            var handleBlur = function (evt) {
-                changeSelectedToDefault($(this), options.styles);
-                return evt.stopPropagation();
-            };
-        
-            var handleFocus = function (evt) {
-                selectItem(this);
-                return evt.stopPropagation();
-            };
-            
-            var selectables = thatReorderer.dom.fastLocate("selectables");
-            for (var i = 0; i < selectables.length; ++ i) {
-                var selectable = $(selectables[i]);
-                if (!$.data(selectable[0], "fluid.reorderer.selectable-initialised")) { 
-                    selectable.addClass(styles.defaultStyle);
-            
-                    selectable.bind("blur.fluid.reorderer", handleBlur);
-                    selectable.focus(handleFocus);
-                    selectable.click(function (evt) {
-                        var handle = fluid.unwrap(thatReorderer.dom.fastLocate("grabHandle", this));
-                        if (fluid.dom.isContainer(handle, evt.target)) {
-                            $(this).focus();
-                        }
-                    });
-                    
-                    selectable.attr("role", options.containerRole.item);
-                    selectable.attr("aria-selected", "false");
-                    selectable.attr("aria-disabled", "false");
-                    $.data(selectable[0], "fluid.reorderer.selectable-initialised", true);
-                }
-            }
-            if (!thatReorderer.selectableContext) {
-                thatReorderer.selectableContext = fluid.selectable(thatReorderer.container, {
-                    selectableElements: selectables,
-                    selectablesTabindex: thatReorderer.options.selectablesTabindex,
-                    direction: null
-                });
-            }
-        };
-    
-        var dropChangeListener = function (dropTarget) {
-            fluid.moveDom(dropMarker, dropTarget.element, dropTarget.position);
-            dropMarker.css("display", "");
-            if (mouseDropWarning) {
-                if (dropTarget.lockedelem) {
-                    mouseDropWarning.show();
-                }
-                else {
-                    mouseDropWarning.hide();
-                }
-            }
-        };
-    
-        var initItems = function () {
-            var movables = thatReorderer.dom.fastLocate("movables");
-            var dropTargets = thatReorderer.dom.fastLocate("dropTargets");
-            initSelectables();
-        
-            // Setup movables
-            for (var i = 0; i < movables.length; i++) {
-                var item = movables[i];
-                if (!$.data(item, "fluid.reorderer.movable-initialised")) { 
-                    initMovable($(item));
-                    $.data(item, "fluid.reorderer.movable-initialised", true);
-                }
-            }
-
-            // In order to create valid html, the drop marker is the same type as the node being dragged.
-            // This creates a confusing UI in cases such as an ordered list. 
-            // drop marker functionality should be made pluggable. 
-            if (movables.length > 0 && !dropMarker) {
-                dropMarker = createDropMarker(movables[0].tagName);
-            }
-            
-            dropManager.updateGeometry(thatReorderer.layoutHandler.getGeometricInfo());
-            
-            dropManager.dropChangeFirer.addListener(dropChangeListener, "fluid.Reorderer");
-            // Set up dropTargets
-            dropTargets.attr("aria-dropeffect", "none");  
-
-        };
-
-
-        // Final initialization of the Reorderer at the end of the construction process 
-        if (thatReorderer.container) {
-            bindHandlersToContainer(thatReorderer.container, 
-                thatReorderer.handleKeyDown,
-                thatReorderer.handleKeyUp);
-            addRolesToContainer(thatReorderer);
-            fluid.tabbable(thatReorderer.container);
-            initItems();
-        }
-
-        if (options.afterMoveCallbackUrl) {
-            thatReorderer.events.afterMove.addListener(function () {
-                var layoutHandler = thatReorderer.layoutHandler;
-                var model = layoutHandler.getModel ? layoutHandler.getModel():
-                     options.acquireModel(thatReorderer);
-                $.post(options.afterMoveCallbackUrl, JSON.stringify(model));
-            }, "postModel");
-        }
-        thatReorderer.events.onHover.addListener(hoverStyleHandler, "style");
-
-        thatReorderer.refresh = function () {
-            thatReorderer.dom.refresh("movables");
-            thatReorderer.dom.refresh("selectables");
-            thatReorderer.dom.refresh("grabHandle", thatReorderer.dom.fastLocate("movables"));
-            thatReorderer.dom.refresh("stylisticOffset", thatReorderer.dom.fastLocate("movables"));
-            thatReorderer.dom.refresh("dropTargets");
-            thatReorderer.events.onRefresh.fire();
-            initItems();
-            thatReorderer.selectableContext.selectables = thatReorderer.dom.fastLocate("selectables");
-            thatReorderer.selectableContext.selectablesUpdated(thatReorderer.activeItem);
-        };
-        
-        fluid.initDependents(thatReorderer);
-
-        thatReorderer.refresh();
-
-        return thatReorderer;
-    };
-    
-    /**
-     * Constants for key codes in events.
-     */    
-    fluid.reorderer.keys = {
-        TAB: 9,
-        ENTER: 13,
-        SHIFT: 16,
-        CTRL: 17,
-        ALT: 18,
-        META: 19,
-        SPACE: 32,
-        LEFT: 37,
-        UP: 38,
-        RIGHT: 39,
-        DOWN: 40,
-        i: 73,
-        j: 74,
-        k: 75,
-        m: 77
-    };
-    
-    /**
-     * The default key sets for the Reorderer. Should be moved into the proper component defaults.
-     */
-    fluid.reorderer.defaultKeysets = [{
-        modifier : function (evt) {
-            return evt.ctrlKey;
-        },
-        up : fluid.reorderer.keys.UP,
-        down : fluid.reorderer.keys.DOWN,
-        right : fluid.reorderer.keys.RIGHT,
-        left : fluid.reorderer.keys.LEFT
-    },
-    {
-        modifier : function (evt) {
-            return evt.ctrlKey;
-        },
-        up : fluid.reorderer.keys.i,
-        down : fluid.reorderer.keys.m,
-        right : fluid.reorderer.keys.k,
-        left : fluid.reorderer.keys.j
-    }];
-    
-    /**
-     * These roles are used to add ARIA roles to orderable items. This list can be extended as needed,
-     * but the values of the container and item roles must match ARIA-specified roles.
-     */  
-    fluid.reorderer.roles = {
-        GRID: { container: "grid", item: "gridcell" },
-        LIST: { container: "list", item: "listitem" },
-        REGIONS: { container: "main", item: "article" }
-    };
-    
-    // Simplified API for reordering lists and grids.
-    var simpleInit = function (container, layoutHandler, options) {
-        options = options || {};
-        options.layoutHandler = layoutHandler;
-        return fluid.reorderer(container, options);
-    };
-    
-    fluid.reorderList = function (container, options) {
-        return simpleInit(container, "fluid.listLayoutHandler", options);
-    };
-    
-    fluid.reorderGrid = function (container, options) {
-        return simpleInit(container, "fluid.gridLayoutHandler", options); 
-    };
-    
-    fluid.reorderer.SHUFFLE_GEOMETRIC_STRATEGY = "shuffleProjectFrom";
-    fluid.reorderer.GEOMETRIC_STRATEGY         = "projectFrom";
-    fluid.reorderer.LOGICAL_STRATEGY           = "logicalFrom";
-    fluid.reorderer.WRAP_LOCKED_STRATEGY       = "lockedWrapFrom";
-    fluid.reorderer.NO_STRATEGY = null;
-    
-    // unsupported, NON-API function
-    fluid.reorderer.relativeInfoGetter = function (orientation, coStrategy, contraStrategy, dropManager, dom, disableWrap) {
-        return function (item, direction, forSelection) {
-            var dirorient = fluid.directionOrientation(direction);
-            var strategy = dirorient === orientation ? coStrategy: contraStrategy;
-            return strategy !== null ? dropManager[strategy](item, direction, forSelection, disableWrap) : null;
-        };
-    };
-    
-    fluid.defaults("fluid.reorderer", {
-        styles: {
-            defaultStyle: "fl-reorderer-movable-default",
-            selected: "fl-reorderer-movable-selected",
-            dragging: "fl-reorderer-movable-dragging",
-            mouseDrag: "fl-reorderer-movable-dragging",
-            hover: "fl-reorderer-movable-hover",
-            dropMarker: "fl-reorderer-dropMarker",
-            avatar: "fl-reorderer-avatar"
-        },
-        selectors: {
-            dropWarning: ".flc-reorderer-dropWarning",
-            movables: ".flc-reorderer-movable",
-            grabHandle: "",
-            stylisticOffset: ""
-        },
-        avatarCreator: defaultAvatarCreator,
-        keysets: fluid.reorderer.defaultKeysets,
-        layoutHandler: {
-            type: "fluid.listLayoutHandler"
-        },
-        
-        events: {
-            onShowKeyboardDropWarning: null,
-            onSelect: null,
-            onBeginMove: "preventable",
-            onMove: null,
-            afterMove: null,
-            onHover: null,
-            onRefresh: null
-        },
-        
-        mergePolicy: {
-            keysets: "replace",
-            "selectors.labelSource": "selectors.grabHandle",
-            "selectors.selectables": "selectors.movables",
-            "selectors.dropTargets": "selectors.movables"
-        },
-        components: {
-            labeller: {
-                type: "fluid.reorderer.labeller",
-                options: {
-                    dom: "{reorderer}.dom",
-                    getGeometricInfo: "{reorderer}.layoutHandler.getGeometricInfo",
-                    orientation: "{reorderer}.options.orientation",
-                    layoutType: "{reorderer}.options.layoutHandler" // TODO, get rid of "global defaults"
-                }          
-            }
-        },
-        
-        // The user option to enable or disable wrapping of elements within the container
-        disableWrap: false        
-        
-    });
-
-
-    /*******************
-     * Layout Handlers *
-     *******************/
-
-    // unsupported, NON-API function
-    fluid.reorderer.makeGeometricInfoGetter = function (orientation, sentinelize, dom) {
-        return function () {
-            var that = {
-                sentinelize: sentinelize,
-                extents: [{
-                    orientation: orientation,
-                    elements: dom.fastLocate("dropTargets")
-                }],
-                elementMapper: function (element) {
-                    return $.inArray(element, dom.fastLocate("movables")) === -1 ? "locked": null;
-                },
-                elementIndexer: function (element) {
-                    var selectables = dom.fastLocate("selectables");
-                    return {
-                        elementClass: that.elementMapper(element),
-                        index: $.inArray(element, selectables),
-                        length: selectables.length
-                    };
-                }
-            };
-            return that;
-        };
-    };
-    
-    fluid.defaults(true, "fluid.listLayoutHandler", 
-        {orientation:         fluid.orientation.VERTICAL,
-         containerRole:       fluid.reorderer.roles.LIST,
-         selectablesTabindex: -1,
-         sentinelize:         true
-        });
-    
-    // Public layout handlers.
-    fluid.listLayoutHandler = function (container, options, dropManager, dom) {
-        var that = {};
-
-        that.getRelativePosition = 
-          fluid.reorderer.relativeInfoGetter(options.orientation, 
-                fluid.reorderer.LOGICAL_STRATEGY, null, dropManager, dom, options.disableWrap);
-        
-        that.getGeometricInfo = fluid.reorderer.makeGeometricInfoGetter(options.orientation, options.sentinelize, dom);
-        
-        return that;
-    }; // End ListLayoutHandler
-
-    fluid.defaults(true, "fluid.gridLayoutHandler", 
-        {orientation:         fluid.orientation.HORIZONTAL,
-         containerRole:       fluid.reorderer.roles.GRID,
-         selectablesTabindex: -1,
-         sentinelize:         false
-         });
-    /*
-     * Items in the Lightbox are stored in a list, but they are visually presented as a grid that
-     * changes dimensions when the window changes size. As a result, when the user presses the up or
-     * down arrow key, what lies above or below depends on the current window size.
-     * 
-     * The GridLayoutHandler is responsible for handling changes to this virtual 'grid' of items
-     * in the window, and of informing the Lightbox of which items surround a given item.
-     */
-    fluid.gridLayoutHandler = function (container, options, dropManager, dom) {
-        var that = {};
-
-        that.getRelativePosition = 
-           fluid.reorderer.relativeInfoGetter(options.orientation, 
-                 options.disableWrap ? fluid.reorderer.SHUFFLE_GEOMETRIC_STRATEGY : fluid.reorderer.LOGICAL_STRATEGY, fluid.reorderer.SHUFFLE_GEOMETRIC_STRATEGY, 
-                 dropManager, dom, options.disableWrap);
-        
-        that.getGeometricInfo = fluid.reorderer.makeGeometricInfoGetter(options.orientation, options.sentinelize, dom);
-        
-        return that;
-    }; // End of GridLayoutHandler
-
-    fluid.defaults("fluid.reorderer.labeller", {
-        strings: {
-            overallTemplate: "%recentStatus %item %position %movable",
-            position:        "%index of %length",
-            position_moduleLayoutHandler: "%index of %length in %moduleCell %moduleIndex of %moduleLength",
-            moduleCell_0:    "row", // NB, these keys must agree with fluid.a11y.orientation constants
-            moduleCell_1:    "column",
-            movable:         "movable",
-            fixed:           "fixed",
-            recentStatus:    "moved from position %position"
-        },
-        components: {
-            resolver: {
-                type: "fluid.messageResolver",
-                options: {
-                    messageBase: "{labeller}.options.strings"
-                }
-            }
-        },
-        invokers: {
-            renderLabel: {
-                funcName: "fluid.reorderer.labeller.renderLabel",
-                args: ["{labeller}", "@0", "@1"]
-            }  
-        }
-    });
-
-    // unsupported, NON-API function
-    // Convert from 0-based to 1-based indices for announcement
-    fluid.reorderer.indexRebaser = function (indices) {
-        indices.index++;
-        if (indices.moduleIndex !== undefined) {
-            indices.moduleIndex++;
-        }
-        return indices;
-    };
-
-    /*************
-     * Labelling *
-     *************/
-     
-    fluid.reorderer.labeller = function (options) {
-        var that = fluid.initLittleComponent("fluid.reorderer.labeller", options);
-        fluid.initDependents(that);
-        that.dom = that.options.dom;
-        
-        that.moduleCell = that.resolver.resolve("moduleCell_" + that.options.orientation);
-        var layoutType = fluid.computeNickName(that.options.layoutType);
-        that.positionTemplate = that.resolver.lookup(["position_" + layoutType, "position"]);
-        
-        var movedMap = {};
-        
-        that.returnedOptions = {
-            listeners: {
-                onRefresh: function () {
-                    var selectables = that.dom.locate("selectables");
-                    fluid.each(selectables, function (selectable) {
-                        var labelOptions = {};
-                        var id = fluid.allocateSimpleId(selectable);
-                        var moved = movedMap[id];
-                        var label = that.renderLabel(selectable);
-                        var plainLabel = label;
-                        if (moved) {
-                            moved.newRender = plainLabel;
-                            label = that.renderLabel(selectable, moved.oldRender.position);
-                            $(selectable).one("focusout", function () {
-                                if (movedMap[id]) {
-                                    var oldLabel = movedMap[id].newRender.label;
-                                    delete movedMap[id];
-                                    fluid.updateAriaLabel(selectable, oldLabel);
-                                }
-                            });
-                            labelOptions.dynamicLabel = true;
-                        }
-                        fluid.updateAriaLabel(selectable, label.label, labelOptions);
-                    });
-                },
-                onMove: function (item, newPosition) {
-                    fluid.clear(movedMap); // if we somehow were fooled into missing a defocus, at least clear the map on a 2nd move
-                    var movingId = fluid.allocateSimpleId(item);
-                    movedMap[movingId] = {
-                        oldRender: that.renderLabel(item)
-                    };
-                }
-            }
-        };
-        return that;
-    };
-    
-    fluid.reorderer.labeller.renderLabel = function (that, selectable, recentPosition) {
-        var geom = that.options.getGeometricInfo();
-        var indices = fluid.reorderer.indexRebaser(geom.elementIndexer(selectable));
-        indices.moduleCell = that.moduleCell;
-            
-        var elementClass = geom.elementMapper(selectable);
-        var labelSource = that.dom.locate("labelSource", selectable);
-        var recentStatus;
-        if (recentPosition) {
-            recentStatus = that.resolver.resolve("recentStatus", {position: recentPosition});
-        }
-        var topModel = {
-            item: typeof(labelSource) === "string" ? labelSource: fluid.dom.getElementText(fluid.unwrap(labelSource)),
-            position: that.positionTemplate.resolveFunc(that.positionTemplate.template, indices),
-            movable: that.resolver.resolve(elementClass === "locked" ? "fixed" : "movable"),
-            recentStatus: recentStatus || ""
-        };
-        
-        var template = that.resolver.lookup(["overallTemplate"]);
-        var label = template.resolveFunc(template.template, topModel);
-        return {
-            position: topModel.position,
-            label: label
-        };
-    };
-
-})(jQuery, fluid_1_4);
-/*
-Copyright 2008-2009 University of Cambridge
-Copyright 2008-2009 University of Toronto
-Copyright 2010 Lucendo Development Ltd.
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global fluid_1_4:true, jQuery*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {
-    
-    var deriveLightboxCellBase = function (namebase, index) {
-        return namebase + "lightbox-cell:" + index + ":";
-    };
-            
-    var addThumbnailActivateHandler = function (container) {
-        var enterKeyHandler = function (evt) {
-            if (evt.which === fluid.reorderer.keys.ENTER) {
-                var thumbnailAnchors = $("a", evt.target);
-                document.location = thumbnailAnchors.attr("href");
-            }
-        };
-        
-        container.keypress(enterKeyHandler);
-    };
-    
-    // Custom query method seeks all tags descended from a given root with a 
-    // particular tag name, whose id matches a regex.
-    var seekNodesById = function (rootnode, tagname, idmatch) {
-        var inputs = rootnode.getElementsByTagName(tagname);
-        var togo = [];
-        for (var i = 0; i < inputs.length; i += 1) {
-            var input = inputs[i];
-            var id = input.id;
-            if (id && id.match(idmatch)) {
-                togo.push(input);
-            }
-        }
-        return togo;
-    };
-    
-    var createImageCellFinder = function (parentNode, containerId) {
-        parentNode = fluid.unwrap(parentNode);
-        
-        var lightboxCellNamePattern = "^" + deriveLightboxCellBase(containerId, "[0-9]+") + "$";
-        
-        return function () {
-            // This orderable finder assumes that the lightbox thumbnails are 'div' elements
-            return seekNodesById(parentNode, "div", lightboxCellNamePattern);
-        };
-    };
-    
-    var seekForm = function (container) {
-        return fluid.findAncestor(container, function (element) {
-            return $(element).is("form");
-        });
-    };
-    
-    var seekInputs = function (container, reorderform) {
-        return seekNodesById(reorderform, 
-                             "input", 
-                             "^" + deriveLightboxCellBase(container.attr("id"), "[^:]*") + "reorder-index$");
-    };
-    
-    var mapIdsToNames = function (container, reorderform) {
-        var inputs = seekInputs(container, reorderform);
-        for (var i = 0; i < inputs.length; i++) {
-            var input = inputs[i];
-            var name = input.name;
-            input.name = name || input.id;
-        }
-    };
-    
-    /**
-     * Returns a default afterMove listener using the id-based, form-driven scheme for communicating with the server.
-     * It is implemented by nesting hidden form fields inside each thumbnail container. The value of these form elements
-     * represent the order for each image. This default listener submits the form's default 
-     * action via AJAX.
-     * 
-     * @param {jQueryable} container the Image Reorderer's container element 
-     */
-    var createIDAfterMoveListener = function (container) {
-        var reorderform = seekForm(container);
-        mapIdsToNames(container, reorderform);
-        
-        return function () {
-            var inputs, i;
-            inputs = seekInputs(container, reorderform);
-            
-            for (i = 0; i < inputs.length; i += 1) {
-                inputs[i].value = i;
-            }
-        
-            if (reorderform && reorderform.action) {
-                var order = $(reorderform).serialize();
-                $.post(reorderform.action, 
-                       order,
-                       function (type, data, evt) { /* No-op response */ });
-            }
-        };
-    };
-
-    
-    var setDefaultValue = function (target, path, value) {
-        var previousValue = fluid.get(target, path);
-        var valueToSet = previousValue || value;
-        fluid.set(target, path, valueToSet);
-    };
-    
-    // Public Lightbox API
-    /**
-     * Creates a new Lightbox instance from the specified parameters, providing full control over how
-     * the Lightbox is configured.
-     * 
-     * @param {Object} container 
-     * @param {Object} options 
-     */
-    fluid.reorderImages = function (container, options) {
-        // Instantiate a mini-Image Reorderer component, then feed its options to the real Reorderer.
-        var that = fluid.initView("fluid.reorderImages", container, options);
-        
-        // If the user didn't specify their own afterMove or movables options,
-        // set up defaults for them using the old id-based scheme.
-        // Backwards API compatiblity. Remove references to afterMoveCallback by Infusion 1.5.
-        setDefaultValue(that, "options.listeners.afterMove", 
-                        that.options.afterMoveCallback || createIDAfterMoveListener(that.container));
-        setDefaultValue(that, "options.selectors.movables", 
-                        createImageCellFinder(that.container, that.container.attr("id")));
-        
-        var reorderer = fluid.reorderer(that.container, that.options);
-        
-        fluid.tabindex($("a", that.container), -1);
-        addThumbnailActivateHandler(that.container);
-        
-        return reorderer;
-    };
-   
-    // This function now deprecated. Please use fluid.reorderImages() instead.
-    fluid.lightbox = fluid.reorderImages;
-    
-    fluid.defaults("fluid.reorderImages", {
-        layoutHandler: "fluid.gridLayoutHandler",
-
-        selectors: {
-            labelSource: ".flc-reorderer-imageTitle"
-        }
-    });
-
-})(jQuery, fluid_1_4);
-/*
-Copyright 2008-2009 University of Cambridge
-Copyright 2008-2009 University of Toronto
-Copyright 2010-2011 OCAD University
-Copyright 2010 Lucendo Development Ltd.
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global fluid_1_4:true, jQuery*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {
-    
-    fluid.registerNamespace("fluid.moduleLayout");
-
-    /**
-     * Calculate the location of the item and the column in which it resides.
-     * @return  An object with column index and item index (within that column) properties.
-     *          These indices are -1 if the item does not exist in the grid.
-     */
-    // unsupported - NON-API function
-    fluid.moduleLayout.findColumnAndItemIndices = function (item, layout) {
-        return fluid.find(layout.columns,
-            function (column, colIndex) {
-                var index = $.inArray(item, column.elements);
-                return index === -1 ? undefined : {columnIndex: colIndex, itemIndex: index};
-            }, {columnIndex: -1, itemIndex: -1});
-    };
-    // unsupported - NON-API function
-    fluid.moduleLayout.findColIndex = function (item, layout) {
-        return fluid.find(layout.columns,
-            function (column, colIndex) {
-                return item === column.container ? colIndex : undefined;
-            }, -1);
-    };
-
-    /**
-     * Move an item within the layout object. 
-     */
-    // unsupported - NON-API function
-    fluid.moduleLayout.updateLayout = function (item, target, position, layout) {
-        item = fluid.unwrap(item);
-        target = fluid.unwrap(target);
-        var itemIndices = fluid.moduleLayout.findColumnAndItemIndices(item, layout);
-        layout.columns[itemIndices.columnIndex].elements.splice(itemIndices.itemIndex, 1);
-        var targetCol;
-        if (position === fluid.position.INSIDE) {
-            targetCol = layout.columns[fluid.moduleLayout.findColIndex(target, layout)].elements;
-            targetCol.splice(targetCol.length, 0, item);
-
-        } else {
-            var relativeItemIndices = fluid.moduleLayout.findColumnAndItemIndices(target, layout);
-            targetCol = layout.columns[relativeItemIndices.columnIndex].elements;
-            position = fluid.normalisePosition(position, 
-                  itemIndices.columnIndex === relativeItemIndices.columnIndex, 
-                  relativeItemIndices.itemIndex, itemIndices.itemIndex);
-            var relative = position === fluid.position.BEFORE ? 0 : 1;
-            targetCol.splice(relativeItemIndices.itemIndex + relative, 0, item);
-        }
-    };
-       
-    /**
-     * Builds a layout object from a set of columns and modules.
-     * @param {jQuery} container
-     * @param {jQuery} columns
-     * @param {jQuery} portlets
-     */
-    fluid.moduleLayout.layoutFromFlat = function (container, columns, portlets) {
-        var layout = {};
-        layout.container = container;
-        layout.columns = fluid.transform(columns, 
-            function (column) {
-                return {
-                    container: column,
-                    elements: $.makeArray(portlets.filter(function () {
-                          // is this a bug in filter? would have expected "this" to be 1st arg
-                        return fluid.dom.isContainer(column, this);
-                    }))
-                };
-            });
-        return layout;
-    };
-      
-    /**
-     * Builds a layout object from a serialisable "layout" object consisting of id lists
-     */
-    fluid.moduleLayout.layoutFromIds = function (idLayout) {
-        return {
-            container: fluid.byId(idLayout.id),
-            columns: fluid.transform(idLayout.columns, function (column) {
-                return {
-                    container: fluid.byId(column.id),
-                    elements: fluid.transform(column.children, fluid.byId)
-                };
-            })
-        };
-    };
-      
-    /**
-     * Serializes the current layout into a structure of ids
-     */
-    fluid.moduleLayout.layoutToIds = function (idLayout) {
-        return {
-            id: fluid.getId(idLayout.container),
-            columns: fluid.transform(idLayout.columns, function (column) {
-                return {
-                    id: fluid.getId(column.container),
-                    children: fluid.transform(column.elements, fluid.getId)
-                };
-            })
-        };
-    };
-    
-    var defaultOnShowKeyboardDropWarning = function (item, dropWarning) {
-        if (dropWarning) {
-            var offset = $(item).offset();
-            dropWarning = $(dropWarning);
-            dropWarning.css("position", "absolute");
-            dropWarning.css("top", offset.top);
-            dropWarning.css("left", offset.left);
-        }
-    };
-    
-    fluid.defaults(true, "fluid.moduleLayoutHandler", 
-        {orientation: fluid.orientation.VERTICAL,
-         containerRole: fluid.reorderer.roles.REGIONS,
-         selectablesTabindex: -1,
-         sentinelize:         true
-         });
-       
-    /**
-     * Module Layout Handler for reordering content modules.
-     * 
-     * General movement guidelines:
-     * 
-     * - Arrowing sideways will always go to the top (moveable) module in the column
-     * - Moving sideways will always move to the top available drop target in the column
-     * - Wrapping is not necessary at this first pass, but is ok
-     */
-    fluid.moduleLayoutHandler = function (container, options, dropManager, dom) {
-        var that = {};
-        
-        function computeLayout() {
-            var togo;
-            if (options.selectors.modules) {
-                togo = fluid.moduleLayout.layoutFromFlat(container, dom.locate("columns"), dom.locate("modules"));
-            }
-            if (!togo) {
-                var idLayout = fluid.get(options, "moduleLayout.layout");
-                fluid.moduleLayout.layoutFromIds(idLayout);
-            }
-            return togo;
-        }
-        var layout = computeLayout();
-        that.layout = layout;
-        
-        function isLocked(item) {
-            var lockedModules = options.selectors.lockedModules ? dom.fastLocate("lockedModules") : [];
-            return $.inArray(item, lockedModules) !== -1;
-        }
-
-        that.getRelativePosition  = 
-           fluid.reorderer.relativeInfoGetter(options.orientation, 
-                 fluid.reorderer.WRAP_LOCKED_STRATEGY, fluid.reorderer.GEOMETRIC_STRATEGY, 
-                 dropManager, dom, options.disableWrap);
-                 
-        that.getGeometricInfo = function () {
-            var extents = [];
-            var togo = {extents: extents,
-                        sentinelize: options.sentinelize};
-            togo.elementMapper = function (element) {
-                return isLocked(element) ? "locked" : null;
-            };
-            togo.elementIndexer = function (element) {
-                var indices = fluid.moduleLayout.findColumnAndItemIndices(element, that.layout);
-                return {
-                    index:        indices.itemIndex,
-                    length:       layout.columns[indices.columnIndex].elements.length,
-                    moduleIndex:  indices.columnIndex,
-                    moduleLength: layout.columns.length
-                };
-            };
-            for (var col = 0; col < layout.columns.length; col++) {
-                var column = layout.columns[col];
-                var thisEls = {
-                    orientation: options.orientation,
-                    elements: $.makeArray(column.elements),
-                    parentElement: column.container
-                };
-              //  fluid.log("Geometry col " + col + " elements " + fluid.dumpEl(thisEls.elements) + " isLocked [" + 
-              //       fluid.transform(thisEls.elements, togo.elementMapper).join(", ") + "]");
-                extents.push(thisEls);
-            }
-
-            return togo;
-        };
-        
-        function computeModules(all) {
-            return function () {
-                var modules = fluid.accumulate(layout.columns, function (column, list) {
-                    return list.concat(column.elements); // note that concat will not work on a jQuery
-                }, []);
-                if (!all) {
-                    fluid.remove_if(modules, isLocked);
-                }
-                return modules;
-            };
-        }
-        
-        that.returnedOptions = {
-            selectors: {
-                movables: computeModules(false),
-                dropTargets: computeModules(false),
-                selectables: computeModules(true)
-            },
-            listeners: {
-                onMove: {
-                    priority: "last",
-                    listener: function (item, requestedPosition) {
-                        fluid.moduleLayout.updateLayout(item, requestedPosition.element, requestedPosition.position, layout);
-                    }
-                },
-                onRefresh: function () {
-                    layout = computeLayout();
-                    that.layout = layout;
-                },
-                "onShowKeyboardDropWarning.setPosition": defaultOnShowKeyboardDropWarning
-            }
-        };
-        
-        that.getModel = function () {
-            return fluid.moduleLayout.layoutToIds(layout);
-        };
-              
-        return that;
-    };
-})(jQuery, fluid_1_4);
-/*
-Copyright 2008-2009 University of Cambridge
-Copyright 2008-2009 University of Toronto
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global fluid_1_4:true, jQuery*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {
- 
-    /**
-     * Simple way to create a layout reorderer.
-     * @param {selector} a jQueryable (selector, element, jQuery) for the layout container
-     * @param {Object} a map of selectors for columns and modules within the layout
-     * @param {Function} a function to be called when the order changes 
-     * @param {Object} additional configuration options
-     */
-    fluid.reorderLayout = function (container, userOptions) {
-        var assembleOptions = {
-            layoutHandler: "fluid.moduleLayoutHandler",
-            selectors: {
-                columns: ".flc-reorderer-column",
-                modules: ".flc-reorderer-module"
-            }
-        };
-        var options = $.extend(true, assembleOptions, userOptions);
-        return fluid.reorderer(container, options);
-    };    
-})(jQuery, fluid_1_4);
-/*
-Copyright 2008-2009 University of Cambridge
-Copyright 2008-2009 University of Toronto
-Copyright 2010-2011 OCAD University
-Copyright 2010 Lucendo Development Ltd.
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global fluid_1_4:true, jQuery*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {
-
-    /******************
-     * Pager Bar View *
-     ******************/
-
-    
-    function updateStyles(pageListThat, newModel, oldModel) {
-        if (!pageListThat.pageLinks) {
-            return;
-        }
-        if (oldModel.pageIndex !== undefined) {
-            var oldLink = pageListThat.pageLinks.eq(oldModel.pageIndex);
-            oldLink.removeClass(pageListThat.options.styles.currentPage);
-        }
-        var pageLink = pageListThat.pageLinks.eq(newModel.pageIndex);
-        pageLink.addClass(pageListThat.options.styles.currentPage); 
-    }
-    
-    function bindLinkClick(link, events, eventArg) {
-        link.unbind("click.fluid.pager");
-        link.bind("click.fluid.pager", function () {
-            events.initiatePageChange.fire(eventArg);
-        });
-    }
-    
-    // 10 -> 1, 11 -> 2
-    function computePageCount(model) {
-        model.pageCount = Math.max(1, Math.floor((model.totalRange - 1) / model.pageSize) + 1);
-    }
-
-    fluid.pager = function () {
-        return fluid.pagerImpl.apply(null, arguments);
-    };
-    
-    fluid.pager.computePageLimit = function (model) {
-        return Math.min(model.totalRange, (model.pageIndex + 1) * model.pageSize);
-    };
-
-    fluid.pager.directPageList = function (container, events, options) {
-        var that = fluid.initView("fluid.pager.directPageList", container, options);
-        that.pageLinks = that.locate("pageLinks");
-        for (var i = 0; i < that.pageLinks.length; ++i) {
-            var pageLink = that.pageLinks.eq(i);
-            bindLinkClick(pageLink, events, {pageIndex: i});
-        }
-        events.onModelChange.addListener(
-            function (newModel, oldModel) {
-                updateStyles(that, newModel, oldModel);
-            }
-        );
-        that.defaultModel = {
-            pageIndex: undefined,
-            pageSize: 1,
-            totalRange: that.pageLinks.length
-        };
-        return that;
-    };
-    
-    /** Returns an array of size count, filled with increasing integers, 
-     *  starting at 0 or at the index specified by first. 
-     */
-    
-    fluid.iota = function (count, first) {
-        first = first || 0;
-        var togo = [];
-        for (var i = 0; i < count; ++i) {
-            togo[togo.length] = first++;
-        }
-        return togo;
-    };
-    
-    fluid.pager.everyPageStrategy = fluid.iota;
-    
-    fluid.pager.gappedPageStrategy = function (locality, midLocality) {
-        if (!locality) {
-            locality = 3;
-        }
-        if (!midLocality) {
-            midLocality = locality;
-        }
-        return function (count, first, mid) {
-            var togo = [];
-            var j = 0;
-            var lastSkip = false;
-            for (var i = 0; i < count; ++i) {
-                if (i < locality || (count - i - 1) < locality || (i >= mid - midLocality && i <= mid + midLocality)) {
-                    togo[j++] = i;
-                    lastSkip = false;
-                } else if (!lastSkip) {
-                    togo[j++] = -1;
-                    lastSkip = true;
-                }
-            }
-            return togo;
-        };
-    };
-    
-    /**
-     * An impl of a page strategy that will always display same number of page links (including skip place holders). 
-     * @param   endLinkCount    int     The # of elements first and last trunks of elements
-     * @param   midLinkCount    int     The # of elements from beside the selected #
-     * @author  Eric Dalquist
-     */
-    fluid.pager.consistentGappedPageStrategy = function (endLinkCount, midLinkCount) {
-        if (!endLinkCount) {
-            endLinkCount = 1;
-        }
-        if (!midLinkCount) {
-            midLinkCount = endLinkCount;
-        }
-        var endWidth = endLinkCount + 2 + midLinkCount;
-
-        return function (count, first, mid) {
-            var pages = [];
-            var anchoredLeft = mid < endWidth;
-            var anchoredRight = mid >= count - endWidth;
-            var anchoredEndWidth = endWidth + midLinkCount;
-            var midStart = mid - midLinkCount;
-            var midEnd = mid + midLinkCount;
-            var lastSkip = false;
-            
-            for (var page = 0; page < count; page++) {
-                if (page < endLinkCount || // start pages
-                        count - page <= endLinkCount || // end pages
-                        (anchoredLeft && page < anchoredEndWidth) || // pages if no skipped pages between start and mid
-                        (anchoredRight && page >= count - anchoredEndWidth) || // pages if no skipped pages between mid and end
-                        (page >= midStart && page <= midEnd) // pages around the mid
-                        ) {
-                    pages.push(page);
-                    lastSkip = false;
-                } else if (!lastSkip) {
-                    pages.push(-1);
-                    lastSkip = true;
-                }
-            }
-            return pages;
-        };
-    };  
-    
-    fluid.pager.renderedPageList = function (container, events, pagerBarOptions, options, strings) {
-        options = $.extend(true, pagerBarOptions, options);
-        var that = fluid.initView("fluid.pager.renderedPageList", container, options);
-        options = that.options; // pick up any defaults
-        var idMap = {};
-        var renderOptions = {
-            cutpoints: [ 
-                {
-                    id: "page-link:link",
-                    selector: pagerBarOptions.selectors.pageLinks
-                },
-                {
-                    id: "page-link:skip",
-                    selector: pagerBarOptions.selectors.pageLinkSkip
-                }
-            ],
-            idMap: idMap
-        };
-        
-        if (options.linkBody) {
-            renderOptions.cutpoints[renderOptions.cutpoints.length] = {
-                id: "payload-component",
-                selector: options.linkBody
-            };
-        }   
-        
-        var assembleComponent = function (page, isCurrent) {
-            var obj = {
-                ID: "page-link:link",
-                localID: page + 1,
-                value: page + 1,
-                pageIndex: page,
-                decorators: [
-                    {
-                        type: "jQuery",
-                        func: "click", 
-                        args: function (event) {
-                            events.initiatePageChange.fire({pageIndex: page});
-                            event.preventDefault();
-                        }
-                    }
-                ]
-            };
-            
-            if (isCurrent) {
-                obj.current = true;
-                obj.decorators = obj.decorators.concat([
-                    {
-                        type: "addClass",
-                        classes: that.options.styles.currentPage
-                    },
-                    {
-                        type: "jQuery",
-                        func: "attr", 
-                        args: ["aria-label", that.options.strings.currentPageIndexMsg] 
-                    }
-                ]);
-            }
-            
-            return obj;
-        };
-             
-        function pageToComponent(current) {
-            return function (page) {
-                return page === -1 ? {
-                    ID: "page-link:skip"
-                } : assembleComponent(page, page === current);
-            };
-        }
-        
-        var root = that.locate("root");
-        fluid.expectFilledSelector(root, "Error finding root template for fluid.pager.renderedPageList");
-        
-        var template = fluid.selfRender(root, {}, renderOptions);
-        events.onModelChange.addListener(
-            function (newModel, oldModel) {
-                var pages = that.options.pageStrategy(newModel.pageCount, 0, newModel.pageIndex);
-                var pageTree = fluid.transform(pages, pageToComponent(newModel.pageIndex));
-                if (pageTree.length > 1) {
-                    pageTree[pageTree.length - 1].value = pageTree[pageTree.length - 1].value + strings.last;
-                }
-                events.onRenderPageLinks.fire(pageTree, newModel);
-                
-                //Destroys all the tooltips before rerendering the pagelinks.
-                //This will clean up the tooltips, which are all added to the end at the end of the DOM,
-                //and prevent the tooltips from sticking around when using the keyboard to activate
-                //the page links.
-                $.each(idMap, function (key, id) {
-                    var pageLink = fluid.jById(id);
-                    if (pageLink.tooltip) {
-                        pageLink.tooltip("destroy");
-                    }
-                });
-                fluid.reRender(template, root, pageTree, renderOptions);
-                updateStyles(that, newModel, oldModel);
-            }
-        );
-        return that;
-    };
-    
-    fluid.defaults("fluid.pager.renderedPageList", {
-        selectors: {
-            root: ".flc-pager-links"
-        },
-        linkBody: "a",
-        pageStrategy: fluid.pager.everyPageStrategy
-    });
-    
-    var updatePreviousNext = function (that, options, newModel) {
-        if (newModel.pageIndex === 0) {
-            that.previous.addClass(options.styles.disabled);
-        } else {
-            that.previous.removeClass(options.styles.disabled);
-        }
-        
-        if (newModel.pageIndex === newModel.pageCount - 1) {
-            that.next.addClass(options.styles.disabled);
-        } else {
-            that.next.removeClass(options.styles.disabled);
-        }
-    };
-    
-    fluid.pager.previousNext = function (container, events, options) {
-        var that = fluid.initView("fluid.pager.previousNext", container, options);
-        that.previous = that.locate("previous");
-        bindLinkClick(that.previous, events, {relativePage: -1});
-        that.next = that.locate("next");
-        bindLinkClick(that.next, events, {relativePage: +1});
-        events.onModelChange.addListener(
-            function (newModel, oldModel, overallThat) {
-                updatePreviousNext(that, options, newModel);
-            }
-        );
-        return that;
-    };
-
-    fluid.pager.pagerBar = function (events, container, options, strings) {
-        var that = fluid.initView("fluid.pager.pagerBar", container, options);
-        that.pageList = fluid.initSubcomponent(that, "pageList", 
-            [container, events, that.options, fluid.COMPONENT_OPTIONS, strings]);
-        that.previousNext = fluid.initSubcomponent(that, "previousNext", 
-            [container, events, that.options, fluid.COMPONENT_OPTIONS, strings]);
-        
-        return that;
-    };
-
-    
-    fluid.defaults("fluid.pager.pagerBar", {
-            
-        previousNext: {
-            type: "fluid.pager.previousNext"
-        },
-        
-        pageList: {
-            type: "fluid.pager.renderedPageList",
-            options: {
-                pageStrategy: fluid.pager.gappedPageStrategy(3, 1)
-            }
-        },
-        
-        selectors: {
-            pageLinks: ".flc-pager-pageLink",
-            pageLinkSkip: ".flc-pager-pageLink-skip",
-            previous: ".flc-pager-previous",
-            next: ".flc-pager-next"
-        },
-        
-        styles: {
-            currentPage: "fl-pager-currentPage",
-            disabled: "fl-pager-disabled"
-        },
-        
-        strings: {
-            currentPageIndexMsg: "Current page"
-        }
-    });
-
-    function getColumnDefs(that) {
-        return that.options.columnDefs;
-    }
-
-    fluid.pager.findColumnDef = function (columnDefs, key) {
-        var columnDef = $.grep(columnDefs, function (def) {
-            return def.key === key;
-        })[0];
-        return columnDef;
-    };
-    
-    function getRoots(target, overallThat, index) {
-        var cellRoot = (overallThat.options.dataOffset ? overallThat.options.dataOffset + "." : "");
-        target.shortRoot = index;
-        target.longRoot = cellRoot + target.shortRoot;
-    }
-    
-    function expandPath(EL, shortRoot, longRoot) {
-        if (EL.charAt(0) === "*") {
-            return longRoot + EL.substring(1); 
-        } else {
-            return EL.replace("*", shortRoot);
-        }
-    }
-    
-    fluid.pager.fetchValue = function (that, dataModel, index, valuebinding, roots) {
-        getRoots(roots, that, index);
-
-        var path = expandPath(valuebinding, roots.shortRoot, roots.longRoot);
-        return fluid.get(dataModel, path);
-    };
-    
-    fluid.pager.basicSorter = function (overallThat, model) {        
-        var dataModel = overallThat.options.dataModel;
-        var roots = {};
-        var columnDefs = getColumnDefs(overallThat);
-        var columnDef = fluid.pager.findColumnDef(columnDefs, model.sortKey);
-        var sortrecs = [];
-        for (var i = 0; i < model.totalRange; ++i) {
-            sortrecs[i] = {
-                index: i,
-                value: fluid.pager.fetchValue(overallThat, dataModel, i, columnDef.valuebinding, roots)
-            };
-        }
-        function sortfunc(arec, brec) {
-            var a = arec.value;
-            var b = brec.value;
-            return a === b ? 0 : (a > b ? model.sortDir : -model.sortDir); 
-        }
-        sortrecs.sort(sortfunc);
-        return fluid.transform(sortrecs, function (row) {
-            return row.index;
-        });
-    };
-
-    
-    fluid.pager.directModelFilter = function (model, pagerModel, perm) {
-        var togo = [];
-        var limit = fluid.pager.computePageLimit(pagerModel);
-        for (var i = pagerModel.pageIndex * pagerModel.pageSize; i < limit; ++i) {
-            var index = perm ? perm[i] : i;
-            togo[togo.length] = {index: index, row: model[index]};
-        }
-        return togo;
-    };
-    
-    function expandVariables(value, opts) {
-        var togo = "";
-        var index = 0;
-        while (true) {
-            var nextindex = value.indexOf("${", index);
-            if (nextindex === -1) {
-                togo += value.substring(index);
-                break;
-            } else {
-                togo += value.substring(index, nextindex);
-                var endi = value.indexOf("}", nextindex + 2);
-                var EL = value.substring(nextindex + 2, endi);
-                if (EL === "VALUE") {
-                    EL = opts.EL;
-                } else {
-                    EL = expandPath(EL, opts.shortRoot, opts.longRoot);
-                }
-                var val = fluid.get(opts.dataModel, EL);
-                togo += val;
-                index = endi + 1;
-            }
-        }
-        return togo;
-    }
-   
-    function expandPaths(target, tree, opts) {
-        for (var i in tree) {
-            var val = tree[i];
-            if (val === fluid.VALUE) {
-                if (i === "valuebinding") {
-                    target[i] = opts.EL;
-                } else {
-                    target[i] = {"valuebinding" : opts.EL};
-                }
-            } else if (i === "valuebinding") {
-                target[i] = expandPath(tree[i], opts);
-            } else if (typeof (val) === 'object') {
-                target[i] = val.length !== undefined ? [] : {};
-                expandPaths(target[i], val, opts);
-            } else if (typeof (val) === 'string') {
-                target[i] = expandVariables(val, opts);
-            } else {
-                target[i] = tree[i];
-            }
-        }
-        return target;
-    }
-   
-   // sets opts.EL, returns ID
-    function iDforColumn(columnDef, opts) {
-        var options = opts.options;
-        var EL = columnDef.valuebinding;
-        var key = columnDef.key;
-        if (!EL) {
-            fluid.fail("Error in definition for column with key " + key + ": valuebinding is not set");
-        }
-        opts.EL = expandPath(EL, opts.shortRoot, opts.longRoot);
-        if (!key) {
-            var segs = fluid.model.parseEL(EL);
-            key = segs[segs.length - 1];
-        }
-        var ID = (options.keyPrefix ? options.keyPrefix : "") + key;
-        return ID;
-    }
-   
-    function expandColumnDefs(filteredRow, opts) {
-        var tree = fluid.transform(opts.columnDefs, function (columnDef) {
-            var ID = iDforColumn(columnDef, opts);
-            var togo;
-            if (!columnDef.components) {
-                return {
-                    ID: ID,
-                    valuebinding: opts.EL
-                };
-            } else if (typeof columnDef.components === 'function') {
-                togo = columnDef.components(filteredRow.row, filteredRow.index);
-            } else {
-                togo = columnDef.components;
-            }
-            togo = expandPaths({}, togo, opts);
-            togo.ID = ID;
-            return togo;
-        });
-        return tree;
-    }
-   
-    function fetchModel(overallThat) {
-        return fluid.get(overallThat.options.dataModel, 
-            overallThat.options.dataOffset);
-    }
-   
-    
-    function bigHeaderForKey(key, opts) {
-        var id = opts.options.renderOptions.idMap["header:" + key];
-        var smallHeader = fluid.jById(id);
-        if (smallHeader.length === 0) {
-            return null;
-        }
-        var headerSortStylisticOffset = opts.overallOptions.selectors.headerSortStylisticOffset;
-        var bigHeader = fluid.findAncestor(smallHeader, function (element) {
-            return $(element).is(headerSortStylisticOffset); 
-        });
-        return bigHeader;
-    }
-   
-    function setSortHeaderClass(styles, element, sort) {
-        element = $(element);
-        element.removeClass(styles.ascendingHeader);
-        element.removeClass(styles.descendingHeader);
-        if (sort !== 0) {
-            element.addClass(sort === 1 ? styles.ascendingHeader : styles.descendingHeader);
-            //aria-sort property are specified in the w3 WAI spec, ascending, descending, none, other.
-            //since pager currently uses ascending and descending, we do not support the others.
-            //http://www.w3.org/WAI/PF/aria/states_and_properties#aria-sort
-            element.attr('aria-sort', sort === 1 ? 'ascending' : 'descending'); 
-        }
-    }
-    
-    function isCurrentColumnSortable(columnDefs, model) {
-        var columnDef = model.sortKey ? fluid.pager.findColumnDef(columnDefs, model.sortKey) : null;
-        return columnDef ? columnDef.sortable : false;
-    }
-    
-    function setModelSortHeaderClass(newModel, opts) {
-        var styles = opts.overallOptions.styles;
-        var sort = isCurrentColumnSortable(opts.columnDefs, newModel) ? newModel.sortDir : 0;
-        setSortHeaderClass(styles, bigHeaderForKey(newModel.sortKey, opts), sort);
-    }
-   
-    function fireModelChange(that, newModel, forceUpdate) {
-        computePageCount(newModel);
-        if (newModel.pageIndex >= newModel.pageCount) {
-            newModel.pageIndex = newModel.pageCount - 1;
-        }
-        if (forceUpdate || newModel.pageIndex !== that.model.pageIndex || newModel.pageSize !== that.model.pageSize || newModel.sortKey !== that.model.sortKey ||
-                newModel.sortDir !== that.model.sortDir) {
-            var sorted = isCurrentColumnSortable(getColumnDefs(that), newModel) ? 
-                that.options.sorter(that, newModel) : null;
-            that.permutation = sorted;
-            that.events.onModelChange.fire(newModel, that.model, that);
-            fluid.model.copyModel(that.model, newModel);
-        }
-    }
-
-    function generateColumnClick(overallThat, columnDef, opts) {
-        return function () {
-            if (columnDef.sortable === true) {
-                var model = overallThat.model;
-                var newModel = fluid.copy(model);
-                var styles = overallThat.options.styles;
-                var oldKey = model.sortKey;
-                if (columnDef.key !== model.sortKey) {
-                    newModel.sortKey = columnDef.key;
-                    newModel.sortDir = 1;
-                    var oldBig = bigHeaderForKey(oldKey, opts);
-                    if (oldBig) {
-                        setSortHeaderClass(styles, oldBig, 0);
-                    }
-                } else if (newModel.sortKey === columnDef.key) {
-                    newModel.sortDir = -1 * newModel.sortDir;
-                } else {
-                    return false;
-                }
-                newModel.pageIndex = 0;
-                fireModelChange(overallThat, newModel, true);
-                setModelSortHeaderClass(newModel, opts);                
-            }
-            return false;
-        };
-    }
-   
-    function fetchHeaderDecorators(decorators, columnDef) {
-        return decorators[columnDef.sortable ? "sortableHeader" : "unsortableHeader"];
-    }
-   
-    function generateHeader(overallThat, newModel, columnDefs, opts) {
-        var sortableColumnTxt = opts.options.strings.sortableColumnText;
-        if (newModel.sortDir === 1) {
-            sortableColumnTxt = opts.options.strings.sortableColumnTextAsc;
-        } else if (newModel.sortDir === -1) {
-            sortableColumnTxt = opts.options.strings.sortableColumnTextDesc;
-        }
-
-        return {
-            children:  
-                fluid.transform(columnDefs, function (columnDef) {
-                return {
-                    ID: iDforColumn(columnDef, opts),
-                    value: columnDef.label,
-                    decorators: [ 
-                        {"jQuery": ["click", generateColumnClick(overallThat, columnDef, opts)]},
-                        {identify: "header:" + columnDef.key},
-                        {type: "attrs", attributes: { title: (columnDef.key === newModel.sortKey) ? sortableColumnTxt : opts.options.strings.sortableColumnText}}
-                    ].concat(fetchHeaderDecorators(opts.overallOptions.decorators, columnDef))
-                };
-            })
-        };
-    }
-   
-    /** A body renderer implementation which uses the Fluid renderer to render a table section **/
-   
-    fluid.pager.selfRender = function (overallThat, inOptions) {
-        var that = fluid.initView("fluid.pager.selfRender", overallThat.container, inOptions);
-        var options = that.options;
-        options.renderOptions.idMap = options.renderOptions.idMap || {};
-        var idMap = options.renderOptions.idMap;
-        var root = that.locate("root");
-        var template = fluid.selfRender(root, {}, options.renderOptions);
-        root.addClass(options.styles.root);
-        var columnDefs = getColumnDefs(overallThat);
-        var expOpts = {options: options, columnDefs: columnDefs, overallOptions: overallThat.options, dataModel: overallThat.options.dataModel, idMap: idMap};
-        var directModel = fetchModel(overallThat);
-
-        return {
-            returnedOptions: {
-                listeners: {
-                    onModelChange: function (newModel, oldModel) {
-                        var filtered = overallThat.options.modelFilter(directModel, newModel, overallThat.permutation);
-                        var tree = fluid.transform(filtered, 
-                            function (filteredRow) {
-                                getRoots(expOpts, overallThat, filteredRow.index);
-                                if (columnDefs === "explode") {
-                                    return fluid.explode(filteredRow.row, expOpts.longRoot);
-                                } else if (columnDefs.length) {
-                                    return expandColumnDefs(filteredRow, expOpts);
-                                }
-                            });
-                        var fullTree = {};
-                        fullTree[options.row] = tree;
-                        if (typeof (columnDefs) === "object") {
-                            fullTree[options.header] = generateHeader(overallThat, newModel, columnDefs, expOpts);
-                        }
-                        options.renderOptions = options.renderOptions || {};
-                        options.renderOptions.model = expOpts.dataModel;
-                        fluid.reRender(template, root, fullTree, options.renderOptions);
-                        setModelSortHeaderClass(newModel, expOpts); // TODO, should this not be actually renderable?
-                    }
-                }
-            }
-        };
-    };
-
-    fluid.defaults("fluid.pager.selfRender", {
-        selectors: {
-            root: ".flc-pager-body-template"
-        },
-        
-        styles: {
-            root: "fl-pager"
-        },
-        
-        keyStrategy: "id",
-        keyPrefix: "",
-        row: "row:",
-        header: "header:",
-        
-        strings: {
-            sortableColumnText: "Select to sort",
-            sortableColumnTextDesc: "Select to sort in ascending, currently in descending order.",
-            sortableColumnTextAsc: "Select to sort in descending, currently in ascending order."
-        },
-
-        // Options passed upstream to the renderer
-        renderOptions: {}
-    });
-
-    fluid.pager.summaryAria = function (element) {
-        element.attr({
-            "aria-relevant": "all",
-            "aria-atomic": "false",
-            "aria-live": "assertive",
-            "role": "status"
-        });
-    };
-
-    fluid.pager.summary = function (dom, options) {
-        var node = dom.locate("summary");
-        fluid.pager.summaryAria(node);
-        return {
-            returnedOptions: {
-                listeners: {
-                    onModelChange: function (newModel, oldModel) {
-                        var text = fluid.stringTemplate(options.message, {
-                            first: newModel.pageIndex * newModel.pageSize + 1,
-                            last: fluid.pager.computePageLimit(newModel),
-                            total: newModel.totalRange,
-                            currentPage: newModel.pageIndex + 1
-                        });
-                        if (node.length > 0) {
-                            node.text(text);
-                        }
-                    }
-                }
-            }
-        };
-    };
-    
-    fluid.pager.directPageSize = function (that) {
-        var node = that.locate("pageSize");
-        if (node.length > 0) {
-            that.events.onModelChange.addListener(
-                function (newModel, oldModel) {
-                    if (node.val() !== newModel.pageSize) {
-                        node.val(newModel.pageSize);
-                    }
-                }
-            );
-            node.change(function () {
-                that.events.initiatePageSizeChange.fire(node.val());
-            });
-        }
-    };
-
-
-    fluid.pager.rangeAnnotator = function (that, options) {
-        var roots = {};
-        that.events.onRenderPageLinks.addListener(function (tree, newModel) {
-            var column = that.options.annotateColumnRange;
-            var dataModel = that.options.dataModel;
-            // TODO: reaching into another component's options like this is a bit unfortunate
-            var columnDefs = getColumnDefs(that);
-
-            if (!column || !dataModel || !columnDefs) {
-                return;
-            }
-            var columnDef = fluid.pager.findColumnDef(columnDefs, column);
-            
-            function fetchValue(index) {
-                index = that.permutation ? that.permutation[index] : index;
-                return fluid.pager.fetchValue(that, dataModel, index, columnDef.valuebinding, roots);
-            }
-            var tModel = {};
-            fluid.model.copyModel(tModel, newModel);
-            
-            fluid.transform(tree, function (cell) {
-                if (cell.ID === "page-link:link") {
-                    var page = cell.pageIndex;
-                    var start = page * tModel.pageSize;
-                    tModel.pageIndex = page;
-                    var limit = fluid.pager.computePageLimit(tModel);
-                    var iValue = fetchValue(start);
-                    var lValue = fetchValue(limit - 1);
-                    
-                    var tooltipOpts = fluid.copy(that.options.tooltip.options) || {};
-                    
-                    if (!tooltipOpts.content) {
-                        tooltipOpts.content = function () { 
-                            return fluid.stringTemplate(that.options.markup.rangeAnnotation, {
-                                first: iValue,
-                                last: lValue
-                            });
-                        };
-                    }
-                    
-                    if (!cell.current) {
-                        var decorators = [
-                            {
-                                type: "fluid",
-                                func: that.options.tooltip.type,
-                                options: tooltipOpts
-                            },
-                            {
-                                identify: page
-                            }
-                        ];
-                        cell.decorators = cell.decorators.concat(decorators);
-                    }
-                }
-            });
-        });
-    };
-
-    /*******************
-     * Pager Component *
-     *******************/
-    
-    fluid.pagerImpl = function (container, options) {
-        var that = fluid.initView("fluid.pager", container, options);
-                
-        that.container.attr("role", "application");
-        
-        that.events.initiatePageChange.addListener(
-            function (arg) {
-                var newModel = fluid.copy(that.model);
-                if (arg.relativePage !== undefined) {
-                    newModel.pageIndex = that.model.pageIndex + arg.relativePage;
-                } else {
-                    newModel.pageIndex = arg.pageIndex;
-                }
-                if (newModel.pageIndex === undefined || newModel.pageIndex < 0) {
-                    newModel.pageIndex = 0;
-                }
-                fireModelChange(that, newModel, arg.forceUpdate);
-            }
-        );
-        
-        that.events.initiatePageSizeChange.addListener(
-            function (arg) {
-                var newModel = fluid.copy(that.model);
-                newModel.pageSize = arg;
-                fireModelChange(that, newModel);     
-            }
-        );
-
-        // Setup the top and bottom pager bars.
-        var pagerBarElement = that.locate("pagerBar");
-        if (pagerBarElement.length > 0) {
-            that.pagerBar = fluid.initSubcomponent(that, "pagerBar", 
-                [that.events, pagerBarElement, fluid.COMPONENT_OPTIONS, that.options.strings]);
-        }
-        
-        var pagerBarSecondaryElement = that.locate("pagerBarSecondary");
-        if (pagerBarSecondaryElement.length > 0) {
-            that.pagerBarSecondary = fluid.initSubcomponent(that, "pagerBar",
-                [that.events, pagerBarSecondaryElement, fluid.COMPONENT_OPTIONS, that.options.strings]);
-        }
- 
-        that.bodyRenderer = fluid.initSubcomponent(that, "bodyRenderer", [that, fluid.COMPONENT_OPTIONS]);
-        
-        that.summary = fluid.initSubcomponent(that, "summary", [that.dom, fluid.COMPONENT_OPTIONS]);
-        
-        that.pageSize = fluid.initSubcomponent(that, "pageSize", [that]);
-        
-        that.rangeAnnotator = fluid.initSubcomponent(that, "rangeAnnotator", [that, fluid.COMPONENT_OPTIONS]);
- 
-        that.model = fluid.copy(that.options.model);
-        
-        var dataModel = fetchModel(that);
-        if (dataModel) {
-            that.model.totalRange = dataModel.length;
-        }
-        if (that.model.totalRange === undefined) {
-            if (!that.pagerBar) {
-                fluid.fail("Error in Pager configuration - cannot determine total range, " +
-                    " since not configured in model.totalRange and no PagerBar is configured");
-            }
-            that.model = that.pagerBar.pageList.defaultModel;
-        }
-        that.applier = fluid.makeChangeApplier(that.model);
-
-        that.events.initiatePageChange.fire({pageIndex: that.model.pageIndex ? that.model.pageIndex : 0, 
-            forceUpdate: true});
-
-        return that;
-    };
-    
-    fluid.defaults("fluid.pager", {
-        mergePolicy: {
-            dataModel: "preserve",
-            model: "preserve"
-        },
-        pagerBar: {
-            type: "fluid.pager.pagerBar"
-        },
-        
-        summary: {type: "fluid.pager.summary", options: {
-            message: "Viewing page %currentPage. Showing records %first - %last of %total items." 
-        }},
-        
-        pageSize: {
-            type: "fluid.pager.directPageSize"
-        },
-        
-        modelFilter: fluid.pager.directModelFilter,
-        
-        sorter: fluid.pager.basicSorter,
-        
-        bodyRenderer: {
-            type: "fluid.pager.selfRender"
-        },
-        
-        model: {
-            pageIndex: undefined,
-            pageSize: 10,
-            totalRange: undefined
-        },
-        
-        dataModel: undefined,
-        // Offset of the tree's "main" data from the overall dataModel root
-        dataOffset: "",
-        
-        // strategy for generating a tree row, either "explode" or an array of columnDef objects
-        columnDefs: [
-            {
-                key: "column1",
-                valuebinding: "*.value1",  
-                sortable: true
-            }
-        ],
-        
-        annotateColumnRange: "column1",
-        
-        tooltip: {
-            type: "fluid.tooltip"
-        },
-        
-        rangeAnnotator: {
-            type: "fluid.pager.rangeAnnotator"
-        },
-        
-        selectors: {
-            pagerBar: ".flc-pager-top",
-            pagerBarSecondary: ".flc-pager-bottom",
-            summary: ".flc-pager-summary",
-            pageSize: ".flc-pager-page-size",
-            headerSortStylisticOffset: ".flc-pager-sort-header"
-        },
-        
-        styles: {
-            ascendingHeader: "fl-pager-asc",
-            descendingHeader: "fl-pager-desc"
-        },
-        
-        decorators: {
-            sortableHeader: [],
-            unsortableHeader: []
-        },
-        
-        strings: {
-            last: " (last)"
-        },
-        
-        events: {
-            initiatePageChange: null,
-            initiatePageSizeChange: null,
-            onModelChange: null,
-            onRenderPageLinks: null
-        },
-        
-        markup: {
-            rangeAnnotation: "<b> %first </b><br/>&mdash;<br/><b> %last </b>"
-        }
-    });
 })(jQuery, fluid_1_4);
