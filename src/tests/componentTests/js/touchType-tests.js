@@ -153,22 +153,6 @@ in compliance with this License.
         
         eventTest("that.start: afterStarted event", "afterStarted", "start");
         eventTest("that.cancel: afterCancelled event", "afterCancelled", "cancel");
-        
-        ttTests.asyncTest("that.finish", function () {
-            var eventFired = false;
-            var typingTest = createTypingTest({
-                listeners: {
-                    afterFinished: function () {
-                        eventFired = true;
-                        start();
-                    }
-                }
-            });
-            
-            typingTest.sampleText = "sample text";
-            typingTest.finish();
-            
-            jqUnit.assertTrue("The afterFinished event should have fired", eventFired);
-        });
+        eventTest("that.finish: afterFinished event", "afterFinished", "finish");
     });
 })(jQuery);
