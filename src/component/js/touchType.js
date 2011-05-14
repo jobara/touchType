@@ -13,7 +13,7 @@ var tt = tt || {};
 (function ($) {
     
     var startTimer = function (that) {
-        var time = that.options.testDuration * 1000; // convert from seconds to to miliseconds
+        var time = that.duration * 1000; // convert from seconds to to miliseconds
         return setTimeout(that.events.onFinish.fire, time);
     };
     
@@ -21,7 +21,7 @@ var tt = tt || {};
         var sampleText = that.toArray(that.sampleText);
         var typedText = that.toArray(that.locate("input").val());
         var errors = that.compare(sampleText, typedText);
-        var adjustedWPM = that.calculateWPM(typedText.length, errors.length, that.options.testDuration);
+        var adjustedWPM = that.calculateWPM(typedText.length, errors.length, that.duration);
         
         return {
             WPM: typedText.length,
@@ -47,6 +47,8 @@ var tt = tt || {};
     };
     
     var setup = function (that) {
+        var time = that.options.testDuration;
+        that.duration = time >= 0 ? time : 0;
         bindStartEvent(that);
         that.fetchText(that.options.texts[0].url);
     };
