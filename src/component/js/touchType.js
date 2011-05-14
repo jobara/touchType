@@ -75,8 +75,11 @@ var tt = tt || {};
         return differences;
     };
     
-    tt.typingTest.wordsPerMinute = function (numWords, numErrors, numMinutes) {
-        return Math.max((numWords - numErrors) / numMinutes, 0);
+    tt.typingTest.wordsPerMinute = function (numWords, numErrors, numSeconds) {
+        var MINUTE = 60;
+        
+        var WPS = Math.max((numWords - numErrors) / numSeconds, 0);
+        return Math.floor(WPS * MINUTE);
     };
     
     tt.typingTest.defaultNotification = function (WPMStats) {

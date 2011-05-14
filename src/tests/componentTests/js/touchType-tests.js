@@ -54,9 +54,9 @@ in compliance with this License.
         });
     };
     
-    var wordsPerMinuteTest = function (testName, numWords, numErrors, numMinutes, expectedWPM) {
+    var wordsPerMinuteTest = function (testName, numWords, numErrors, numSeconds, expectedWPM) {
         ttTests.test(testName, function () {
-            var actualWPM = tt.typingTest.wordsPerMinute(numWords, numErrors, numMinutes);
+            var actualWPM = tt.typingTest.wordsPerMinute(numWords, numErrors, numSeconds);
             jqUnit.assertEquals("WPM calculated correctly", expectedWPM, actualWPM);
         });
     };
@@ -122,11 +122,14 @@ in compliance with this License.
             actual: "ghi"
         }]);
         
-        wordsPerMinuteTest("wordsPerMinute: no errors", 12, 0, 1, 12);
-        wordsPerMinuteTest("wordsPerMinute: no errors, 2 minutes", 12, 0, 2, 6);
-        wordsPerMinuteTest("wordsPerMinute: with errors", 12, 2, 1, 10);
-        wordsPerMinuteTest("wordsPerMinute: with errors, 2 minutes", 12, 2, 2, 5);
-        wordsPerMinuteTest("wordsPerMinute: more errors than words", 12, 22, 1, 0);
+        wordsPerMinuteTest("wordsPerMinute: no errors", 12, 0, 60, 12);
+        wordsPerMinuteTest("wordsPerMinute: no errors, 2 minutes", 12, 0, 120, 6);
+        wordsPerMinuteTest("wordsPerMinute: with errors", 12, 2, 60, 10);
+        wordsPerMinuteTest("wordsPerMinute: with errors, 2 minutes", 12, 2, 120, 5);
+        wordsPerMinuteTest("wordsPerMinute: more errors than words", 12, 22, 60, 0);
+        wordsPerMinuteTest("wordsPerMinute: less than a minute", 12, 0, 20, 36);
+        wordsPerMinuteTest("wordsPerMinute: more than a minute", 12, 0, 90, 8);
+        wordsPerMinuteTest("wordsPerMinute: result rounded down", 13, 0, 90, 8);
         
         ttTests.test("that.resetTest", function () {
             var typingTest = createTypingTest();
