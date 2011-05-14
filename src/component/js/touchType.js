@@ -13,14 +13,15 @@ var tt = tt || {};
 (function ($) {
     
     var startTimer = function (that) {
-        return setTimeout(that.events.onFinish.fire, 60000);
+        var time = that.options.testDuration * 1000; // convert from seconds to to miliseconds
+        return setTimeout(that.events.onFinish.fire, time);
     };
     
     var calculateWPMStats = function (that) {
         var sampleText = that.toArray(that.sampleText);
         var typedText = that.toArray(that.locate("input").val());
         var errors = that.compare(sampleText, typedText);
-        var adjustedWPM = that.calculateWPM(typedText.length, errors.length, 1);
+        var adjustedWPM = that.calculateWPM(typedText.length, errors.length, that.options.testDuration);
         
         return {
             WPM: typedText.length,
@@ -177,6 +178,8 @@ var tt = tt || {};
             onCancel: "preventable",
             afterCancelled: null
         },
+        
+        testDuration: 60,
         
         texts: [
             {
