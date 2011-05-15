@@ -40,12 +40,6 @@ var tt = tt || {};
         });
     };
     
-    var bindCancelEvent = function (that) {
-        that.locate("input").bind("blur.tt-cancel", function (event) {
-            that.events.onCancel.fire();
-        });
-    };
-    
     var setup = function (that) {
         var time = that.options.testDuration;
         that.duration = time >= 0 ? time : 0;
@@ -104,7 +98,6 @@ var tt = tt || {};
             var textInput = that.locate("input");
             textInput.val("");
             textInput.removeAttr("disabled");
-            textInput.unbind("blur.tt-cancel");
             bindStartEvent(that);
         };
         
@@ -125,7 +118,6 @@ var tt = tt || {};
         
         that.start = function () {
             that.locate("input").unbind("keyup.tt-start");
-            bindCancelEvent(that);
             that.timerID = startTimer(that);
             that.events.afterStarted.fire();
         };
