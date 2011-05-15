@@ -6,10 +6,11 @@
 	<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
 	<title>touchType</title>
 	
-	<link rel="stylesheet" type="text/css" media="screen" href="../css/touchType.css" />
+	<link rel="stylesheet" type="text/css" media="screen" href="../../component/css/touchType.css" />
 	
 	<script type="text/javascript" src="../../lib/infusion/js/MyInfusion.js"></script>
-	<script type="text/javascript" src="../js/touchType.js"></script>
+	<script type="text/javascript" src="../../component/js/touchType.js"></script>
+	<script type="text/javascript" src="../js/touchType-demo.js"></script>
 </head>
     <body>
         <div id="typingTest">
@@ -19,8 +20,10 @@
             <p class="tt-typingTest-sampleText"></p>
             <input class="tt-typingTest-input" type="text" />
         </div>
+        <button class="demo-cancel">Cancel</button>
+        <button class="demo-finish">Finish</button>
         <script>
-            tt.typingTest("#typingTest");
+            demo.init();
         </script>
     </body>
 </html>

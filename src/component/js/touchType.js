@@ -174,20 +174,6 @@ var tt = tt || {};
         },
         
         testDuration: 60,
-        
-        texts: [
-            {
-                name: "Macbeth",
-                url: "../text/Macbeth.txt"
-            },
-            {
-                name: "A Tale of Two Cities",
-                url: "../text/A_Tale_of_Two_Cities.txt"
-            },
-            {
-                name: "The Wonderful Wizard of Oz",
-                url: "../text/The_Wonderful_Wizard_of_Oz.txt"
-            }
-        ]
+        texts: [] //[{name: "textName", url: "textURL"}]
     });
 })(jQuery);
