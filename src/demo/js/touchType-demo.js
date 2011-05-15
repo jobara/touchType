@@ -13,9 +13,12 @@ var demo = demo || {};
 (function ($) {
     
     demo.init = function () {
-        return tt.typingTest("#typingTest", {
+        demo.tt = tt.typingTest("#typingTest", {
             texts: [{name: "Macbeth", url: "../text/Macbeth.txt"}]
         });
+        
+        $(".demo-cancel").click(demo.tt.cancel);
+        $(".demo-finish").click(demo.tt.finish);
     };
     
 })(jQuery);
