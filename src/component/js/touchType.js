@@ -115,7 +115,7 @@ var tt = tt || {};
         };
         
         that.renderText = function (text) {
-            that.sampleText = text || "";
+            that.sampleText = text ? that.sanitizeText(text) : "";
             that.locate("sampleText").text(that.sampleText);
             that.events.afterTextRendered.fire(that.sampleText);
         };
@@ -150,7 +150,8 @@ var tt = tt || {};
             toArray: "tt.typingTest.stringToArray",
             compare: "tt.typingTest.compareStringArrays",
             calculateWPM: "tt.typingTest.wordsPerMinute",
-            getText: "tt.typingTest.getText"
+            getText: "tt.typingTest.getText",
+            sanitizeText: "tt.typingTest.sanitizeText"
         },
         
         selectors: {
