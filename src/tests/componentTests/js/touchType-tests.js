@@ -40,6 +40,13 @@ in compliance with this License.
         return tt.typingTest("#typingTest", mergedOptions);
     };
     
+    var sanitizeTextTest = function (testName, testText, expectedText) {
+        ttTests.test(testName, function () {
+            var sanitizedText = tt.typingTest.sanitizeText(testText);
+            jqUnit.assertEquals("String sanitized correctly", expectedText, sanitizedText);
+        });
+    };
+    
     var stringToArrayTest = function (testName, testString, expectedArray) {
         ttTests.test(testName, function () {
             var splitString = tt.typingTest.stringToArray(testString);
@@ -104,6 +111,13 @@ in compliance with this License.
            
            jqUnit.assertTrue("typingTest initialized", typingTest);
        });
+       
+       sanitizeTextTest("sanitizeTextTest: text single space", "single space", "single space");
+       sanitizeTextTest("sanitizeTextTest: text double space", "double  space", "double space");
+       sanitizeTextTest("sanitizeTextTest: text single tab", "single	tab", "single tab");
+       sanitizeTextTest("sanitizeTextTest: text double tab", "double		tab", "double tab");
+       sanitizeTextTest("sanitizeTextTest: text single newline", "single\nnewline", "single newline");
+       sanitizeTextTest("sanitizeTextTest: text single newline", "double\n\nnewline", "double newline");
         
         stringToArrayTest("stringToArray: string separated by single space", "abc def ghi", ["abc", "def", "ghi"]);
         stringToArrayTest("stringToArray: string separated by single tab", "jkl\tmno", ["jkl", "mno"]);

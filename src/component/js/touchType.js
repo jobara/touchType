@@ -49,6 +49,10 @@ var tt = tt || {};
 
     fluid.registerNamespace("tt.typingTest");
     
+    tt.typingTest.sanitizeText = function (text) {
+        return text.replace(/\s+/g, " ");
+    };
+    
     tt.typingTest.stringToArray = function (str) {
         return str.split(/\s/);
     };
