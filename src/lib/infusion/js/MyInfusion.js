@@ -1,24 +1,30 @@
 /*!
- * jQuery JavaScript Library v1.4.2
+ * jQuery JavaScript Library v1.6.1
  * http://jquery.com/
  *
- * Copyright 2010, John Resig
+ * Copyright 2011, John Resig
  * Dual licensed under the MIT or GPL Version 2 licenses.
  * http://jquery.org/license
  *
  * Includes Sizzle.js
  * http://sizzlejs.com/
- * Copyright 2010, The Dojo Foundation
+ * Copyright 2011, The Dojo Foundation
  * Released under the MIT, BSD, and GPL Licenses.
  *
- * Date: Sat Feb 13 22:33:48 2010 -0500
+ * Date: Thu May 12 15:04:36 2011 -0400
  */
 (function( window, undefined ) {
+
+// Use the correct document accordingly with window argument (sandbox)
+var document = window.document,
+	navigator = window.navigator,
+	location = window.location;
+var jQuery = (function() {
 
 // Define a local copy of jQuery
 var jQuery = function( selector, context ) {
 		// The jQuery object is actually just the init constructor 'enhanced'
-		return new jQuery.fn.init( selector, context );
+		return new jQuery.fn.init( selector, context, rootjQuery );
 	},
 
 	// Map over jQuery in case of overwrite
@@ -27,52 +33,64 @@ var jQuery = function( selector, context ) {
 	// Map over the $ in case of overwrite
 	_$ = window.$,
 
-	// Use the correct document accordingly with window argument (sandbox)
-	document = window.document,
-
 	// A central reference to the root jQuery(document)
 	rootjQuery,
 
 	// A simple way to check for HTML strings or ID strings
 	// (both of which we optimize for)
-	quickExpr = /^[^<]*(<[\w\W]+>)[^>]*$|^#([\w-]+)$/,
-
-	// Is it a simple selector
-	isSimple = /^.[^:#\[\.,]*$/,
+	quickExpr = /^(?:[^<]*(<[\w\W]+>)[^>]*$|#([\w\-]*)$)/,
 
 	// Check if a string has a non-whitespace character in it
 	rnotwhite = /\S/,
 
 	// Used for trimming whitespace
-	rtrim = /^(\s|\u00A0)+|(\s|\u00A0)+$/g,
+	trimLeft = /^\s+/,
+	trimRight = /\s+$/,
+
+	// Check for digits
+	rdigit = /\d/,
 
 	// Match a standalone tag
 	rsingleTag = /^<(\w+)\s*\/?>(?:<\/\1>)?$/,
+
+	// JSON RegExp
+	rvalidchars = /^[\],:{}\s]*$/,
+	rvalidescape = /\\(?:["\\\/bfnrt]|u[0-9a-fA-F]{4})/g,
+	rvalidtokens = /"[^"\\\n\r]*"|true|false|null|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?/g,
+	rvalidbraces = /(?:^|:|,)(?:\s*\[)+/g,
+
+	// Useragent RegExp
+	rwebkit = /(webkit)[ \/]([\w.]+)/,
+	ropera = /(opera)(?:.*version)?[ \/]([\w.]+)/,
+	rmsie = /(msie) ([\w.]+)/,
+	rmozilla = /(mozilla)(?:.*? rv:([\w.]+))?/,
 
 	// Keep a UserAgent string for use with jQuery.browser
 	userAgent = navigator.userAgent,
 
 	// For matching the engine and version of the browser
 	browserMatch,
-	
-	// Has the ready events already been bound?
-	readyBound = false,
-	
-	// The functions to execute on DOM ready
-	readyList = [],
+
+	// The deferred used on DOM ready
+	readyList,
 
 	// The ready event handler
 	DOMContentLoaded,
 
 	// Save a reference to some core methods
 	toString = Object.prototype.toString,
-	hasOwnProperty = Object.prototype.hasOwnProperty,
+	hasOwn = Object.prototype.hasOwnProperty,
 	push = Array.prototype.push,
 	slice = Array.prototype.slice,
-	indexOf = Array.prototype.indexOf;
+	trim = String.prototype.trim,
+	indexOf = Array.prototype.indexOf,
+
+	// [[Class]] -> type pairs
+	class2type = {};
 
 jQuery.fn = jQuery.prototype = {
-	init: function( selector, context ) {
+	constructor: jQuery,
+	init: function( selector, context, rootjQuery ) {
 		var match, elem, ret, doc;
 
 		// Handle $(""), $(null), or $(undefined)
@@ -86,12 +104,12 @@ jQuery.fn = jQuery.prototype = {
 			this.length = 1;
 			return this;
 		}
-		
+
 		// The body element only exists once, optimize finding it
-		if ( selector === "body" && !context ) {
+		if ( selector === "body" && !context && document.body ) {
 			this.context = document;
 			this[0] = document.body;
-			this.selector = "body";
+			this.selector = selector;
 			this.length = 1;
 			return this;
 		}
@@ -99,13 +117,20 @@ jQuery.fn = jQuery.prototype = {
 		// Handle HTML strings
 		if ( typeof selector === "string" ) {
 			// Are we dealing with HTML string or an ID?
-			match = quickExpr.exec( selector );
+			if ( selector.charAt(0) === "<" && selector.charAt( selector.length - 1 ) === ">" && selector.length >= 3 ) {
+				// Assume that strings that start and end with <> are HTML and skip the regex check
+				match = [ null, selector, null ];
+
+			} else {
+				match = quickExpr.exec( selector );
+			}
 
 			// Verify a match, and that no context was specified for #id
 			if ( match && (match[1] || !context) ) {
 
 				// HANDLE: $(html) -> $(array)
 				if ( match[1] ) {
+					context = context instanceof jQuery ? context[0] : context;
 					doc = (context ? context.ownerDocument || context : document);
 
 					// If a single string is passed in and it's a single tag
@@ -122,17 +147,19 @@ jQuery.fn = jQuery.prototype = {
 						}
 
 					} else {
-						ret = buildFragment( [ match[1] ], [ doc ] );
-						selector = (ret.cacheable ? ret.fragment.cloneNode(true) : ret.fragment).childNodes;
+						ret = jQuery.buildFragment( [ match[1] ], [ doc ] );
+						selector = (ret.cacheable ? jQuery.clone(ret.fragment) : ret.fragment).childNodes;
 					}
-					
+
 					return jQuery.merge( this, selector );
-					
+
 				// HANDLE: $("#id")
 				} else {
 					elem = document.getElementById( match[2] );
 
-					if ( elem ) {
+					// Check parentNode to catch when Blackberry 4.6 returns
+					// nodes that are no longer in the document #6963
+					if ( elem && elem.parentNode ) {
 						// Handle the case where IE and Opera return items
 						// by name instead of ID
 						if ( elem.id !== match[2] ) {
@@ -149,13 +176,6 @@ jQuery.fn = jQuery.prototype = {
 					return this;
 				}
 
-			// HANDLE: $("TAG")
-			} else if ( !context && /^\w+$/.test( selector ) ) {
-				this.selector = selector;
-				this.context = document;
-				selector = document.getElementsByTagName( selector );
-				return jQuery.merge( this, selector );
-
 			// HANDLE: $(expr, $(...))
 			} else if ( !context || context.jquery ) {
 				return (context || rootjQuery).find( selector );
@@ -163,7 +183,7 @@ jQuery.fn = jQuery.prototype = {
 			// HANDLE: $(expr, context)
 			// (which is just equivalent to: $(context).find(expr)
 			} else {
-				return jQuery( context ).find( selector );
+				return this.constructor( context ).find( selector );
 			}
 
 		// HANDLE: $(function)
@@ -184,7 +204,7 @@ jQuery.fn = jQuery.prototype = {
 	selector: "",
 
 	// The current version of jQuery being used
-	jquery: "1.4.2",
+	jquery: "1.6.1",
 
 	// The default length of a jQuery object is 0
 	length: 0,
@@ -207,18 +227,18 @@ jQuery.fn = jQuery.prototype = {
 			this.toArray() :
 
 			// Return just the object
-			( num < 0 ? this.slice(num)[ 0 ] : this[ num ] );
+			( num < 0 ? this[ this.length + num ] : this[ num ] );
 	},
 
 	// Take an array of elements and push it onto the stack
 	// (returning the new matched element set)
 	pushStack: function( elems, name, selector ) {
 		// Build a new jQuery matched element set
-		var ret = jQuery();
+		var ret = this.constructor();
 
 		if ( jQuery.isArray( elems ) ) {
 			push.apply( ret, elems );
-		
+
 		} else {
 			jQuery.merge( ret, elems );
 		}
@@ -244,25 +264,17 @@ jQuery.fn = jQuery.prototype = {
 	each: function( callback, args ) {
 		return jQuery.each( this, callback, args );
 	},
-	
+
 	ready: function( fn ) {
 		// Attach the listeners
 		jQuery.bindReady();
 
-		// If the DOM is already ready
-		if ( jQuery.isReady ) {
-			// Execute the function immediately
-			fn.call( document, jQuery );
-
-		// Otherwise, remember the function for later
-		} else if ( readyList ) {
-			// Add the function to the wait list
-			readyList.push( fn );
-		}
+		// Add the callback
+		readyList.done( fn );
 
 		return this;
 	},
-	
+
 	eq: function( i ) {
 		return i === -1 ?
 			this.slice( i ) :
@@ -287,9 +299,9 @@ jQuery.fn = jQuery.prototype = {
 			return callback.call( elem, i, elem );
 		}));
 	},
-	
+
 	end: function() {
-		return this.prevObject || jQuery(null);
+		return this.prevObject || this.constructor(null);
 	},
 
 	// For internal use only.
@@ -303,8 +315,11 @@ jQuery.fn = jQuery.prototype = {
 jQuery.fn.init.prototype = jQuery.fn;
 
 jQuery.extend = jQuery.fn.extend = function() {
-	// copy reference to target object
-	var target = arguments[0] || {}, i = 1, length = arguments.length, deep = false, options, name, src, copy;
+	var options, name, src, copy, copyIsArray, clone,
+		target = arguments[0] || {},
+		i = 1,
+		length = arguments.length,
+		deep = false;
 
 	// Handle a deep copy situation
 	if ( typeof target === "boolean" ) {
@@ -338,10 +353,15 @@ jQuery.extend = jQuery.fn.extend = function() {
 					continue;
 				}
 
-				// Recurse if we're merging object literal values or arrays
-				if ( deep && copy && ( jQuery.isPlainObject(copy) || jQuery.isArray(copy) ) ) {
-					var clone = src && ( jQuery.isPlainObject(src) || jQuery.isArray(src) ) ? src
-						: jQuery.isArray(copy) ? [] : {};
+				// Recurse if we're merging plain objects or arrays
+				if ( deep && copy && ( jQuery.isPlainObject(copy) || (copyIsArray = jQuery.isArray(copy)) ) ) {
+					if ( copyIsArray ) {
+						copyIsArray = false;
+						clone = src && jQuery.isArray(src) ? src : [];
+
+					} else {
+						clone = src && jQuery.isPlainObject(src) ? src : {};
+					}
 
 					// Never move original objects, clone them
 					target[ name ] = jQuery.extend( deep, clone, copy );
@@ -360,67 +380,79 @@ jQuery.extend = jQuery.fn.extend = function() {
 
 jQuery.extend({
 	noConflict: function( deep ) {
-		window.$ = _$;
+		if ( window.$ === jQuery ) {
+			window.$ = _$;
+		}
 
-		if ( deep ) {
+		if ( deep && window.jQuery === jQuery ) {
 			window.jQuery = _jQuery;
 		}
 
 		return jQuery;
 	},
-	
+
 	// Is the DOM ready to be used? Set to true once it occurs.
 	isReady: false,
-	
+
+	// A counter to track how many items to wait for before
+	// the ready event fires. See #6781
+	readyWait: 1,
+
+	// Hold (or release) the ready event
+	holdReady: function( hold ) {
+		if ( hold ) {
+			jQuery.readyWait++;
+		} else {
+			jQuery.ready( true );
+		}
+	},
+
 	// Handle when the DOM is ready
-	ready: function() {
-		// Make sure that the DOM is not already loaded
-		if ( !jQuery.isReady ) {
+	ready: function( wait ) {
+		// Either a released hold or an DOMready/load event and not yet ready
+		if ( (wait === true && !--jQuery.readyWait) || (wait !== true && !jQuery.isReady) ) {
 			// Make sure body exists, at least, in case IE gets a little overzealous (ticket #5443).
 			if ( !document.body ) {
-				return setTimeout( jQuery.ready, 13 );
+				return setTimeout( jQuery.ready, 1 );
 			}
 
 			// Remember that the DOM is ready
 			jQuery.isReady = true;
 
-			// If there are functions bound, to execute
-			if ( readyList ) {
-				// Execute all of them
-				var fn, i = 0;
-				while ( (fn = readyList[ i++ ]) ) {
-					fn.call( document, jQuery );
-				}
-
-				// Reset the list of functions
-				readyList = null;
+			// If a normal DOM Ready event fired, decrement, and wait if need be
+			if ( wait !== true && --jQuery.readyWait > 0 ) {
+				return;
 			}
 
+			// If there are functions bound, to execute
+			readyList.resolveWith( document, [ jQuery ] );
+
 			// Trigger any bound ready events
-			if ( jQuery.fn.triggerHandler ) {
-				jQuery( document ).triggerHandler( "ready" );
+			if ( jQuery.fn.trigger ) {
+				jQuery( document ).trigger( "ready" ).unbind( "ready" );
 			}
 		}
 	},
-	
+
 	bindReady: function() {
-		if ( readyBound ) {
+		if ( readyList ) {
 			return;
 		}
 
-		readyBound = true;
+		readyList = jQuery._Deferred();
 
 		// Catch cases where $(document).ready() is called after the
 		// browser event has already occurred.
 		if ( document.readyState === "complete" ) {
-			return jQuery.ready();
+			// Handle it asynchronously to allow scripts the opportunity to delay ready
+			return setTimeout( jQuery.ready, 1 );
 		}
 
 		// Mozilla, Opera and webkit nightlies currently support this event
 		if ( document.addEventListener ) {
 			// Use the handy event callback
 			document.addEventListener( "DOMContentLoaded", DOMContentLoaded, false );
-			
+
 			// A fallback to window.onload, that will always work
 			window.addEventListener( "load", jQuery.ready, false );
 
@@ -428,8 +460,8 @@ jQuery.extend({
 		} else if ( document.attachEvent ) {
 			// ensure firing before onload,
 			// maybe late but safe also for iframes
-			document.attachEvent("onreadystatechange", DOMContentLoaded);
-			
+			document.attachEvent( "onreadystatechange", DOMContentLoaded );
+
 			// A fallback to window.onload, that will always work
 			window.attachEvent( "onload", jQuery.ready );
 
@@ -451,35 +483,50 @@ jQuery.extend({
 	// Since version 1.3, DOM methods and functions like alert
 	// aren't supported. They return false on IE (#2968).
 	isFunction: function( obj ) {
-		return toString.call(obj) === "[object Function]";
+		return jQuery.type(obj) === "function";
 	},
 
-	isArray: function( obj ) {
-		return toString.call(obj) === "[object Array]";
+	isArray: Array.isArray || function( obj ) {
+		return jQuery.type(obj) === "array";
+	},
+
+	// A crude way of determining if an object is a window
+	isWindow: function( obj ) {
+		return obj && typeof obj === "object" && "setInterval" in obj;
+	},
+
+	isNaN: function( obj ) {
+		return obj == null || !rdigit.test( obj ) || isNaN( obj );
+	},
+
+	type: function( obj ) {
+		return obj == null ?
+			String( obj ) :
+			class2type[ toString.call(obj) ] || "object";
 	},
 
 	isPlainObject: function( obj ) {
 		// Must be an Object.
 		// Because of IE, we also have to check the presence of the constructor property.
 		// Make sure that DOM nodes and window objects don't pass through, as well
-		if ( !obj || toString.call(obj) !== "[object Object]" || obj.nodeType || obj.setInterval ) {
+		if ( !obj || jQuery.type(obj) !== "object" || obj.nodeType || jQuery.isWindow( obj ) ) {
 			return false;
 		}
-		
+
 		// Not own constructor property must be Object
-		if ( obj.constructor
-			&& !hasOwnProperty.call(obj, "constructor")
-			&& !hasOwnProperty.call(obj.constructor.prototype, "isPrototypeOf") ) {
+		if ( obj.constructor &&
+			!hasOwn.call(obj, "constructor") &&
+			!hasOwn.call(obj.constructor.prototype, "isPrototypeOf") ) {
 			return false;
 		}
-		
+
 		// Own properties are enumerated firstly, so to speed up,
 		// if last one is own, then all properties are own.
-	
+
 		var key;
 		for ( key in obj ) {}
-		
-		return key === undefined || hasOwnProperty.call( obj, key );
+
+		return key === undefined || hasOwn.call( obj, key );
 	},
 
 	isEmptyObject: function( obj ) {
@@ -488,11 +535,11 @@ jQuery.extend({
 		}
 		return true;
 	},
-	
+
 	error: function( msg ) {
 		throw msg;
 	},
-	
+
 	parseJSON: function( data ) {
 		if ( typeof data !== "string" || !data ) {
 			return null;
@@ -500,45 +547,59 @@ jQuery.extend({
 
 		// Make sure leading/trailing whitespace is removed (IE can't handle it)
 		data = jQuery.trim( data );
-		
+
+		// Attempt to parse using the native JSON parser first
+		if ( window.JSON && window.JSON.parse ) {
+			return window.JSON.parse( data );
+		}
+
 		// Make sure the incoming data is actual JSON
 		// Logic borrowed from http://json.org/json2.js
-		if ( /^[\],:{}\s]*$/.test(data.replace(/\\(?:["\\\/bfnrt]|u[0-9a-fA-F]{4})/g, "@")
-			.replace(/"[^"\\\n\r]*"|true|false|null|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?/g, "]")
-			.replace(/(?:^|:|,)(?:\s*\[)+/g, "")) ) {
+		if ( rvalidchars.test( data.replace( rvalidescape, "@" )
+			.replace( rvalidtokens, "]" )
+			.replace( rvalidbraces, "")) ) {
 
-			// Try to use the native JSON parser first
-			return window.JSON && window.JSON.parse ?
-				window.JSON.parse( data ) :
-				(new Function("return " + data))();
+			return (new Function( "return " + data ))();
 
-		} else {
-			jQuery.error( "Invalid JSON: " + data );
 		}
+		jQuery.error( "Invalid JSON: " + data );
+	},
+
+	// Cross-browser xml parsing
+	// (xml & tmp used internally)
+	parseXML: function( data , xml , tmp ) {
+
+		if ( window.DOMParser ) { // Standard
+			tmp = new DOMParser();
+			xml = tmp.parseFromString( data , "text/xml" );
+		} else { // IE
+			xml = new ActiveXObject( "Microsoft.XMLDOM" );
+			xml.async = "false";
+			xml.loadXML( data );
+		}
+
+		tmp = xml.documentElement;
+
+		if ( ! tmp || ! tmp.nodeName || tmp.nodeName === "parsererror" ) {
+			jQuery.error( "Invalid XML: " + data );
+		}
+
+		return xml;
 	},
 
 	noop: function() {},
 
-	// Evalulates a script in a global context
+	// Evaluates a script in a global context
+	// Workarounds based on findings by Jim Driscoll
+	// http://weblogs.java.net/blog/driscoll/archive/2009/09/08/eval-javascript-global-context
 	globalEval: function( data ) {
-		if ( data && rnotwhite.test(data) ) {
-			// Inspired by code by Andrea Giammarchi
-			// http://webreflection.blogspot.com/2007/08/global-scope-evaluation-and-dom.html
-			var head = document.getElementsByTagName("head")[0] || document.documentElement,
-				script = document.createElement("script");
-
-			script.type = "text/javascript";
-
-			if ( jQuery.support.scriptEval ) {
-				script.appendChild( document.createTextNode( data ) );
-			} else {
-				script.text = data;
-			}
-
-			// Use insertBefore instead of appendChild to circumvent an IE6 bug.
-			// This arises when a base node is used (#2709).
-			head.insertBefore( script, head.firstChild );
-			head.removeChild( script );
+		if ( data && rnotwhite.test( data ) ) {
+			// We use execScript on Internet Explorer
+			// We use an anonymous function so that context is window
+			// rather than jQuery in Firefox
+			( window.execScript || function( data ) {
+				window[ "eval" ].call( window, data );
+			} )( data );
 		}
 	},
 
@@ -550,7 +611,7 @@ jQuery.extend({
 	each: function( object, callback, args ) {
 		var name, i = 0,
 			length = object.length,
-			isObj = length === undefined || jQuery.isFunction(object);
+			isObj = length === undefined || jQuery.isFunction( object );
 
 		if ( args ) {
 			if ( isObj ) {
@@ -576,17 +637,31 @@ jQuery.extend({
 					}
 				}
 			} else {
-				for ( var value = object[0];
-					i < length && callback.call( value, i, value ) !== false; value = object[++i] ) {}
+				for ( ; i < length; ) {
+					if ( callback.call( object[ i ], i, object[ i++ ] ) === false ) {
+						break;
+					}
+				}
 			}
 		}
 
 		return object;
 	},
 
-	trim: function( text ) {
-		return (text || "").replace( rtrim, "" );
-	},
+	// Use native String.trim function wherever possible
+	trim: trim ?
+		function( text ) {
+			return text == null ?
+				"" :
+				trim.call( text );
+		} :
+
+		// Otherwise use our own trimming functionality
+		function( text ) {
+			return text == null ?
+				"" :
+				text.toString().replace( trimLeft, "" ).replace( trimRight, "" );
+		},
 
 	// results is for internal usage only
 	makeArray: function( array, results ) {
@@ -596,7 +671,10 @@ jQuery.extend({
 			// The window, strings (and functions) also have 'length'
 			// The extra typeof function check is to prevent crashes
 			// in Safari 2 (See: #3039)
-			if ( array.length == null || typeof array === "string" || jQuery.isFunction(array) || (typeof array !== "function" && array.setInterval) ) {
+			// Tweaked logic slightly to handle Blackberry 4.7 RegExp issues #6930
+			var type = jQuery.type( array );
+
+			if ( array.length == null || type === "string" || type === "function" || type === "regexp" || jQuery.isWindow( array ) ) {
 				push.call( ret, array );
 			} else {
 				jQuery.merge( ret, array );
@@ -607,8 +685,9 @@ jQuery.extend({
 	},
 
 	inArray: function( elem, array ) {
-		if ( array.indexOf ) {
-			return array.indexOf( elem );
+
+		if ( indexOf ) {
+			return indexOf.call( array, elem );
 		}
 
 		for ( var i = 0, length = array.length; i < length; i++ ) {
@@ -621,13 +700,14 @@ jQuery.extend({
 	},
 
 	merge: function( first, second ) {
-		var i = first.length, j = 0;
+		var i = first.length,
+			j = 0;
 
 		if ( typeof second.length === "number" ) {
 			for ( var l = second.length; j < l; j++ ) {
 				first[ i++ ] = second[ j ];
 			}
-		
+
 		} else {
 			while ( second[j] !== undefined ) {
 				first[ i++ ] = second[ j++ ];
@@ -640,12 +720,14 @@ jQuery.extend({
 	},
 
 	grep: function( elems, callback, inv ) {
-		var ret = [];
+		var ret = [], retVal;
+		inv = !!inv;
 
 		// Go through the array, only saving the items
 		// that pass the validator function
 		for ( var i = 0, length = elems.length; i < length; i++ ) {
-			if ( !inv !== !callback( elems[ i ], i ) ) {
+			retVal = !!callback( elems[ i ], i );
+			if ( inv !== retVal ) {
 				ret.push( elems[ i ] );
 			}
 		}
@@ -655,50 +737,98 @@ jQuery.extend({
 
 	// arg is for internal usage only
 	map: function( elems, callback, arg ) {
-		var ret = [], value;
+		var value, key, ret = [],
+			i = 0,
+			length = elems.length,
+			// jquery objects are treated as arrays
+			isArray = elems instanceof jQuery || length !== undefined && typeof length === "number" && ( ( length > 0 && elems[ 0 ] && elems[ length -1 ] ) || length === 0 || jQuery.isArray( elems ) ) ;
 
 		// Go through the array, translating each of the items to their
-		// new value (or values).
-		for ( var i = 0, length = elems.length; i < length; i++ ) {
-			value = callback( elems[ i ], i, arg );
+		if ( isArray ) {
+			for ( ; i < length; i++ ) {
+				value = callback( elems[ i ], i, arg );
 
-			if ( value != null ) {
-				ret[ ret.length ] = value;
+				if ( value != null ) {
+					ret[ ret.length ] = value;
+				}
+			}
+
+		// Go through every key on the object,
+		} else {
+			for ( key in elems ) {
+				value = callback( elems[ key ], key, arg );
+
+				if ( value != null ) {
+					ret[ ret.length ] = value;
+				}
 			}
 		}
 
+		// Flatten any nested arrays
 		return ret.concat.apply( [], ret );
 	},
 
 	// A global GUID counter for objects
 	guid: 1,
 
-	proxy: function( fn, proxy, thisObject ) {
-		if ( arguments.length === 2 ) {
-			if ( typeof proxy === "string" ) {
-				thisObject = fn;
-				fn = thisObject[ proxy ];
-				proxy = undefined;
-
-			} else if ( proxy && !jQuery.isFunction( proxy ) ) {
-				thisObject = proxy;
-				proxy = undefined;
-			}
+	// Bind a function to a context, optionally partially applying any
+	// arguments.
+	proxy: function( fn, context ) {
+		if ( typeof context === "string" ) {
+			var tmp = fn[ context ];
+			context = fn;
+			fn = tmp;
 		}
 
-		if ( !proxy && fn ) {
+		// Quick check to determine if target is callable, in the spec
+		// this throws a TypeError, but we will just return undefined.
+		if ( !jQuery.isFunction( fn ) ) {
+			return undefined;
+		}
+
+		// Simulated bind
+		var args = slice.call( arguments, 2 ),
 			proxy = function() {
-				return fn.apply( thisObject || this, arguments );
+				return fn.apply( context, args.concat( slice.call( arguments ) ) );
 			};
-		}
 
 		// Set the guid of unique handler to the same of original handler, so it can be removed
-		if ( fn ) {
-			proxy.guid = fn.guid = fn.guid || proxy.guid || jQuery.guid++;
+		proxy.guid = fn.guid = fn.guid || proxy.guid || jQuery.guid++;
+
+		return proxy;
+	},
+
+	// Mutifunctional method to get and set values to a collection
+	// The value/s can be optionally by executed if its a function
+	access: function( elems, key, value, exec, fn, pass ) {
+		var length = elems.length;
+
+		// Setting many attributes
+		if ( typeof key === "object" ) {
+			for ( var k in key ) {
+				jQuery.access( elems, k, key[k], exec, fn, value );
+			}
+			return elems;
 		}
 
-		// So proxy can be declared as an argument
-		return proxy;
+		// Setting one attribute
+		if ( value !== undefined ) {
+			// Optionally, function values get executed if exec is true
+			exec = !pass && exec && jQuery.isFunction(value);
+
+			for ( var i = 0; i < length; i++ ) {
+				fn( elems[i], key, exec ? value.call( elems[i], i, fn( elems[i], key ) ) : value, pass );
+			}
+
+			return elems;
+		}
+
+		// Getting an attribute
+		return length ? fn( elems[0], key ) : undefined;
+	},
+
+	now: function() {
+		return (new Date()).getTime();
 	},
 
 	// Use of jQuery.browser is frowned upon.
@@ -706,16 +836,42 @@ jQuery.extend({
 	uaMatch: function( ua ) {
 		ua = ua.toLowerCase();
 
-		var match = /(webkit)[ \/]([\w.]+)/.exec( ua ) ||
-			/(opera)(?:.*version)?[ \/]([\w.]+)/.exec( ua ) ||
-			/(msie) ([\w.]+)/.exec( ua ) ||
-			!/compatible/.test( ua ) && /(mozilla)(?:.*? rv:([\w.]+))?/.exec( ua ) ||
-		  	[];
+		var match = rwebkit.exec( ua ) ||
+			ropera.exec( ua ) ||
+			rmsie.exec( ua ) ||
+			ua.indexOf("compatible") < 0 && rmozilla.exec( ua ) ||
+			[];
 
 		return { browser: match[1] || "", version: match[2] || "0" };
 	},
 
+	sub: function() {
+		function jQuerySub( selector, context ) {
+			return new jQuerySub.fn.init( selector, context );
+		}
+		jQuery.extend( true, jQuerySub, this );
+		jQuerySub.superclass = this;
+		jQuerySub.fn = jQuerySub.prototype = this();
+		jQuerySub.fn.constructor = jQuerySub;
+		jQuerySub.sub = this.sub;
+		jQuerySub.fn.init = function init( selector, context ) {
+			if ( context && context instanceof jQuery && !(context instanceof jQuerySub) ) {
+				context = jQuerySub( context );
+			}
+
+			return jQuery.fn.init.call( this, selector, context, rootjQuerySub );
+		};
+		jQuerySub.fn.init.prototype = jQuerySub.fn;
+		var rootjQuerySub = jQuerySub(document);
+		return jQuerySub;
+	},
+
 	browser: {}
+});
+
+// Populate the class2type map
+jQuery.each("Boolean Number String Function Array Date RegExp Object".split(" "), function(i, name) {
+	class2type[ "[object " + name + "]" ] = name.toLowerCase();
 });
 
 browserMatch = jQuery.uaMatch( userAgent );
@@ -729,10 +885,10 @@ if ( jQuery.browser.webkit ) {
 	jQuery.browser.safari = true;
 }
 
-if ( indexOf ) {
-	jQuery.inArray = function( elem, array ) {
-		return indexOf.call( array, elem );
-	};
+// IE doesn't match non-breaking spaces with \s
+if ( rnotwhite.test( "\xA0" ) ) {
+	trimLeft = /^[\s\xA0]+/;
+	trimRight = /[\s\xA0]+$/;
 }
 
 // All jQuery objects should point back to these
@@ -765,7 +921,7 @@ function doScrollCheck() {
 		// If IE is used, use the trick by Diego Perini
 		// http://javascript.nwbox.com/IEContentLoaded/
 		document.documentElement.doScroll("left");
-	} catch( error ) {
+	} catch(e) {
 		setTimeout( doScrollCheck, 1 );
 		return;
 	}
@@ -774,93 +930,266 @@ function doScrollCheck() {
 	jQuery.ready();
 }
 
-function evalScript( i, elem ) {
-	if ( elem.src ) {
-		jQuery.ajax({
-			url: elem.src,
-			async: false,
-			dataType: "script"
+// Expose jQuery to the global object
+return jQuery;
+
+})();
+
+
+var // Promise methods
+	promiseMethods = "done fail isResolved isRejected promise then always pipe".split( " " ),
+	// Static reference to slice
+	sliceDeferred = [].slice;
+
+jQuery.extend({
+	// Create a simple deferred (one callbacks list)
+	_Deferred: function() {
+		var // callbacks list
+			callbacks = [],
+			// stored [ context , args ]
+			fired,
+			// to avoid firing when already doing so
+			firing,
+			// flag to know if the deferred has been cancelled
+			cancelled,
+			// the deferred itself
+			deferred  = {
+
+				// done( f1, f2, ...)
+				done: function() {
+					if ( !cancelled ) {
+						var args = arguments,
+							i,
+							length,
+							elem,
+							type,
+							_fired;
+						if ( fired ) {
+							_fired = fired;
+							fired = 0;
+						}
+						for ( i = 0, length = args.length; i < length; i++ ) {
+							elem = args[ i ];
+							type = jQuery.type( elem );
+							if ( type === "array" ) {
+								deferred.done.apply( deferred, elem );
+							} else if ( type === "function" ) {
+								callbacks.push( elem );
+							}
+						}
+						if ( _fired ) {
+							deferred.resolveWith( _fired[ 0 ], _fired[ 1 ] );
+						}
+					}
+					return this;
+				},
+
+				// resolve with given context and args
+				resolveWith: function( context, args ) {
+					if ( !cancelled && !fired && !firing ) {
+						// make sure args are available (#8421)
+						args = args || [];
+						firing = 1;
+						try {
+							while( callbacks[ 0 ] ) {
+								callbacks.shift().apply( context, args );
+							}
+						}
+						finally {
+							fired = [ context, args ];
+							firing = 0;
+						}
+					}
+					return this;
+				},
+
+				// resolve with this as context and given arguments
+				resolve: function() {
+					deferred.resolveWith( this, arguments );
+					return this;
+				},
+
+				// Has this deferred been resolved?
+				isResolved: function() {
+					return !!( firing || fired );
+				},
+
+				// Cancel
+				cancel: function() {
+					cancelled = 1;
+					callbacks = [];
+					return this;
+				}
+			};
+
+		return deferred;
+	},
+
+	// Full fledged deferred (two callbacks list)
+	Deferred: function( func ) {
+		var deferred = jQuery._Deferred(),
+			failDeferred = jQuery._Deferred(),
+			promise;
+		// Add errorDeferred methods, then and promise
+		jQuery.extend( deferred, {
+			then: function( doneCallbacks, failCallbacks ) {
+				deferred.done( doneCallbacks ).fail( failCallbacks );
+				return this;
+			},
+			always: function() {
+				return deferred.done.apply( deferred, arguments ).fail.apply( this, arguments );
+			},
+			fail: failDeferred.done,
+			rejectWith: failDeferred.resolveWith,
+			reject: failDeferred.resolve,
+			isRejected: failDeferred.isResolved,
+			pipe: function( fnDone, fnFail ) {
+				return jQuery.Deferred(function( newDefer ) {
+					jQuery.each( {
+						done: [ fnDone, "resolve" ],
+						fail: [ fnFail, "reject" ]
+					}, function( handler, data ) {
+						var fn = data[ 0 ],
+							action = data[ 1 ],
+							returned;
+						if ( jQuery.isFunction( fn ) ) {
+							deferred[ handler ](function() {
+								returned = fn.apply( this, arguments );
+								if ( returned && jQuery.isFunction( returned.promise ) ) {
+									returned.promise().then( newDefer.resolve, newDefer.reject );
+								} else {
+									newDefer[ action ]( returned );
+								}
+							});
+						} else {
+							deferred[ handler ]( newDefer[ action ] );
+						}
+					});
+				}).promise();
+			},
+			// Get a promise for this deferred
+			// If obj is provided, the promise aspect is added to the object
+			promise: function( obj ) {
+				if ( obj == null ) {
+					if ( promise ) {
+						return promise;
+					}
+					promise = obj = {};
+				}
+				var i = promiseMethods.length;
+				while( i-- ) {
+					obj[ promiseMethods[i] ] = deferred[ promiseMethods[i] ];
+				}
+				return obj;
+			}
 		});
-	} else {
-		jQuery.globalEval( elem.text || elem.textContent || elem.innerHTML || "" );
-	}
-
-	if ( elem.parentNode ) {
-		elem.parentNode.removeChild( elem );
-	}
-}
-
-// Mutifunctional method to get and set values to a collection
-// The value/s can be optionally by executed if its a function
-function access( elems, key, value, exec, fn, pass ) {
-	var length = elems.length;
-	
-	// Setting many attributes
-	if ( typeof key === "object" ) {
-		for ( var k in key ) {
-			access( elems, k, key[k], exec, fn, value );
+		// Make sure only one callback list will be used
+		deferred.done( failDeferred.cancel ).fail( deferred.cancel );
+		// Unexpose cancel
+		delete deferred.cancel;
+		// Call given func if any
+		if ( func ) {
+			func.call( deferred, deferred );
 		}
-		return elems;
-	}
-	
-	// Setting one attribute
-	if ( value !== undefined ) {
-		// Optionally, function values get executed if exec is true
-		exec = !pass && exec && jQuery.isFunction(value);
-		
-		for ( var i = 0; i < length; i++ ) {
-			fn( elems[i], key, exec ? value.call( elems[i], i, fn( elems[i], key ) ) : value, pass );
+		return deferred;
+	},
+
+	// Deferred helper
+	when: function( firstParam ) {
+		var args = arguments,
+			i = 0,
+			length = args.length,
+			count = length,
+			deferred = length <= 1 && firstParam && jQuery.isFunction( firstParam.promise ) ?
+				firstParam :
+				jQuery.Deferred();
+		function resolveFunc( i ) {
+			return function( value ) {
+				args[ i ] = arguments.length > 1 ? sliceDeferred.call( arguments, 0 ) : value;
+				if ( !( --count ) ) {
+					// Strange bug in FF4:
+					// Values changed onto the arguments object sometimes end up as undefined values
+					// outside the $.when method. Cloning the object into a fresh array solves the issue
+					deferred.resolveWith( deferred, sliceDeferred.call( args, 0 ) );
+				}
+			};
 		}
-		
-		return elems;
+		if ( length > 1 ) {
+			for( ; i < length; i++ ) {
+				if ( args[ i ] && jQuery.isFunction( args[ i ].promise ) ) {
+					args[ i ].promise().then( resolveFunc(i), deferred.reject );
+				} else {
+					--count;
+				}
+			}
+			if ( !count ) {
+				deferred.resolveWith( deferred, args );
+			}
+		} else if ( deferred !== firstParam ) {
+			deferred.resolveWith( deferred, length ? [ firstParam ] : [] );
+		}
+		return deferred.promise();
 	}
-	
-	// Getting an attribute
-	return length ? fn( elems[0], key ) : undefined;
-}
+});
 
-function now() {
-	return (new Date).getTime();
-}
-(function() {
 
-	jQuery.support = {};
 
-	var root = document.documentElement,
-		script = document.createElement("script"),
-		div = document.createElement("div"),
-		id = "script" + now();
+jQuery.support = (function() {
 
-	div.style.display = "none";
-	div.innerHTML = "   <link/><table></table><a href='/a' style='color:red;float:left;opacity:.55;'>a</a><input type='checkbox'/>";
+	var div = document.createElement( "div" ),
+		documentElement = document.documentElement,
+		all,
+		a,
+		select,
+		opt,
+		input,
+		marginDiv,
+		support,
+		fragment,
+		body,
+		bodyStyle,
+		tds,
+		events,
+		eventName,
+		i,
+		isSupported;
 
-	var all = div.getElementsByTagName("*"),
-		a = div.getElementsByTagName("a")[0];
+	// Preliminary tests
+	div.setAttribute("className", "t");
+	div.innerHTML = "   <link/><table></table><a href='/a' style='top:1px;float:left;opacity:.55;'>a</a><input type='checkbox'/>";
+
+	all = div.getElementsByTagName( "*" );
+	a = div.getElementsByTagName( "a" )[ 0 ];
 
 	// Can't get basic test support
 	if ( !all || !all.length || !a ) {
-		return;
+		return {};
 	}
 
-	jQuery.support = {
+	// First batch of supports tests
+	select = document.createElement( "select" );
+	opt = select.appendChild( document.createElement("option") );
+	input = div.getElementsByTagName( "input" )[ 0 ];
+
+	support = {
 		// IE strips leading whitespace when .innerHTML is used
-		leadingWhitespace: div.firstChild.nodeType === 3,
+		leadingWhitespace: ( div.firstChild.nodeType === 3 ),
 
 		// Make sure that tbody elements aren't automatically inserted
 		// IE will insert them into empty tables
-		tbody: !div.getElementsByTagName("tbody").length,
+		tbody: !div.getElementsByTagName( "tbody" ).length,
 
 		// Make sure that link elements get serialized correctly by innerHTML
 		// This requires a wrapper element in IE
-		htmlSerialize: !!div.getElementsByTagName("link").length,
+		htmlSerialize: !!div.getElementsByTagName( "link" ).length,
 
 		// Get the style information from getAttribute
-		// (IE uses .cssText insted)
-		style: /red/.test( a.getAttribute("style") ),
+		// (IE uses .cssText instead)
+		style: /top/.test( a.getAttribute("style") ),
 
 		// Make sure that URLs aren't manipulated
 		// (IE normalizes it by default)
-		hrefNormalized: a.getAttribute("href") === "/a",
+		hrefNormalized: ( a.getAttribute( "href" ) === "/a" ),
 
 		// Make sure that element opacity exists
 		// (IE uses filter instead)
@@ -874,213 +1203,419 @@ function now() {
 		// Make sure that if no value is specified for a checkbox
 		// that it defaults to "on".
 		// (WebKit defaults to "" instead)
-		checkOn: div.getElementsByTagName("input")[0].value === "on",
+		checkOn: ( input.value === "on" ),
 
 		// Make sure that a selected-by-default option has a working selected property.
 		// (WebKit defaults to false instead of true, IE too, if it's in an optgroup)
-		optSelected: document.createElement("select").appendChild( document.createElement("option") ).selected,
+		optSelected: opt.selected,
 
-		parentNode: div.removeChild( div.appendChild( document.createElement("div") ) ).parentNode === null,
+		// Test setAttribute on camelCase class. If it works, we need attrFixes when doing get/setAttribute (ie6/7)
+		getSetAttribute: div.className !== "t",
 
 		// Will be defined later
+		submitBubbles: true,
+		changeBubbles: true,
+		focusinBubbles: false,
 		deleteExpando: true,
-		checkClone: false,
-		scriptEval: false,
 		noCloneEvent: true,
-		boxModel: null
+		inlineBlockNeedsLayout: false,
+		shrinkWrapBlocks: false,
+		reliableMarginRight: true
 	};
 
-	script.type = "text/javascript";
-	try {
-		script.appendChild( document.createTextNode( "window." + id + "=1;" ) );
-	} catch(e) {}
+	// Make sure checked status is properly cloned
+	input.checked = true;
+	support.noCloneChecked = input.cloneNode( true ).checked;
 
-	root.insertBefore( script, root.firstChild );
-
-	// Make sure that the execution of code works by injecting a script
-	// tag with appendChild/createTextNode
-	// (IE doesn't support this, fails, and uses .text instead)
-	if ( window[ id ] ) {
-		jQuery.support.scriptEval = true;
-		delete window[ id ];
-	}
+	// Make sure that the options inside disabled selects aren't marked as disabled
+	// (WebKit marks them as disabled)
+	select.disabled = true;
+	support.optDisabled = !opt.disabled;
 
 	// Test to see if it's possible to delete an expando from an element
 	// Fails in Internet Explorer
 	try {
-		delete script.test;
-	
-	} catch(e) {
-		jQuery.support.deleteExpando = false;
+		delete div.test;
+	} catch( e ) {
+		support.deleteExpando = false;
 	}
 
-	root.removeChild( script );
-
-	if ( div.attachEvent && div.fireEvent ) {
-		div.attachEvent("onclick", function click() {
+	if ( !div.addEventListener && div.attachEvent && div.fireEvent ) {
+		div.attachEvent( "onclick", function click() {
 			// Cloning a node shouldn't copy over any
 			// bound event handlers (IE does this)
-			jQuery.support.noCloneEvent = false;
-			div.detachEvent("onclick", click);
+			support.noCloneEvent = false;
+			div.detachEvent( "onclick", click );
 		});
-		div.cloneNode(true).fireEvent("onclick");
+		div.cloneNode( true ).fireEvent( "onclick" );
 	}
 
-	div = document.createElement("div");
-	div.innerHTML = "<input type='radio' name='radiotest' checked='checked'/>";
+	// Check if a radio maintains it's value
+	// after being appended to the DOM
+	input = document.createElement("input");
+	input.value = "t";
+	input.setAttribute("type", "radio");
+	support.radioValue = input.value === "t";
 
-	var fragment = document.createDocumentFragment();
+	input.setAttribute("checked", "checked");
+	div.appendChild( input );
+	fragment = document.createDocumentFragment();
 	fragment.appendChild( div.firstChild );
 
 	// WebKit doesn't clone checked state correctly in fragments
-	jQuery.support.checkClone = fragment.cloneNode(true).cloneNode(true).lastChild.checked;
+	support.checkClone = fragment.cloneNode( true ).cloneNode( true ).lastChild.checked;
+
+	div.innerHTML = "";
 
 	// Figure out if the W3C box model works as expected
-	// document.body must exist before we can do this
-	jQuery(function() {
-		var div = document.createElement("div");
-		div.style.width = div.style.paddingLeft = "1px";
+	div.style.width = div.style.paddingLeft = "1px";
 
-		document.body.appendChild( div );
-		jQuery.boxModel = jQuery.support.boxModel = div.offsetWidth === 2;
-		document.body.removeChild( div ).style.display = 'none';
+	// We use our own, invisible, body
+	body = document.createElement( "body" );
+	bodyStyle = {
+		visibility: "hidden",
+		width: 0,
+		height: 0,
+		border: 0,
+		margin: 0,
+		// Set background to avoid IE crashes when removing (#9028)
+		background: "none"
+	};
+	for ( i in bodyStyle ) {
+		body.style[ i ] = bodyStyle[ i ];
+	}
+	body.appendChild( div );
+	documentElement.insertBefore( body, documentElement.firstChild );
 
-		div = null;
-	});
+	// Check if a disconnected checkbox will retain its checked
+	// value of true after appended to the DOM (IE6/7)
+	support.appendChecked = input.checked;
+
+	support.boxModel = div.offsetWidth === 2;
+
+	if ( "zoom" in div.style ) {
+		// Check if natively block-level elements act like inline-block
+		// elements when setting their display to 'inline' and giving
+		// them layout
+		// (IE < 8 does this)
+		div.style.display = "inline";
+		div.style.zoom = 1;
+		support.inlineBlockNeedsLayout = ( div.offsetWidth === 2 );
+
+		// Check if elements with layout shrink-wrap their children
+		// (IE 6 does this)
+		div.style.display = "";
+		div.innerHTML = "<div style='width:4px;'></div>";
+		support.shrinkWrapBlocks = ( div.offsetWidth !== 2 );
+	}
+
+	div.innerHTML = "<table><tr><td style='padding:0;border:0;display:none'></td><td>t</td></tr></table>";
+	tds = div.getElementsByTagName( "td" );
+
+	// Check if table cells still have offsetWidth/Height when they are set
+	// to display:none and there are still other visible table cells in a
+	// table row; if so, offsetWidth/Height are not reliable for use when
+	// determining if an element has been hidden directly using
+	// display:none (it is still safe to use offsets if a parent element is
+	// hidden; don safety goggles and see bug #4512 for more information).
+	// (only IE 8 fails this test)
+	isSupported = ( tds[ 0 ].offsetHeight === 0 );
+
+	tds[ 0 ].style.display = "";
+	tds[ 1 ].style.display = "none";
+
+	// Check if empty table cells still have offsetWidth/Height
+	// (IE < 8 fail this test)
+	support.reliableHiddenOffsets = isSupported && ( tds[ 0 ].offsetHeight === 0 );
+	div.innerHTML = "";
+
+	// Check if div with explicit width and no margin-right incorrectly
+	// gets computed margin-right based on width of container. For more
+	// info see bug #3333
+	// Fails in WebKit before Feb 2011 nightlies
+	// WebKit Bug 13343 - getComputedStyle returns wrong value for margin-right
+	if ( document.defaultView && document.defaultView.getComputedStyle ) {
+		marginDiv = document.createElement( "div" );
+		marginDiv.style.width = "0";
+		marginDiv.style.marginRight = "0";
+		div.appendChild( marginDiv );
+		support.reliableMarginRight =
+			( parseInt( ( document.defaultView.getComputedStyle( marginDiv, null ) || { marginRight: 0 } ).marginRight, 10 ) || 0 ) === 0;
+	}
+
+	// Remove the body element we added
+	body.innerHTML = "";
+	documentElement.removeChild( body );
 
 	// Technique from Juriy Zaytsev
 	// http://thinkweb2.com/projects/prototype/detecting-event-support-without-browser-sniffing/
-	var eventSupported = function( eventName ) { 
-		var el = document.createElement("div"); 
-		eventName = "on" + eventName; 
+	// We only care about the case where non-standard event systems
+	// are used, namely in IE. Short-circuiting here helps us to
+	// avoid an eval call (in setAttribute) which can cause CSP
+	// to go haywire. See: https://developer.mozilla.org/en/Security/CSP
+	if ( div.attachEvent ) {
+		for( i in {
+			submit: 1,
+			change: 1,
+			focusin: 1
+		} ) {
+			eventName = "on" + i;
+			isSupported = ( eventName in div );
+			if ( !isSupported ) {
+				div.setAttribute( eventName, "return;" );
+				isSupported = ( typeof div[ eventName ] === "function" );
+			}
+			support[ i + "Bubbles" ] = isSupported;
+		}
+	}
 
-		var isSupported = (eventName in el); 
-		if ( !isSupported ) { 
-			el.setAttribute(eventName, "return;"); 
-			isSupported = typeof el[eventName] === "function"; 
-		} 
-		el = null; 
-
-		return isSupported; 
-	};
-	
-	jQuery.support.submitBubbles = eventSupported("submit");
-	jQuery.support.changeBubbles = eventSupported("change");
-
-	// release memory in IE
-	root = script = div = all = a = null;
+	return support;
 })();
 
-jQuery.props = {
-	"for": "htmlFor",
-	"class": "className",
-	readonly: "readOnly",
-	maxlength: "maxLength",
-	cellspacing: "cellSpacing",
-	rowspan: "rowSpan",
-	colspan: "colSpan",
-	tabindex: "tabIndex",
-	usemap: "useMap",
-	frameborder: "frameBorder"
-};
-var expando = "jQuery" + now(), uuid = 0, windowData = {};
+// Keep track of boxModel
+jQuery.boxModel = jQuery.support.boxModel;
+
+
+
+
+var rbrace = /^(?:\{.*\}|\[.*\])$/,
+	rmultiDash = /([a-z])([A-Z])/g;
 
 jQuery.extend({
 	cache: {},
-	
-	expando:expando,
+
+	// Please use with caution
+	uuid: 0,
+
+	// Unique for each copy of jQuery on the page
+	// Non-digits removed to match rinlinejQuery
+	expando: "jQuery" + ( jQuery.fn.jquery + Math.random() ).replace( /\D/g, "" ),
 
 	// The following elements throw uncatchable exceptions if you
 	// attempt to add expando properties to them.
 	noData: {
 		"embed": true,
-		"object": true,
+		// Ban all objects except for Flash (which handle expandos)
+		"object": "clsid:D27CDB6E-AE6D-11cf-96B8-444553540000",
 		"applet": true
 	},
 
-	data: function( elem, name, data ) {
-		if ( elem.nodeName && jQuery.noData[elem.nodeName.toLowerCase()] ) {
+	hasData: function( elem ) {
+		elem = elem.nodeType ? jQuery.cache[ elem[jQuery.expando] ] : elem[ jQuery.expando ];
+
+		return !!elem && !isEmptyDataObject( elem );
+	},
+
+	data: function( elem, name, data, pvt /* Internal Use Only */ ) {
+		if ( !jQuery.acceptData( elem ) ) {
 			return;
 		}
 
-		elem = elem == window ?
-			windowData :
-			elem;
+		var internalKey = jQuery.expando, getByName = typeof name === "string", thisCache,
 
-		var id = elem[ expando ], cache = jQuery.cache, thisCache;
+			// We have to handle DOM nodes and JS objects differently because IE6-7
+			// can't GC object references properly across the DOM-JS boundary
+			isNode = elem.nodeType,
 
-		if ( !id && typeof name === "string" && data === undefined ) {
-			return null;
+			// Only DOM nodes need the global jQuery cache; JS object data is
+			// attached directly to the object so GC can occur automatically
+			cache = isNode ? jQuery.cache : elem,
+
+			// Only defining an ID for JS objects if its cache already exists allows
+			// the code to shortcut on the same path as a DOM node with no cache
+			id = isNode ? elem[ jQuery.expando ] : elem[ jQuery.expando ] && jQuery.expando;
+
+		// Avoid doing any more work than we need to when trying to get data on an
+		// object that has no data at all
+		if ( (!id || (pvt && id && !cache[ id ][ internalKey ])) && getByName && data === undefined ) {
+			return;
 		}
 
-		// Compute a unique ID for the element
-		if ( !id ) { 
-			id = ++uuid;
+		if ( !id ) {
+			// Only DOM nodes need a new unique ID for each element since their data
+			// ends up in the global cache
+			if ( isNode ) {
+				elem[ jQuery.expando ] = id = ++jQuery.uuid;
+			} else {
+				id = jQuery.expando;
+			}
 		}
 
-		// Avoid generating a new cache unless none exists and we
-		// want to manipulate it.
-		if ( typeof name === "object" ) {
-			elem[ expando ] = id;
-			thisCache = cache[ id ] = jQuery.extend(true, {}, name);
-
-		} else if ( !cache[ id ] ) {
-			elem[ expando ] = id;
+		if ( !cache[ id ] ) {
 			cache[ id ] = {};
+
+			// TODO: This is a hack for 1.5 ONLY. Avoids exposing jQuery
+			// metadata on plain JS objects when the object is serialized using
+			// JSON.stringify
+			if ( !isNode ) {
+				cache[ id ].toJSON = jQuery.noop;
+			}
+		}
+
+		// An object can be passed to jQuery.data instead of a key/value pair; this gets
+		// shallow copied over onto the existing cache
+		if ( typeof name === "object" || typeof name === "function" ) {
+			if ( pvt ) {
+				cache[ id ][ internalKey ] = jQuery.extend(cache[ id ][ internalKey ], name);
+			} else {
+				cache[ id ] = jQuery.extend(cache[ id ], name);
+			}
 		}
 
 		thisCache = cache[ id ];
 
-		// Prevent overriding the named cache with undefined values
-		if ( data !== undefined ) {
-			thisCache[ name ] = data;
+		// Internal jQuery data is stored in a separate object inside the object's data
+		// cache in order to avoid key collisions between internal data and user-defined
+		// data
+		if ( pvt ) {
+			if ( !thisCache[ internalKey ] ) {
+				thisCache[ internalKey ] = {};
+			}
+
+			thisCache = thisCache[ internalKey ];
 		}
 
-		return typeof name === "string" ? thisCache[ name ] : thisCache;
+		if ( data !== undefined ) {
+			thisCache[ jQuery.camelCase( name ) ] = data;
+		}
+
+		// TODO: This is a hack for 1.5 ONLY. It will be removed in 1.6. Users should
+		// not attempt to inspect the internal events object using jQuery.data, as this
+		// internal data object is undocumented and subject to change.
+		if ( name === "events" && !thisCache[name] ) {
+			return thisCache[ internalKey ] && thisCache[ internalKey ].events;
+		}
+
+		return getByName ? thisCache[ jQuery.camelCase( name ) ] : thisCache;
 	},
 
-	removeData: function( elem, name ) {
-		if ( elem.nodeName && jQuery.noData[elem.nodeName.toLowerCase()] ) {
+	removeData: function( elem, name, pvt /* Internal Use Only */ ) {
+		if ( !jQuery.acceptData( elem ) ) {
 			return;
 		}
 
-		elem = elem == window ?
-			windowData :
-			elem;
+		var internalKey = jQuery.expando, isNode = elem.nodeType,
 
-		var id = elem[ expando ], cache = jQuery.cache, thisCache = cache[ id ];
+			// See jQuery.data for more information
+			cache = isNode ? jQuery.cache : elem,
 
-		// If we want to remove a specific section of the element's data
+			// See jQuery.data for more information
+			id = isNode ? elem[ jQuery.expando ] : jQuery.expando;
+
+		// If there is already no cache entry for this object, there is no
+		// purpose in continuing
+		if ( !cache[ id ] ) {
+			return;
+		}
+
 		if ( name ) {
+			var thisCache = pvt ? cache[ id ][ internalKey ] : cache[ id ];
+
 			if ( thisCache ) {
-				// Remove the section of cache data
 				delete thisCache[ name ];
 
-				// If we've removed all the data, remove the element's cache
-				if ( jQuery.isEmptyObject(thisCache) ) {
-					jQuery.removeData( elem );
+				// If there is no data left in the cache, we want to continue
+				// and let the cache object itself get destroyed
+				if ( !isEmptyDataObject(thisCache) ) {
+					return;
 				}
 			}
+		}
 
-		// Otherwise, we want to remove all of the element's data
+		// See jQuery.data for more information
+		if ( pvt ) {
+			delete cache[ id ][ internalKey ];
+
+			// Don't destroy the parent cache unless the internal data object
+			// had been the only thing left in it
+			if ( !isEmptyDataObject(cache[ id ]) ) {
+				return;
+			}
+		}
+
+		var internalCache = cache[ id ][ internalKey ];
+
+		// Browsers that fail expando deletion also refuse to delete expandos on
+		// the window, but it will allow it on all other JS objects; other browsers
+		// don't care
+		if ( jQuery.support.deleteExpando || cache != window ) {
+			delete cache[ id ];
 		} else {
-			if ( jQuery.support.deleteExpando ) {
-				delete elem[ jQuery.expando ];
+			cache[ id ] = null;
+		}
 
-			} else if ( elem.removeAttribute ) {
-				elem.removeAttribute( jQuery.expando );
+		// We destroyed the entire user cache at once because it's faster than
+		// iterating through each key, but we need to continue to persist internal
+		// data if it existed
+		if ( internalCache ) {
+			cache[ id ] = {};
+			// TODO: This is a hack for 1.5 ONLY. Avoids exposing jQuery
+			// metadata on plain JS objects when the object is serialized using
+			// JSON.stringify
+			if ( !isNode ) {
+				cache[ id ].toJSON = jQuery.noop;
 			}
 
-			// Completely remove the data cache
-			delete cache[ id ];
+			cache[ id ][ internalKey ] = internalCache;
+
+		// Otherwise, we need to eliminate the expando on the node to avoid
+		// false lookups in the cache for entries that no longer exist
+		} else if ( isNode ) {
+			// IE does not allow us to delete expando properties from nodes,
+			// nor does it have a removeAttribute function on Document nodes;
+			// we must handle all of these cases
+			if ( jQuery.support.deleteExpando ) {
+				delete elem[ jQuery.expando ];
+			} else if ( elem.removeAttribute ) {
+				elem.removeAttribute( jQuery.expando );
+			} else {
+				elem[ jQuery.expando ] = null;
+			}
 		}
+	},
+
+	// For internal use only.
+	_data: function( elem, name, data ) {
+		return jQuery.data( elem, name, data, true );
+	},
+
+	// A method for determining if a DOM node can handle the data expando
+	acceptData: function( elem ) {
+		if ( elem.nodeName ) {
+			var match = jQuery.noData[ elem.nodeName.toLowerCase() ];
+
+			if ( match ) {
+				return !(match === true || elem.getAttribute("classid") !== match);
+			}
+		}
+
+		return true;
 	}
 });
 
 jQuery.fn.extend({
 	data: function( key, value ) {
-		if ( typeof key === "undefined" && this.length ) {
-			return jQuery.data( this[0] );
+		var data = null;
+
+		if ( typeof key === "undefined" ) {
+			if ( this.length ) {
+				data = jQuery.data( this[0] );
+
+				if ( this[0].nodeType === 1 ) {
+			    var attr = this[0].attributes, name;
+					for ( var i = 0, l = attr.length; i < l; i++ ) {
+						name = attr[i].name;
+
+						if ( name.indexOf( "data-" ) === 0 ) {
+							name = jQuery.camelCase( name.substring(5) );
+
+							dataAttr( this[0], name, data[ name ] );
+						}
+					}
+				}
+			}
+
+			return data;
 
 		} else if ( typeof key === "object" ) {
 			return this.each(function() {
@@ -1092,17 +1627,26 @@ jQuery.fn.extend({
 		parts[1] = parts[1] ? "." + parts[1] : "";
 
 		if ( value === undefined ) {
-			var data = this.triggerHandler("getData" + parts[1] + "!", [parts[0]]);
+			data = this.triggerHandler("getData" + parts[1] + "!", [parts[0]]);
 
+			// Try to fetch any internally stored data first
 			if ( data === undefined && this.length ) {
 				data = jQuery.data( this[0], key );
+				data = dataAttr( this[0], key, data );
 			}
+
 			return data === undefined && parts[1] ?
 				this.data( parts[0] ) :
 				data;
+
 		} else {
-			return this.trigger("setData" + parts[1] + "!", [parts[0], value]).each(function() {
+			return this.each(function() {
+				var $this = jQuery( this ),
+					args = [ parts[0], value ];
+
+				$this.triggerHandler( "setData" + parts[1] + "!", args );
 				jQuery.data( this, key, value );
+				$this.triggerHandler( "changeData" + parts[1] + "!", args );
 			});
 		}
 	},
@@ -1113,34 +1657,122 @@ jQuery.fn.extend({
 		});
 	}
 });
-jQuery.extend({
-	queue: function( elem, type, data ) {
-		if ( !elem ) {
-			return;
-		}
 
-		type = (type || "fx") + "queue";
-		var q = jQuery.data( elem, type );
+function dataAttr( elem, key, data ) {
+	// If nothing was found internally, try to fetch any
+	// data from the HTML5 data-* attribute
+	if ( data === undefined && elem.nodeType === 1 ) {
+		var name = "data-" + key.replace( rmultiDash, "$1-$2" ).toLowerCase();
 
-		// Speed up dequeue by getting out quickly if this is just a lookup
-		if ( !data ) {
-			return q || [];
-		}
+		data = elem.getAttribute( name );
 
-		if ( !q || jQuery.isArray(data) ) {
-			q = jQuery.data( elem, type, jQuery.makeArray(data) );
+		if ( typeof data === "string" ) {
+			try {
+				data = data === "true" ? true :
+				data === "false" ? false :
+				data === "null" ? null :
+				!jQuery.isNaN( data ) ? parseFloat( data ) :
+					rbrace.test( data ) ? jQuery.parseJSON( data ) :
+					data;
+			} catch( e ) {}
+
+			// Make sure we set the data so it isn't changed later
+			jQuery.data( elem, key, data );
 
 		} else {
-			q.push( data );
+			data = undefined;
 		}
+	}
 
-		return q;
+	return data;
+}
+
+// TODO: This is a hack for 1.5 ONLY to allow objects with a single toJSON
+// property to be considered empty objects; this property always exists in
+// order to make sure JSON.stringify does not expose internal metadata
+function isEmptyDataObject( obj ) {
+	for ( var name in obj ) {
+		if ( name !== "toJSON" ) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
+
+
+
+function handleQueueMarkDefer( elem, type, src ) {
+	var deferDataKey = type + "defer",
+		queueDataKey = type + "queue",
+		markDataKey = type + "mark",
+		defer = jQuery.data( elem, deferDataKey, undefined, true );
+	if ( defer &&
+		( src === "queue" || !jQuery.data( elem, queueDataKey, undefined, true ) ) &&
+		( src === "mark" || !jQuery.data( elem, markDataKey, undefined, true ) ) ) {
+		// Give room for hard-coded callbacks to fire first
+		// and eventually mark/queue something else on the element
+		setTimeout( function() {
+			if ( !jQuery.data( elem, queueDataKey, undefined, true ) &&
+				!jQuery.data( elem, markDataKey, undefined, true ) ) {
+				jQuery.removeData( elem, deferDataKey, true );
+				defer.resolve();
+			}
+		}, 0 );
+	}
+}
+
+jQuery.extend({
+
+	_mark: function( elem, type ) {
+		if ( elem ) {
+			type = (type || "fx") + "mark";
+			jQuery.data( elem, type, (jQuery.data(elem,type,undefined,true) || 0) + 1, true );
+		}
+	},
+
+	_unmark: function( force, elem, type ) {
+		if ( force !== true ) {
+			type = elem;
+			elem = force;
+			force = false;
+		}
+		if ( elem ) {
+			type = type || "fx";
+			var key = type + "mark",
+				count = force ? 0 : ( (jQuery.data( elem, key, undefined, true) || 1 ) - 1 );
+			if ( count ) {
+				jQuery.data( elem, key, count, true );
+			} else {
+				jQuery.removeData( elem, key, true );
+				handleQueueMarkDefer( elem, type, "mark" );
+			}
+		}
+	},
+
+	queue: function( elem, type, data ) {
+		if ( elem ) {
+			type = (type || "fx") + "queue";
+			var q = jQuery.data( elem, type, undefined, true );
+			// Speed up dequeue by getting out quickly if this is just a lookup
+			if ( data ) {
+				if ( !q || jQuery.isArray(data) ) {
+					q = jQuery.data( elem, type, jQuery.makeArray(data), true );
+				} else {
+					q.push( data );
+				}
+			}
+			return q || [];
+		}
 	},
 
 	dequeue: function( elem, type ) {
 		type = type || "fx";
 
-		var queue = jQuery.queue( elem, type ), fn = queue.shift();
+		var queue = jQuery.queue( elem, type ),
+			fn = queue.shift(),
+			defer;
 
 		// If the fx queue is dequeued, always remove the progress sentinel
 		if ( fn === "inprogress" ) {
@@ -1158,6 +1790,11 @@ jQuery.extend({
 				jQuery.dequeue(elem, type);
 			});
 		}
+
+		if ( !queue.length ) {
+			jQuery.removeData( elem, type + "queue", true );
+			handleQueueMarkDefer( elem, type, "queue" );
+		}
 	}
 });
 
@@ -1171,7 +1808,7 @@ jQuery.fn.extend({
 		if ( data === undefined ) {
 			return jQuery.queue( this[0], type );
 		}
-		return this.each(function( i, elem ) {
+		return this.each(function() {
 			var queue = jQuery.queue( this, type, data );
 
 			if ( type === "fx" && queue[0] !== "inprogress" ) {
@@ -1184,7 +1821,6 @@ jQuery.fn.extend({
 			jQuery.dequeue( this, type );
 		});
 	},
-
 	// Based off of the plugin by Clint Helfers, with permission.
 	// http://blindsignals.com/index.php/2009/07/jquery-delay/
 	delay: function( time, type ) {
@@ -1198,39 +1834,88 @@ jQuery.fn.extend({
 			}, time );
 		});
 	},
-
 	clearQueue: function( type ) {
 		return this.queue( type || "fx", [] );
+	},
+	// Get a promise resolved when queues of a certain type
+	// are emptied (fx is the type by default)
+	promise: function( type, object ) {
+		if ( typeof type !== "string" ) {
+			object = type;
+			type = undefined;
+		}
+		type = type || "fx";
+		var defer = jQuery.Deferred(),
+			elements = this,
+			i = elements.length,
+			count = 1,
+			deferDataKey = type + "defer",
+			queueDataKey = type + "queue",
+			markDataKey = type + "mark",
+			tmp;
+		function resolve() {
+			if ( !( --count ) ) {
+				defer.resolveWith( elements, [ elements ] );
+			}
+		}
+		while( i-- ) {
+			if (( tmp = jQuery.data( elements[ i ], deferDataKey, undefined, true ) ||
+					( jQuery.data( elements[ i ], queueDataKey, undefined, true ) ||
+						jQuery.data( elements[ i ], markDataKey, undefined, true ) ) &&
+					jQuery.data( elements[ i ], deferDataKey, jQuery._Deferred(), true ) )) {
+				count++;
+				tmp.done( resolve );
+			}
+		}
+		resolve();
+		return defer.promise();
 	}
 });
-var rclass = /[\n\t]/g,
+
+
+
+
+var rclass = /[\n\t\r]/g,
 	rspace = /\s+/,
 	rreturn = /\r/g,
-	rspecialurl = /href|src|style/,
-	rtype = /(button|input)/i,
-	rfocusable = /(button|input|object|select|textarea)/i,
-	rclickable = /^(a|area)$/i,
-	rradiocheck = /radio|checkbox/;
+	rtype = /^(?:button|input)$/i,
+	rfocusable = /^(?:button|input|object|select|textarea)$/i,
+	rclickable = /^a(?:rea)?$/i,
+	rboolean = /^(?:autofocus|autoplay|async|checked|controls|defer|disabled|hidden|loop|multiple|open|readonly|required|scoped|selected)$/i,
+	rinvalidChar = /\:/,
+	formHook, boolHook;
 
 jQuery.fn.extend({
 	attr: function( name, value ) {
-		return access( this, name, value, true, jQuery.attr );
+		return jQuery.access( this, name, value, true, jQuery.attr );
 	},
 
-	removeAttr: function( name, fn ) {
-		return this.each(function(){
-			jQuery.attr( this, name, "" );
-			if ( this.nodeType === 1 ) {
-				this.removeAttribute( name );
-			}
+	removeAttr: function( name ) {
+		return this.each(function() {
+			jQuery.removeAttr( this, name );
+		});
+	},
+	
+	prop: function( name, value ) {
+		return jQuery.access( this, name, value, true, jQuery.prop );
+	},
+	
+	removeProp: function( name ) {
+		name = jQuery.propFix[ name ] || name;
+		return this.each(function() {
+			// try/catch handles cases where IE balks (such as removing a property on window)
+			try {
+				this[ name ] = undefined;
+				delete this[ name ];
+			} catch( e ) {}
 		});
 	},
 
 	addClass: function( value ) {
-		if ( jQuery.isFunction(value) ) {
+		if ( jQuery.isFunction( value ) ) {
 			return this.each(function(i) {
 				var self = jQuery(this);
-				self.addClass( value.call(this, i, self.attr("class")) );
+				self.addClass( value.call(this, i, self.attr("class") || "") );
 			});
 		}
 
@@ -1245,7 +1930,9 @@ jQuery.fn.extend({
 						elem.className = value;
 
 					} else {
-						var className = " " + elem.className + " ", setClass = elem.className;
+						var className = " " + elem.className + " ",
+							setClass = elem.className;
+
 						for ( var c = 0, cl = classNames.length; c < cl; c++ ) {
 							if ( className.indexOf( " " + classNames[c] + " " ) < 0 ) {
 								setClass += " " + classNames[c];
@@ -1269,7 +1956,7 @@ jQuery.fn.extend({
 		}
 
 		if ( (value && typeof value === "string") || value === undefined ) {
-			var classNames = (value || "").split(rspace);
+			var classNames = (value || "").split( rspace );
 
 			for ( var i = 0, l = this.length; i < l; i++ ) {
 				var elem = this[i];
@@ -1293,7 +1980,8 @@ jQuery.fn.extend({
 	},
 
 	toggleClass: function( value, stateVal ) {
-		var type = typeof value, isBool = typeof stateVal === "boolean";
+		var type = typeof value,
+			isBool = typeof stateVal === "boolean";
 
 		if ( jQuery.isFunction( value ) ) {
 			return this.each(function(i) {
@@ -1305,7 +1993,9 @@ jQuery.fn.extend({
 		return this.each(function() {
 			if ( type === "string" ) {
 				// toggle individual class names
-				var className, i = 0, self = jQuery(this),
+				var className,
+					i = 0,
+					self = jQuery( this ),
 					state = stateVal,
 					classNames = value.split( rspace );
 
@@ -1318,11 +2008,11 @@ jQuery.fn.extend({
 			} else if ( type === "undefined" || type === "boolean" ) {
 				if ( this.className ) {
 					// store className if set
-					jQuery.data( this, "__className__", this.className );
+					jQuery._data( this, "__className__", this.className );
 				}
 
 				// toggle whole className
-				this.className = this.className || value === false ? "" : jQuery.data( this, "__className__" ) || "";
+				this.className = this.className || value === false ? "" : jQuery._data( this, "__className__" ) || "";
 			}
 		});
 	},
@@ -1339,95 +2029,53 @@ jQuery.fn.extend({
 	},
 
 	val: function( value ) {
-		if ( value === undefined ) {
-			var elem = this[0];
-
+		var hooks, ret,
+			elem = this[0];
+		
+		if ( !arguments.length ) {
 			if ( elem ) {
-				if ( jQuery.nodeName( elem, "option" ) ) {
-					return (elem.attributes.value || {}).specified ? elem.value : elem.text;
+				hooks = jQuery.valHooks[ elem.nodeName.toLowerCase() ] || jQuery.valHooks[ elem.type ];
+
+				if ( hooks && "get" in hooks && (ret = hooks.get( elem, "value" )) !== undefined ) {
+					return ret;
 				}
 
-				// We need to handle select boxes special
-				if ( jQuery.nodeName( elem, "select" ) ) {
-					var index = elem.selectedIndex,
-						values = [],
-						options = elem.options,
-						one = elem.type === "select-one";
-
-					// Nothing was selected
-					if ( index < 0 ) {
-						return null;
-					}
-
-					// Loop through all the selected options
-					for ( var i = one ? index : 0, max = one ? index + 1 : options.length; i < max; i++ ) {
-						var option = options[ i ];
-
-						if ( option.selected ) {
-							// Get the specifc value for the option
-							value = jQuery(option).val();
-
-							// We don't need an array for one selects
-							if ( one ) {
-								return value;
-							}
-
-							// Multi-Selects return an array
-							values.push( value );
-						}
-					}
-
-					return values;
-				}
-
-				// Handle the case where in Webkit "" is returned instead of "on" if a value isn't specified
-				if ( rradiocheck.test( elem.type ) && !jQuery.support.checkOn ) {
-					return elem.getAttribute("value") === null ? "on" : elem.value;
-				}
-				
-
-				// Everything else, we just grab the value
 				return (elem.value || "").replace(rreturn, "");
-
 			}
 
 			return undefined;
 		}
 
-		var isFunction = jQuery.isFunction(value);
+		var isFunction = jQuery.isFunction( value );
 
-		return this.each(function(i) {
-			var self = jQuery(this), val = value;
+		return this.each(function( i ) {
+			var self = jQuery(this), val;
 
 			if ( this.nodeType !== 1 ) {
 				return;
 			}
 
 			if ( isFunction ) {
-				val = value.call(this, i, self.val());
-			}
-
-			// Typecast each time if the value is a Function and the appended
-			// value is therefore different each time.
-			if ( typeof val === "number" ) {
-				val += "";
-			}
-
-			if ( jQuery.isArray(val) && rradiocheck.test( this.type ) ) {
-				this.checked = jQuery.inArray( self.val(), val ) >= 0;
-
-			} else if ( jQuery.nodeName( this, "select" ) ) {
-				var values = jQuery.makeArray(val);
-
-				jQuery( "option", this ).each(function() {
-					this.selected = jQuery.inArray( jQuery(this).val(), values ) >= 0;
-				});
-
-				if ( !values.length ) {
-					this.selectedIndex = -1;
-				}
-
+				val = value.call( this, i, self.val() );
 			} else {
+				val = value;
+			}
+
+			// Treat null/undefined as ""; convert numbers to string
+			if ( val == null ) {
+				val = "";
+			} else if ( typeof val === "number" ) {
+				val += "";
+			} else if ( jQuery.isArray( val ) ) {
+				val = jQuery.map(val, function ( value ) {
+					return value == null ? "" : value + "";
+				});
+			}
+
+			hooks = jQuery.valHooks[ this.nodeName.toLowerCase() ] || jQuery.valHooks[ this.type ];
+
+			// If set returns undefined, fall back to normal setting
+			if ( !hooks || !("set" in hooks) || hooks.set( this, val, "value" ) === undefined ) {
 				this.value = val;
 			}
 		});
@@ -1435,6 +2083,72 @@ jQuery.fn.extend({
 });
 
 jQuery.extend({
+	valHooks: {
+		option: {
+			get: function( elem ) {
+				// attributes.value is undefined in Blackberry 4.7 but
+				// uses .value. See #6932
+				var val = elem.attributes.value;
+				return !val || val.specified ? elem.value : elem.text;
+			}
+		},
+		select: {
+			get: function( elem ) {
+				var value,
+					index = elem.selectedIndex,
+					values = [],
+					options = elem.options,
+					one = elem.type === "select-one";
+
+				// Nothing was selected
+				if ( index < 0 ) {
+					return null;
+				}
+
+				// Loop through all the selected options
+				for ( var i = one ? index : 0, max = one ? index + 1 : options.length; i < max; i++ ) {
+					var option = options[ i ];
+
+					// Don't return options that are disabled or in a disabled optgroup
+					if ( option.selected && (jQuery.support.optDisabled ? !option.disabled : option.getAttribute("disabled") === null) &&
+							(!option.parentNode.disabled || !jQuery.nodeName( option.parentNode, "optgroup" )) ) {
+
+						// Get the specific value for the option
+						value = jQuery( option ).val();
+
+						// We don't need an array for one selects
+						if ( one ) {
+							return value;
+						}
+
+						// Multi-Selects return an array
+						values.push( value );
+					}
+				}
+
+				// Fixes Bug #2551 -- select.val() broken in IE after form.reset()
+				if ( one && !values.length && options.length ) {
+					return jQuery( options[ index ] ).val();
+				}
+
+				return values;
+			},
+
+			set: function( elem, value ) {
+				var values = jQuery.makeArray( value );
+
+				jQuery(elem).find("option").each(function() {
+					this.selected = jQuery.inArray( jQuery(this).val(), values ) >= 0;
+				});
+
+				if ( !values.length ) {
+					elem.selectedIndex = -1;
+				}
+				return values;
+			}
+		}
+	},
+
 	attrFn: {
 		val: true,
 		css: true,
@@ -1445,106 +2159,348 @@ jQuery.extend({
 		height: true,
 		offset: true
 	},
-		
+	
+	attrFix: {
+		// Always normalize to ensure hook usage
+		tabindex: "tabIndex"
+	},
+	
 	attr: function( elem, name, value, pass ) {
-		// don't set attributes on text and comment nodes
-		if ( !elem || elem.nodeType === 3 || elem.nodeType === 8 ) {
+		var nType = elem.nodeType;
+		
+		// don't get/set attributes on text, comment and attribute nodes
+		if ( !elem || nType === 3 || nType === 8 || nType === 2 ) {
 			return undefined;
 		}
 
 		if ( pass && name in jQuery.attrFn ) {
-			return jQuery(elem)[name](value);
+			return jQuery( elem )[ name ]( value );
 		}
 
-		var notxml = elem.nodeType !== 1 || !jQuery.isXMLDoc( elem ),
-			// Whether we are setting (or getting)
-			set = value !== undefined;
+		// Fallback to prop when attributes are not supported
+		if ( !("getAttribute" in elem) ) {
+			return jQuery.prop( elem, name, value );
+		}
 
-		// Try to normalize/fix the name
-		name = notxml && jQuery.props[ name ] || name;
+		var ret, hooks,
+			notxml = nType !== 1 || !jQuery.isXMLDoc( elem );
 
-		// Only do all the following if this is a node (faster for style)
-		if ( elem.nodeType === 1 ) {
-			// These attributes require special treatment
-			var special = rspecialurl.test( name );
+		// Normalize the name if needed
+		name = notxml && jQuery.attrFix[ name ] || name;
 
-			// Safari mis-reports the default selected property of an option
-			// Accessing the parent's selectedIndex property fixes it
-			if ( name === "selected" && !jQuery.support.optSelected ) {
-				var parent = elem.parentNode;
-				if ( parent ) {
-					parent.selectedIndex;
-	
-					// Make sure that it also works with optgroups, see #5701
-					if ( parent.parentNode ) {
-						parent.parentNode.selectedIndex;
-					}
-				}
+		hooks = jQuery.attrHooks[ name ];
+
+		if ( !hooks ) {
+			// Use boolHook for boolean attributes
+			if ( rboolean.test( name ) &&
+				(typeof value === "boolean" || value === undefined || value.toLowerCase() === name.toLowerCase()) ) {
+
+				hooks = boolHook;
+
+			// Use formHook for forms and if the name contains certain characters
+			} else if ( formHook && (jQuery.nodeName( elem, "form" ) || rinvalidChar.test( name )) ) {
+				hooks = formHook;
 			}
+		}
 
-			// If applicable, access the attribute via the DOM 0 way
-			if ( name in elem && notxml && !special ) {
-				if ( set ) {
-					// We can't allow the type property to be changed (since it causes problems in IE)
-					if ( name === "type" && rtype.test( elem.nodeName ) && elem.parentNode ) {
-						jQuery.error( "type property can't be changed" );
-					}
+		if ( value !== undefined ) {
 
-					elem[ name ] = value;
-				}
+			if ( value === null ) {
+				jQuery.removeAttr( elem, name );
+				return undefined;
 
-				// browsers index elements by id/name on forms, give priority to attributes.
-				if ( jQuery.nodeName( elem, "form" ) && elem.getAttributeNode(name) ) {
-					return elem.getAttributeNode( name ).nodeValue;
-				}
+			} else if ( hooks && "set" in hooks && notxml && (ret = hooks.set( elem, value, name )) !== undefined ) {
+				return ret;
 
-				// elem.tabIndex doesn't always return the correct value when it hasn't been explicitly set
-				// http://fluidproject.org/blog/2008/01/09/getting-setting-and-removing-tabindex-values-with-javascript/
-				if ( name === "tabIndex" ) {
-					var attributeNode = elem.getAttributeNode( "tabIndex" );
-
-					return attributeNode && attributeNode.specified ?
-						attributeNode.value :
-						rfocusable.test( elem.nodeName ) || rclickable.test( elem.nodeName ) && elem.href ?
-							0 :
-							undefined;
-				}
-
-				return elem[ name ];
-			}
-
-			if ( !jQuery.support.style && notxml && name === "style" ) {
-				if ( set ) {
-					elem.style.cssText = "" + value;
-				}
-
-				return elem.style.cssText;
-			}
-
-			if ( set ) {
-				// convert the value to a string (all browsers do this but IE) see #1070
+			} else {
 				elem.setAttribute( name, "" + value );
+				return value;
 			}
 
-			var attr = !jQuery.support.hrefNormalized && notxml && special ?
-					// Some attributes require a special call on IE
-					elem.getAttribute( name, 2 ) :
-					elem.getAttribute( name );
+		} else if ( hooks && "get" in hooks && notxml ) {
+			return hooks.get( elem, name );
+
+		} else {
+
+			ret = elem.getAttribute( name );
 
 			// Non-existent attributes return null, we normalize to undefined
-			return attr === null ? undefined : attr;
+			return ret === null ?
+				undefined :
+				ret;
+		}
+	},
+
+	removeAttr: function( elem, name ) {
+		var propName;
+		if ( elem.nodeType === 1 ) {
+			name = jQuery.attrFix[ name ] || name;
+		
+			if ( jQuery.support.getSetAttribute ) {
+				// Use removeAttribute in browsers that support it
+				elem.removeAttribute( name );
+			} else {
+				jQuery.attr( elem, name, "" );
+				elem.removeAttributeNode( elem.getAttributeNode( name ) );
+			}
+
+			// Set corresponding property to false for boolean attributes
+			if ( rboolean.test( name ) && (propName = jQuery.propFix[ name ] || name) in elem ) {
+				elem[ propName ] = false;
+			}
+		}
+	},
+
+	attrHooks: {
+		type: {
+			set: function( elem, value ) {
+				// We can't allow the type property to be changed (since it causes problems in IE)
+				if ( rtype.test( elem.nodeName ) && elem.parentNode ) {
+					jQuery.error( "type property can't be changed" );
+				} else if ( !jQuery.support.radioValue && value === "radio" && jQuery.nodeName(elem, "input") ) {
+					// Setting the type on a radio button after the value resets the value in IE6-9
+					// Reset value to it's default in case type is set after value
+					// This is for element creation
+					var val = elem.value;
+					elem.setAttribute( "type", value );
+					if ( val ) {
+						elem.value = val;
+					}
+					return value;
+				}
+			}
+		},
+		tabIndex: {
+			get: function( elem ) {
+				// elem.tabIndex doesn't always return the correct value when it hasn't been explicitly set
+				// http://fluidproject.org/blog/2008/01/09/getting-setting-and-removing-tabindex-values-with-javascript/
+				var attributeNode = elem.getAttributeNode("tabIndex");
+
+				return attributeNode && attributeNode.specified ?
+					parseInt( attributeNode.value, 10 ) :
+					rfocusable.test( elem.nodeName ) || rclickable.test( elem.nodeName ) && elem.href ?
+						0 :
+						undefined;
+			}
+		}
+	},
+
+	propFix: {
+		tabindex: "tabIndex",
+		readonly: "readOnly",
+		"for": "htmlFor",
+		"class": "className",
+		maxlength: "maxLength",
+		cellspacing: "cellSpacing",
+		cellpadding: "cellPadding",
+		rowspan: "rowSpan",
+		colspan: "colSpan",
+		usemap: "useMap",
+		frameborder: "frameBorder",
+		contenteditable: "contentEditable"
+	},
+	
+	prop: function( elem, name, value ) {
+		var nType = elem.nodeType;
+
+		// don't get/set properties on text, comment and attribute nodes
+		if ( !elem || nType === 3 || nType === 8 || nType === 2 ) {
+			return undefined;
 		}
 
-		// elem is actually elem.style ... set the style
-		// Using attr for specific style information is now deprecated. Use style instead.
-		return jQuery.style( elem, name, value );
-	}
+		var ret, hooks,
+			notxml = nType !== 1 || !jQuery.isXMLDoc( elem );
+
+		// Try to normalize/fix the name
+		name = notxml && jQuery.propFix[ name ] || name;
+		
+		hooks = jQuery.propHooks[ name ];
+
+		if ( value !== undefined ) {
+			if ( hooks && "set" in hooks && (ret = hooks.set( elem, value, name )) !== undefined ) {
+				return ret;
+
+			} else {
+				return (elem[ name ] = value);
+			}
+
+		} else {
+			if ( hooks && "get" in hooks && (ret = hooks.get( elem, name )) !== undefined ) {
+				return ret;
+
+			} else {
+				return elem[ name ];
+			}
+		}
+	},
+	
+	propHooks: {}
 });
-var rnamespaces = /\.(.*)$/,
-	fcleanup = function( nm ) {
-		return nm.replace(/[^\w\s\.\|`]/g, function( ch ) {
-			return "\\" + ch;
+
+// Hook for boolean attributes
+boolHook = {
+	get: function( elem, name ) {
+		// Align boolean attributes with corresponding properties
+		return elem[ jQuery.propFix[ name ] || name ] ?
+			name.toLowerCase() :
+			undefined;
+	},
+	set: function( elem, value, name ) {
+		var propName;
+		if ( value === false ) {
+			// Remove boolean attributes when set to false
+			jQuery.removeAttr( elem, name );
+		} else {
+			// value is true since we know at this point it's type boolean and not false
+			// Set boolean attributes to the same name and set the DOM property
+			propName = jQuery.propFix[ name ] || name;
+			if ( propName in elem ) {
+				// Only set the IDL specifically if it already exists on the element
+				elem[ propName ] = value;
+			}
+
+			elem.setAttribute( name, name.toLowerCase() );
+		}
+		return name;
+	}
+};
+
+// Use the value property for back compat
+// Use the formHook for button elements in IE6/7 (#1954)
+jQuery.attrHooks.value = {
+	get: function( elem, name ) {
+		if ( formHook && jQuery.nodeName( elem, "button" ) ) {
+			return formHook.get( elem, name );
+		}
+		return elem.value;
+	},
+	set: function( elem, value, name ) {
+		if ( formHook && jQuery.nodeName( elem, "button" ) ) {
+			return formHook.set( elem, value, name );
+		}
+		// Does not return so that setAttribute is also used
+		elem.value = value;
+	}
+};
+
+// IE6/7 do not support getting/setting some attributes with get/setAttribute
+if ( !jQuery.support.getSetAttribute ) {
+
+	// propFix is more comprehensive and contains all fixes
+	jQuery.attrFix = jQuery.propFix;
+	
+	// Use this for any attribute on a form in IE6/7
+	formHook = jQuery.attrHooks.name = jQuery.valHooks.button = {
+		get: function( elem, name ) {
+			var ret;
+			ret = elem.getAttributeNode( name );
+			// Return undefined if nodeValue is empty string
+			return ret && ret.nodeValue !== "" ?
+				ret.nodeValue :
+				undefined;
+		},
+		set: function( elem, value, name ) {
+			// Check form objects in IE (multiple bugs related)
+			// Only use nodeValue if the attribute node exists on the form
+			var ret = elem.getAttributeNode( name );
+			if ( ret ) {
+				ret.nodeValue = value;
+				return value;
+			}
+		}
+	};
+
+	// Set width and height to auto instead of 0 on empty string( Bug #8150 )
+	// This is for removals
+	jQuery.each([ "width", "height" ], function( i, name ) {
+		jQuery.attrHooks[ name ] = jQuery.extend( jQuery.attrHooks[ name ], {
+			set: function( elem, value ) {
+				if ( value === "" ) {
+					elem.setAttribute( name, "auto" );
+					return value;
+				}
+			}
 		});
+	});
+}
+
+
+// Some attributes require a special call on IE
+if ( !jQuery.support.hrefNormalized ) {
+	jQuery.each([ "href", "src", "width", "height" ], function( i, name ) {
+		jQuery.attrHooks[ name ] = jQuery.extend( jQuery.attrHooks[ name ], {
+			get: function( elem ) {
+				var ret = elem.getAttribute( name, 2 );
+				return ret === null ? undefined : ret;
+			}
+		});
+	});
+}
+
+if ( !jQuery.support.style ) {
+	jQuery.attrHooks.style = {
+		get: function( elem ) {
+			// Return undefined in the case of empty string
+			// Normalize to lowercase since IE uppercases css property names
+			return elem.style.cssText.toLowerCase() || undefined;
+		},
+		set: function( elem, value ) {
+			return (elem.style.cssText = "" + value);
+		}
+	};
+}
+
+// Safari mis-reports the default selected property of an option
+// Accessing the parent's selectedIndex property fixes it
+if ( !jQuery.support.optSelected ) {
+	jQuery.propHooks.selected = jQuery.extend( jQuery.propHooks.selected, {
+		get: function( elem ) {
+			var parent = elem.parentNode;
+
+			if ( parent ) {
+				parent.selectedIndex;
+
+				// Make sure that it also works with optgroups, see #5701
+				if ( parent.parentNode ) {
+					parent.parentNode.selectedIndex;
+				}
+			}
+		}
+	});
+}
+
+// Radios and checkboxes getter/setter
+if ( !jQuery.support.checkOn ) {
+	jQuery.each([ "radio", "checkbox" ], function() {
+		jQuery.valHooks[ this ] = {
+			get: function( elem ) {
+				// Handle the case where in Webkit "" is returned instead of "on" if a value isn't specified
+				return elem.getAttribute("value") === null ? "on" : elem.value;
+			}
+		};
+	});
+}
+jQuery.each([ "radio", "checkbox" ], function() {
+	jQuery.valHooks[ this ] = jQuery.extend( jQuery.valHooks[ this ], {
+		set: function( elem, value ) {
+			if ( jQuery.isArray( value ) ) {
+				return (elem.checked = jQuery.inArray( jQuery(elem).val(), value ) >= 0);
+			}
+		}
+	});
+});
+
+
+
+
+var hasOwn = Object.prototype.hasOwnProperty,
+	rnamespaces = /\.(.*)$/,
+	rformElems = /^(?:textarea|input|select)$/i,
+	rperiod = /\./g,
+	rspaces = / /g,
+	rescape = /[^\w\s.|`]/g,
+	fcleanup = function( nm ) {
+		return nm.replace(rescape, "\\$&");
 	};
 
 /*
@@ -1561,10 +2517,11 @@ jQuery.event = {
 			return;
 		}
 
-		// For whatever reason, IE has trouble passing the window object
-		// around, causing it to be cloned in the process
-		if ( elem.setInterval && ( elem !== window && !elem.frameElement ) ) {
-			elem = window;
+		if ( handler === false ) {
+			handler = returnFalse;
+		} else if ( !handler ) {
+			// Fixes bug #7229. Fix recommended by jdalton
+			return;
 		}
 
 		var handleObjIn, handleObj;
@@ -1580,7 +2537,7 @@ jQuery.event = {
 		}
 
 		// Init the element's event structure
-		var elemData = jQuery.data( elem );
+		var elemData = jQuery._data( elem );
 
 		// If no elemData is found then we must be trying to bind to one of the
 		// banned noData elements
@@ -1588,14 +2545,18 @@ jQuery.event = {
 			return;
 		}
 
-		var events = elemData.events = elemData.events || {},
-			eventHandle = elemData.handle, eventHandle;
+		var events = elemData.events,
+			eventHandle = elemData.handle;
+
+		if ( !events ) {
+			elemData.events = events = {};
+		}
 
 		if ( !eventHandle ) {
-			elemData.handle = eventHandle = function() {
-				// Handle the second event of a trigger and when
-				// an event is called after a page has unloaded
-				return typeof jQuery !== "undefined" && !jQuery.event.triggered ?
+			elemData.handle = eventHandle = function( e ) {
+				// Discard the second event of a jQuery.event.trigger() and
+				// when an event is called after a page has unloaded
+				return typeof jQuery !== "undefined" && (!e || jQuery.event.triggered !== e.type) ?
 					jQuery.event.handle.apply( eventHandle.elem, arguments ) :
 					undefined;
 			};
@@ -1628,7 +2589,9 @@ jQuery.event = {
 			}
 
 			handleObj.type = type;
-			handleObj.guid = handler.guid;
+			if ( !handleObj.guid ) {
+				handleObj.guid = handler.guid;
+			}
 
 			// Get the current list of functions bound to this event
 			var handlers = events[ type ],
@@ -1651,9 +2614,9 @@ jQuery.event = {
 					}
 				}
 			}
-			
-			if ( special.add ) { 
-				special.add.call( elem, handleObj ); 
+
+			if ( special.add ) {
+				special.add.call( elem, handleObj );
 
 				if ( !handleObj.handler.guid ) {
 					handleObj.handler.guid = handler.guid;
@@ -1663,7 +2626,7 @@ jQuery.event = {
 			// Add the function to the element's handler list
 			handlers.push( handleObj );
 
-			// Keep track of which events have been used, for global triggering
+			// Keep track of which events have been used, for event optimization
 			jQuery.event.global[ type ] = true;
 		}
 
@@ -1680,8 +2643,12 @@ jQuery.event = {
 			return;
 		}
 
-		var ret, type, fn, i = 0, all, namespaces, namespace, special, eventType, handleObj, origType,
-			elemData = jQuery.data( elem ),
+		if ( handler === false ) {
+			handler = returnFalse;
+		}
+
+		var ret, type, fn, j, i = 0, all, namespaces, namespace, special, eventType, handleObj, origType,
+			elemData = jQuery.hasData( elem ) && jQuery._data( elem ),
 			events = elemData && elemData.events;
 
 		if ( !elemData || !events ) {
@@ -1720,8 +2687,8 @@ jQuery.event = {
 				namespaces = type.split(".");
 				type = namespaces.shift();
 
-				namespace = new RegExp("(^|\\.)" + 
-					jQuery.map( namespaces.slice(0).sort(), fcleanup ).join("\\.(?:.*\\.)?") + "(\\.|$)")
+				namespace = new RegExp("(^|\\.)" +
+					jQuery.map( namespaces.slice(0).sort(), fcleanup ).join("\\.(?:.*\\.)?") + "(\\.|$)");
 			}
 
 			eventType = events[ type ];
@@ -1731,7 +2698,7 @@ jQuery.event = {
 			}
 
 			if ( !handler ) {
-				for ( var j = 0; j < eventType.length; j++ ) {
+				for ( j = 0; j < eventType.length; j++ ) {
 					handleObj = eventType[ j ];
 
 					if ( all || namespace.test( handleObj.namespace ) ) {
@@ -1745,7 +2712,7 @@ jQuery.event = {
 
 			special = jQuery.event.special[ type ] || {};
 
-			for ( var j = pos || 0; j < eventType.length; j++ ) {
+			for ( j = pos || 0; j < eventType.length; j++ ) {
 				handleObj = eventType[ j ];
 
 				if ( handler.guid === handleObj.guid ) {
@@ -1769,7 +2736,7 @@ jQuery.event = {
 			// remove generic event handler if no more handlers exist
 			if ( eventType.length === 0 || pos != null && eventType.length === 1 ) {
 				if ( !special.teardown || special.teardown.call( elem, namespaces ) === false ) {
-					removeEvent( elem, type, elemData.handle );
+					jQuery.removeEvent( elem, type, elemData.handle );
 				}
 
 				ret = null;
@@ -1788,175 +2755,196 @@ jQuery.event = {
 			delete elemData.handle;
 
 			if ( jQuery.isEmptyObject( elemData ) ) {
-				jQuery.removeData( elem );
+				jQuery.removeData( elem, undefined, true );
 			}
 		}
 	},
+	
+	// Events that are safe to short-circuit if no handlers are attached.
+	// Native DOM events should not be added, they may have inline handlers.
+	customEvent: {
+		"getData": true,
+		"setData": true,
+		"changeData": true
+	},
 
-	// bubbling is internal
-	trigger: function( event, data, elem /*, bubbling */ ) {
+	trigger: function( event, data, elem, onlyHandlers ) {
 		// Event object or event type
 		var type = event.type || event,
-			bubbling = arguments[3];
+			namespaces = [],
+			exclusive;
 
-		if ( !bubbling ) {
-			event = typeof event === "object" ?
-				// jQuery.Event object
-				event[expando] ? event :
-				// Object literal
-				jQuery.extend( jQuery.Event(type), event ) :
-				// Just the event type (string)
-				jQuery.Event(type);
-
-			if ( type.indexOf("!") >= 0 ) {
-				event.type = type = type.slice(0, -1);
-				event.exclusive = true;
-			}
-
-			// Handle a global trigger
-			if ( !elem ) {
-				// Don't bubble custom events when global (to avoid too much overhead)
-				event.stopPropagation();
-
-				// Only trigger if we've ever bound an event for it
-				if ( jQuery.event.global[ type ] ) {
-					jQuery.each( jQuery.cache, function() {
-						if ( this.events && this.events[type] ) {
-							jQuery.event.trigger( event, data, this.handle.elem );
-						}
-					});
-				}
-			}
-
-			// Handle triggering a single element
-
-			// don't do events on text and comment nodes
-			if ( !elem || elem.nodeType === 3 || elem.nodeType === 8 ) {
-				return undefined;
-			}
-
-			// Clean up in case it is reused
-			event.result = undefined;
-			event.target = elem;
-
-			// Clone the incoming data, if any
-			data = jQuery.makeArray( data );
-			data.unshift( event );
+		if ( type.indexOf("!") >= 0 ) {
+			// Exclusive events trigger only for the exact event (no namespaces)
+			type = type.slice(0, -1);
+			exclusive = true;
 		}
 
-		event.currentTarget = elem;
-
-		// Trigger the event, it is assumed that "handle" is a function
-		var handle = jQuery.data( elem, "handle" );
-		if ( handle ) {
-			handle.apply( elem, data );
+		if ( type.indexOf(".") >= 0 ) {
+			// Namespaced trigger; create a regexp to match event type in handle()
+			namespaces = type.split(".");
+			type = namespaces.shift();
+			namespaces.sort();
 		}
 
-		var parent = elem.parentNode || elem.ownerDocument;
+		if ( (!elem || jQuery.event.customEvent[ type ]) && !jQuery.event.global[ type ] ) {
+			// No jQuery handlers for this event type, and it can't have inline handlers
+			return;
+		}
 
-		// Trigger an inline bound script
-		try {
-			if ( !(elem && elem.nodeName && jQuery.noData[elem.nodeName.toLowerCase()]) ) {
-				if ( elem[ "on" + type ] && elem[ "on" + type ].apply( elem, data ) === false ) {
-					event.result = false;
+		// Caller can pass in an Event, Object, or just an event type string
+		event = typeof event === "object" ?
+			// jQuery.Event object
+			event[ jQuery.expando ] ? event :
+			// Object literal
+			new jQuery.Event( type, event ) :
+			// Just the event type (string)
+			new jQuery.Event( type );
+
+		event.type = type;
+		event.exclusive = exclusive;
+		event.namespace = namespaces.join(".");
+		event.namespace_re = new RegExp("(^|\\.)" + namespaces.join("\\.(?:.*\\.)?") + "(\\.|$)");
+		
+		// triggerHandler() and global events don't bubble or run the default action
+		if ( onlyHandlers || !elem ) {
+			event.preventDefault();
+			event.stopPropagation();
+		}
+
+		// Handle a global trigger
+		if ( !elem ) {
+			// TODO: Stop taunting the data cache; remove global events and always attach to document
+			jQuery.each( jQuery.cache, function() {
+				// internalKey variable is just used to make it easier to find
+				// and potentially change this stuff later; currently it just
+				// points to jQuery.expando
+				var internalKey = jQuery.expando,
+					internalCache = this[ internalKey ];
+				if ( internalCache && internalCache.events && internalCache.events[ type ] ) {
+					jQuery.event.trigger( event, data, internalCache.handle.elem );
 				}
+			});
+			return;
+		}
+
+		// Don't do events on text and comment nodes
+		if ( elem.nodeType === 3 || elem.nodeType === 8 ) {
+			return;
+		}
+
+		// Clean up the event in case it is being reused
+		event.result = undefined;
+		event.target = elem;
+
+		// Clone any incoming data and prepend the event, creating the handler arg list
+		data = data ? jQuery.makeArray( data ) : [];
+		data.unshift( event );
+
+		var cur = elem,
+			// IE doesn't like method names with a colon (#3533, #8272)
+			ontype = type.indexOf(":") < 0 ? "on" + type : "";
+
+		// Fire event on the current element, then bubble up the DOM tree
+		do {
+			var handle = jQuery._data( cur, "handle" );
+
+			event.currentTarget = cur;
+			if ( handle ) {
+				handle.apply( cur, data );
 			}
 
-		// prevent IE from throwing an error for some elements with some event types, see #3533
-		} catch (e) {}
+			// Trigger an inline bound script
+			if ( ontype && jQuery.acceptData( cur ) && cur[ ontype ] && cur[ ontype ].apply( cur, data ) === false ) {
+				event.result = false;
+				event.preventDefault();
+			}
 
-		if ( !event.isPropagationStopped() && parent ) {
-			jQuery.event.trigger( event, data, parent, true );
+			// Bubble up to document, then to window
+			cur = cur.parentNode || cur.ownerDocument || cur === event.target.ownerDocument && window;
+		} while ( cur && !event.isPropagationStopped() );
 
-		} else if ( !event.isDefaultPrevented() ) {
-			var target = event.target, old,
-				isClick = jQuery.nodeName(target, "a") && type === "click",
+		// If nobody prevented the default action, do it now
+		if ( !event.isDefaultPrevented() ) {
+			var old,
 				special = jQuery.event.special[ type ] || {};
 
-			if ( (!special._default || special._default.call( elem, event ) === false) && 
-				!isClick && !(target && target.nodeName && jQuery.noData[target.nodeName.toLowerCase()]) ) {
+			if ( (!special._default || special._default.call( elem.ownerDocument, event ) === false) &&
+				!(type === "click" && jQuery.nodeName( elem, "a" )) && jQuery.acceptData( elem ) ) {
 
+				// Call a native DOM method on the target with the same name name as the event.
+				// Can't use an .isFunction)() check here because IE6/7 fails that test.
+				// IE<9 dies on focus to hidden element (#1486), may want to revisit a try/catch.
 				try {
-					if ( target[ type ] ) {
-						// Make sure that we don't accidentally re-trigger the onFOO events
-						old = target[ "on" + type ];
+					if ( ontype && elem[ type ] ) {
+						// Don't re-trigger an onFOO event when we call its FOO() method
+						old = elem[ ontype ];
 
 						if ( old ) {
-							target[ "on" + type ] = null;
+							elem[ ontype ] = null;
 						}
 
-						jQuery.event.triggered = true;
-						target[ type ]();
+						jQuery.event.triggered = type;
+						elem[ type ]();
 					}
-
-				// prevent IE from throwing an error for some elements with some event types, see #3533
-				} catch (e) {}
+				} catch ( ieError ) {}
 
 				if ( old ) {
-					target[ "on" + type ] = old;
+					elem[ ontype ] = old;
 				}
 
-				jQuery.event.triggered = false;
+				jQuery.event.triggered = undefined;
 			}
 		}
-	},
-
-	handle: function( event ) {
-		var all, handlers, namespaces, namespace, events;
-
-		event = arguments[0] = jQuery.event.fix( event || window.event );
-		event.currentTarget = this;
-
-		// Namespaced event handlers
-		all = event.type.indexOf(".") < 0 && !event.exclusive;
-
-		if ( !all ) {
-			namespaces = event.type.split(".");
-			event.type = namespaces.shift();
-			namespace = new RegExp("(^|\\.)" + namespaces.slice(0).sort().join("\\.(?:.*\\.)?") + "(\\.|$)");
-		}
-
-		var events = jQuery.data(this, "events"), handlers = events[ event.type ];
-
-		if ( events && handlers ) {
-			// Clone the handlers to prevent manipulation
-			handlers = handlers.slice(0);
-
-			for ( var j = 0, l = handlers.length; j < l; j++ ) {
-				var handleObj = handlers[ j ];
-
-				// Filter the functions by class
-				if ( all || namespace.test( handleObj.namespace ) ) {
-					// Pass in a reference to the handler function itself
-					// So that we can later remove it
-					event.handler = handleObj.handler;
-					event.data = handleObj.data;
-					event.handleObj = handleObj;
-	
-					var ret = handleObj.handler.apply( this, arguments );
-
-					if ( ret !== undefined ) {
-						event.result = ret;
-						if ( ret === false ) {
-							event.preventDefault();
-							event.stopPropagation();
-						}
-					}
-
-					if ( event.isImmediatePropagationStopped() ) {
-						break;
-					}
-				}
-			}
-		}
-
+		
 		return event.result;
 	},
 
-	props: "altKey attrChange attrName bubbles button cancelable charCode clientX clientY ctrlKey currentTarget data detail eventPhase fromElement handler keyCode layerX layerY metaKey newValue offsetX offsetY originalTarget pageX pageY prevValue relatedNode relatedTarget screenX screenY shiftKey srcElement target toElement view wheelDelta which".split(" "),
+	handle: function( event ) {
+		event = jQuery.event.fix( event || window.event );
+		// Snapshot the handlers list since a called handler may add/remove events.
+		var handlers = ((jQuery._data( this, "events" ) || {})[ event.type ] || []).slice(0),
+			run_all = !event.exclusive && !event.namespace,
+			args = Array.prototype.slice.call( arguments, 0 );
+
+		// Use the fix-ed Event rather than the (read-only) native event
+		args[0] = event;
+		event.currentTarget = this;
+
+		for ( var j = 0, l = handlers.length; j < l; j++ ) {
+			var handleObj = handlers[ j ];
+
+			// Triggered event must 1) be non-exclusive and have no namespace, or
+			// 2) have namespace(s) a subset or equal to those in the bound event.
+			if ( run_all || event.namespace_re.test( handleObj.namespace ) ) {
+				// Pass in a reference to the handler function itself
+				// So that we can later remove it
+				event.handler = handleObj.handler;
+				event.data = handleObj.data;
+				event.handleObj = handleObj;
+
+				var ret = handleObj.handler.apply( this, args );
+
+				if ( ret !== undefined ) {
+					event.result = ret;
+					if ( ret === false ) {
+						event.preventDefault();
+						event.stopPropagation();
+					}
+				}
+
+				if ( event.isImmediatePropagationStopped() ) {
+					break;
+				}
+			}
+		}
+		return event.result;
+	},
+
+	props: "altKey attrChange attrName bubbles button cancelable charCode clientX clientY ctrlKey currentTarget data detail eventPhase fromElement handler keyCode layerX layerY metaKey newValue offsetX offsetY pageX pageY prevValue relatedNode relatedTarget screenX screenY shiftKey srcElement target toElement view wheelDelta which".split(" "),
 
 	fix: function( event ) {
-		if ( event[ expando ] ) {
+		if ( event[ jQuery.expando ] ) {
 			return event;
 		}
 
@@ -1972,7 +2960,8 @@ jQuery.event = {
 
 		// Fix target property, if necessary
 		if ( !event.target ) {
-			event.target = event.srcElement || document; // Fixes #1925 where srcElement might not be defined either
+			// Fixes #1925 where srcElement might not be defined either
+			event.target = event.srcElement || document;
 		}
 
 		// check if target is a textnode (safari)
@@ -1987,14 +2976,17 @@ jQuery.event = {
 
 		// Calculate pageX/Y if missing and clientX/Y available
 		if ( event.pageX == null && event.clientX != null ) {
-			var doc = document.documentElement, body = document.body;
+			var eventDocument = event.target.ownerDocument || document,
+				doc = eventDocument.documentElement,
+				body = eventDocument.body;
+
 			event.pageX = event.clientX + (doc && doc.scrollLeft || body && body.scrollLeft || 0) - (doc && doc.clientLeft || body && body.clientLeft || 0);
 			event.pageY = event.clientY + (doc && doc.scrollTop  || body && body.scrollTop  || 0) - (doc && doc.clientTop  || body && body.clientTop  || 0);
 		}
 
 		// Add which for key events
-		if ( !event.which && ((event.charCode || event.charCode === 0) ? event.charCode : event.keyCode) ) {
-			event.which = event.charCode || event.keyCode;
+		if ( event.which == null && (event.charCode != null || event.keyCode != null) ) {
+			event.which = event.charCode != null ? event.charCode : event.keyCode;
 		}
 
 		// Add metaKey to non-Mac browsers (use ctrl for PC's and Meta for Macs)
@@ -2026,36 +3018,24 @@ jQuery.event = {
 
 		live: {
 			add: function( handleObj ) {
-				jQuery.event.add( this, handleObj.origType, jQuery.extend({}, handleObj, {handler: liveHandler}) ); 
+				jQuery.event.add( this,
+					liveConvert( handleObj.origType, handleObj.selector ),
+					jQuery.extend({}, handleObj, {handler: liveHandler, guid: handleObj.handler.guid}) );
 			},
 
 			remove: function( handleObj ) {
-				var remove = true,
-					type = handleObj.origType.replace(rnamespaces, "");
-				
-				jQuery.each( jQuery.data(this, "events").live || [], function() {
-					if ( type === this.origType.replace(rnamespaces, "") ) {
-						remove = false;
-						return false;
-					}
-				});
-
-				if ( remove ) {
-					jQuery.event.remove( this, handleObj.origType, liveHandler );
-				}
+				jQuery.event.remove( this, liveConvert( handleObj.origType, handleObj.selector ), handleObj );
 			}
-
 		},
 
 		beforeunload: {
 			setup: function( data, namespaces, eventHandle ) {
 				// We only want to do this special case on windows
-				if ( this.setInterval ) {
+				if ( jQuery.isWindow( this ) ) {
 					this.onbeforeunload = eventHandle;
 				}
-
-				return false;
 			},
+
 			teardown: function( namespaces, eventHandle ) {
 				if ( this.onbeforeunload === eventHandle ) {
 					this.onbeforeunload = null;
@@ -2065,35 +3045,50 @@ jQuery.event = {
 	}
 };
 
-var removeEvent = document.removeEventListener ?
+jQuery.removeEvent = document.removeEventListener ?
 	function( elem, type, handle ) {
-		elem.removeEventListener( type, handle, false );
-	} : 
+		if ( elem.removeEventListener ) {
+			elem.removeEventListener( type, handle, false );
+		}
+	} :
 	function( elem, type, handle ) {
-		elem.detachEvent( "on" + type, handle );
+		if ( elem.detachEvent ) {
+			elem.detachEvent( "on" + type, handle );
+		}
 	};
 
-jQuery.Event = function( src ) {
+jQuery.Event = function( src, props ) {
 	// Allow instantiation without the 'new' keyword
 	if ( !this.preventDefault ) {
-		return new jQuery.Event( src );
+		return new jQuery.Event( src, props );
 	}
 
 	// Event object
 	if ( src && src.type ) {
 		this.originalEvent = src;
 		this.type = src.type;
+
+		// Events bubbling up the document may have been marked as prevented
+		// by a handler lower down the tree; reflect the correct value.
+		this.isDefaultPrevented = (src.defaultPrevented || src.returnValue === false ||
+			src.getPreventDefault && src.getPreventDefault()) ? returnTrue : returnFalse;
+
 	// Event type
 	} else {
 		this.type = src;
 	}
 
+	// Put explicitly provided properties onto the event object
+	if ( props ) {
+		jQuery.extend( this, props );
+	}
+
 	// timeStamp is buggy for some events on Firefox(#3843)
 	// So we won't rely on the native value
-	this.timeStamp = now();
+	this.timeStamp = jQuery.now();
 
 	// Mark it as fixed
-	this[ expando ] = true;
+	this[ jQuery.expando ] = true;
 };
 
 function returnFalse() {
@@ -2113,13 +3108,15 @@ jQuery.Event.prototype = {
 		if ( !e ) {
 			return;
 		}
-		
+
 		// if preventDefault exists run it on the original event
 		if ( e.preventDefault ) {
 			e.preventDefault();
-		}
+
 		// otherwise set the returnValue property of the original event to false (IE)
-		e.returnValue = false;
+		} else {
+			e.returnValue = false;
+		}
 	},
 	stopPropagation: function() {
 		this.isPropagationStopped = returnTrue;
@@ -2150,18 +3147,25 @@ var withinElement = function( event ) {
 	// Check if mouse(over|out) are still within the same parent element
 	var parent = event.relatedTarget;
 
+	// set the correct event type
+	event.type = event.data;
+
 	// Firefox sometimes assigns relatedTarget a XUL element
 	// which we cannot access the parentNode property of
 	try {
+
+		// Chrome does something similar, the parentNode property
+		// can be accessed but is null.
+		if ( parent && parent !== document && !parent.parentNode ) {
+			return;
+		}
+
 		// Traverse up the tree
 		while ( parent && parent !== this ) {
 			parent = parent.parentNode;
 		}
 
 		if ( parent !== this ) {
-			// set the correct event type
-			event.type = event.data;
-
 			// handle event if we actually just moused on to a non sub-element
 			jQuery.event.handle.apply( this, arguments );
 		}
@@ -2197,20 +3201,22 @@ if ( !jQuery.support.submitBubbles ) {
 
 	jQuery.event.special.submit = {
 		setup: function( data, namespaces ) {
-			if ( this.nodeName.toLowerCase() !== "form" ) {
+			if ( !jQuery.nodeName( this, "form" ) ) {
 				jQuery.event.add(this, "click.specialSubmit", function( e ) {
-					var elem = e.target, type = elem.type;
+					var elem = e.target,
+						type = elem.type;
 
 					if ( (type === "submit" || type === "image") && jQuery( elem ).closest("form").length ) {
-						return trigger( "submit", this, arguments );
+						trigger( "submit", this, arguments );
 					}
 				});
-	 
+
 				jQuery.event.add(this, "keypress.specialSubmit", function( e ) {
-					var elem = e.target, type = elem.type;
+					var elem = e.target,
+						type = elem.type;
 
 					if ( (type === "text" || type === "password") && jQuery( elem ).closest("form").length && e.keyCode === 13 ) {
-						return trigger( "submit", this, arguments );
+						trigger( "submit", this, arguments );
 					}
 				});
 
@@ -2229,9 +3235,7 @@ if ( !jQuery.support.submitBubbles ) {
 // change delegation, happens here so we have bind.
 if ( !jQuery.support.changeBubbles ) {
 
-	var formElems = /textarea|input|select/i,
-
-	changeFilters,
+	var changeFilters,
 
 	getVal = function( elem ) {
 		var type = elem.type, val = elem.value;
@@ -2246,7 +3250,7 @@ if ( !jQuery.support.changeBubbles ) {
 				}).join("-") :
 				"";
 
-		} else if ( elem.nodeName.toLowerCase() === "select" ) {
+		} else if ( jQuery.nodeName( elem, "select" ) ) {
 			val = elem.selectedIndex;
 		}
 
@@ -2256,58 +3260,61 @@ if ( !jQuery.support.changeBubbles ) {
 	testChange = function testChange( e ) {
 		var elem = e.target, data, val;
 
-		if ( !formElems.test( elem.nodeName ) || elem.readOnly ) {
+		if ( !rformElems.test( elem.nodeName ) || elem.readOnly ) {
 			return;
 		}
 
-		data = jQuery.data( elem, "_change_data" );
+		data = jQuery._data( elem, "_change_data" );
 		val = getVal(elem);
 
 		// the current data will be also retrieved by beforeactivate
 		if ( e.type !== "focusout" || elem.type !== "radio" ) {
-			jQuery.data( elem, "_change_data", val );
+			jQuery._data( elem, "_change_data", val );
 		}
-		
+
 		if ( data === undefined || val === data ) {
 			return;
 		}
 
 		if ( data != null || val ) {
 			e.type = "change";
-			return jQuery.event.trigger( e, arguments[1], elem );
+			e.liveFired = undefined;
+			jQuery.event.trigger( e, arguments[1], elem );
 		}
 	};
 
 	jQuery.event.special.change = {
 		filters: {
-			focusout: testChange, 
+			focusout: testChange,
+
+			beforedeactivate: testChange,
 
 			click: function( e ) {
-				var elem = e.target, type = elem.type;
+				var elem = e.target, type = jQuery.nodeName( elem, "input" ) ? elem.type : "";
 
-				if ( type === "radio" || type === "checkbox" || elem.nodeName.toLowerCase() === "select" ) {
-					return testChange.call( this, e );
+				if ( type === "radio" || type === "checkbox" || jQuery.nodeName( elem, "select" ) ) {
+					testChange.call( this, e );
 				}
 			},
 
 			// Change has to be called before submit
 			// Keydown will be called before keypress, which is used in submit-event delegation
 			keydown: function( e ) {
-				var elem = e.target, type = elem.type;
+				var elem = e.target, type = jQuery.nodeName( elem, "input" ) ? elem.type : "";
 
-				if ( (e.keyCode === 13 && elem.nodeName.toLowerCase() !== "textarea") ||
+				if ( (e.keyCode === 13 && !jQuery.nodeName( elem, "textarea" ) ) ||
 					(e.keyCode === 32 && (type === "checkbox" || type === "radio")) ||
 					type === "select-multiple" ) {
-					return testChange.call( this, e );
+					testChange.call( this, e );
 				}
 			},
 
 			// Beforeactivate happens also before the previous element is blurred
 			// with this event you can't trigger a change event, but you can store
-			// information/focus[in] is not needed anymore
+			// information
 			beforeactivate: function( e ) {
 				var elem = e.target;
-				jQuery.data( elem, "_change_data", getVal(elem) );
+				jQuery._data( elem, "_change_data", getVal(elem) );
 			}
 		},
 
@@ -2320,46 +3327,75 @@ if ( !jQuery.support.changeBubbles ) {
 				jQuery.event.add( this, type + ".specialChange", changeFilters[type] );
 			}
 
-			return formElems.test( this.nodeName );
+			return rformElems.test( this.nodeName );
 		},
 
 		teardown: function( namespaces ) {
 			jQuery.event.remove( this, ".specialChange" );
 
-			return formElems.test( this.nodeName );
+			return rformElems.test( this.nodeName );
 		}
 	};
 
 	changeFilters = jQuery.event.special.change.filters;
+
+	// Handle when the input is .focus()'d
+	changeFilters.focus = changeFilters.beforeactivate;
 }
 
 function trigger( type, elem, args ) {
-	args[0].type = type;
-	return jQuery.event.handle.apply( elem, args );
+	// Piggyback on a donor event to simulate a different one.
+	// Fake originalEvent to avoid donor's stopPropagation, but if the
+	// simulated event prevents default then we do the same on the donor.
+	// Don't pass args or remember liveFired; they apply to the donor event.
+	var event = jQuery.extend( {}, args[ 0 ] );
+	event.type = type;
+	event.originalEvent = {};
+	event.liveFired = undefined;
+	jQuery.event.handle.call( elem, event );
+	if ( event.isDefaultPrevented() ) {
+		args[ 0 ].preventDefault();
+	}
 }
 
 // Create "bubbling" focus and blur events
-if ( document.addEventListener ) {
+if ( !jQuery.support.focusinBubbles ) {
 	jQuery.each({ focus: "focusin", blur: "focusout" }, function( orig, fix ) {
+
+		// Attach a single capturing handler while someone wants focusin/focusout
+		var attaches = 0;
+
 		jQuery.event.special[ fix ] = {
 			setup: function() {
-				this.addEventListener( orig, handler, true );
-			}, 
-			teardown: function() { 
-				this.removeEventListener( orig, handler, true );
+				if ( attaches++ === 0 ) {
+					document.addEventListener( orig, handler, true );
+				}
+			},
+			teardown: function() {
+				if ( --attaches === 0 ) {
+					document.removeEventListener( orig, handler, true );
+				}
 			}
 		};
 
-		function handler( e ) { 
-			e = jQuery.event.fix( e );
+		function handler( donor ) {
+			// Donor event is always a native one; fix it and switch its type.
+			// Let focusin/out handler cancel the donor focus/blur event.
+			var e = jQuery.event.fix( donor );
 			e.type = fix;
-			return jQuery.event.handle.call( this, e );
+			e.originalEvent = {};
+			jQuery.event.trigger( e, null, e.target );
+			if ( e.isDefaultPrevented() ) {
+				donor.preventDefault();
+			}
 		}
 	});
 }
 
 jQuery.each(["bind", "one"], function( i, name ) {
 	jQuery.fn[ name ] = function( type, data, fn ) {
+		var handler;
+
 		// Handle object literals
 		if ( typeof type === "object" ) {
 			for ( var key in type ) {
@@ -2367,16 +3403,21 @@ jQuery.each(["bind", "one"], function( i, name ) {
 			}
 			return this;
 		}
-		
-		if ( jQuery.isFunction( data ) ) {
+
+		if ( arguments.length === 2 || data === false ) {
 			fn = data;
 			data = undefined;
 		}
 
-		var handler = name === "one" ? jQuery.proxy( fn, function( event ) {
-			jQuery( this ).unbind( event, handler );
-			return fn.apply( this, arguments );
-		}) : fn;
+		if ( name === "one" ) {
+			handler = function( event ) {
+				jQuery( this ).unbind( event, handler );
+				return fn.apply( this, arguments );
+			};
+			handler.guid = fn.guid || jQuery.guid++;
+		} else {
+			handler = fn;
+		}
 
 		if ( type === "unload" && name !== "one" ) {
 			this.one( type, data, fn );
@@ -2407,20 +3448,20 @@ jQuery.fn.extend({
 
 		return this;
 	},
-	
+
 	delegate: function( selector, types, data, fn ) {
 		return this.live( types, data, fn, selector );
 	},
-	
+
 	undelegate: function( selector, types, fn ) {
 		if ( arguments.length === 0 ) {
-				return this.unbind( "live" );
-		
+			return this.unbind( "live" );
+
 		} else {
 			return this.die( types, null, fn, selector );
 		}
 	},
-	
+
 	trigger: function( type, data ) {
 		return this.each(function() {
 			jQuery.event.trigger( type, data, this );
@@ -2429,34 +3470,34 @@ jQuery.fn.extend({
 
 	triggerHandler: function( type, data ) {
 		if ( this[0] ) {
-			var event = jQuery.Event( type );
-			event.preventDefault();
-			event.stopPropagation();
-			jQuery.event.trigger( event, data, this[0] );
-			return event.result;
+			return jQuery.event.trigger( type, data, this[0], true );
 		}
 	},
 
 	toggle: function( fn ) {
 		// Save reference to arguments for access in closure
-		var args = arguments, i = 1;
+		var args = arguments,
+			guid = fn.guid || jQuery.guid++,
+			i = 0,
+			toggler = function( event ) {
+				// Figure out which function to execute
+				var lastToggle = ( jQuery.data( this, "lastToggle" + fn.guid ) || 0 ) % i;
+				jQuery.data( this, "lastToggle" + fn.guid, lastToggle + 1 );
+
+				// Make sure that clicks stop
+				event.preventDefault();
+
+				// and execute the function
+				return args[ lastToggle ].apply( this, arguments ) || false;
+			};
 
 		// link all the functions, so any of them can unbind this click handler
+		toggler.guid = guid;
 		while ( i < args.length ) {
-			jQuery.proxy( fn, args[ i++ ] );
+			args[ i++ ].guid = guid;
 		}
 
-		return this.click( jQuery.proxy( fn, function( event ) {
-			// Figure out which function to execute
-			var lastToggle = ( jQuery.data( this, "lastToggle" + fn.guid ) || 0 ) % i;
-			jQuery.data( this, "lastToggle" + fn.guid, lastToggle + 1 );
-
-			// Make sure that clicks stop
-			event.preventDefault();
-
-			// and execute the function
-			return args[ lastToggle ].apply( this, arguments ) || false;
-		}));
+		return this.click( toggler );
 	},
 
 	hover: function( fnOver, fnOut ) {
@@ -2477,8 +3518,24 @@ jQuery.each(["live", "die"], function( i, name ) {
 			selector = origSelector || this.selector,
 			context = origSelector ? this : jQuery( this.context );
 
-		if ( jQuery.isFunction( data ) ) {
-			fn = data;
+		if ( typeof types === "object" && !types.preventDefault ) {
+			for ( var key in types ) {
+				context[ name ]( key, data, types[key], selector );
+			}
+
+			return this;
+		}
+
+		if ( name === "die" && !types &&
+					origSelector && origSelector.charAt(0) === "." ) {
+
+			context.unbind( origSelector );
+
+			return this;
+		}
+
+		if ( data === false || jQuery.isFunction( data ) ) {
+			fn = data || returnFalse;
 			data = undefined;
 		}
 
@@ -2500,7 +3557,7 @@ jQuery.each(["live", "die"], function( i, name ) {
 
 			preType = type;
 
-			if ( type === "focus" || type === "blur" ) {
+			if ( liveMap[ type ] ) {
 				types.push( liveMap[ type ] + namespaces );
 				type = type + namespaces;
 
@@ -2510,29 +3567,34 @@ jQuery.each(["live", "die"], function( i, name ) {
 
 			if ( name === "live" ) {
 				// bind live handler
-				context.each(function(){
-					jQuery.event.add( this, liveConvert( type, selector ),
+				for ( var j = 0, l = context.length; j < l; j++ ) {
+					jQuery.event.add( context[j], "live." + liveConvert( type, selector ),
 						{ data: data, selector: selector, handler: fn, origType: type, origHandler: fn, preType: preType } );
-				});
+				}
 
 			} else {
 				// unbind live handler
-				context.unbind( liveConvert( type, selector ), fn );
+				context.unbind( "live." + liveConvert( type, selector ), fn );
 			}
 		}
-		
+
 		return this;
-	}
+	};
 });
 
 function liveHandler( event ) {
-	var stop, elems = [], selectors = [], args = arguments,
-		related, match, handleObj, elem, j, i, l, data,
-		events = jQuery.data( this, "events" );
+	var stop, maxLevel, related, match, handleObj, elem, j, i, l, data, close, namespace, ret,
+		elems = [],
+		selectors = [],
+		events = jQuery._data( this, "events" );
 
-	// Make sure we avoid non-left-click bubbling in Firefox (#3861)
-	if ( event.liveFired === this || !events || !events.live || event.button && event.type === "click" ) {
+	// Make sure we avoid non-left-click bubbling in Firefox (#3861) and disabled elements in IE (#6911)
+	if ( event.liveFired === this || !events || !events.live || event.target.disabled || event.button && event.type === "click" ) {
 		return;
+	}
+
+	if ( event.namespace ) {
+		namespace = new RegExp("(^|\\.)" + event.namespace.split(".").join("\\.(?:.*\\.)?") + "(\\.|$)");
 	}
 
 	event.liveFired = this;
@@ -2553,20 +3615,28 @@ function liveHandler( event ) {
 	match = jQuery( event.target ).closest( selectors, event.currentTarget );
 
 	for ( i = 0, l = match.length; i < l; i++ ) {
+		close = match[i];
+
 		for ( j = 0; j < live.length; j++ ) {
 			handleObj = live[j];
 
-			if ( match[i].selector === handleObj.selector ) {
-				elem = match[i].elem;
+			if ( close.selector === handleObj.selector && (!namespace || namespace.test( handleObj.namespace )) && !close.elem.disabled ) {
+				elem = close.elem;
 				related = null;
 
 				// Those two events require additional checking
 				if ( handleObj.preType === "mouseenter" || handleObj.preType === "mouseleave" ) {
+					event.type = handleObj.preType;
 					related = jQuery( event.relatedTarget ).closest( handleObj.selector )[0];
+
+					// Make sure not to accidentally match a child element with the same selector
+					if ( related && jQuery.contains( elem, related ) ) {
+						related = elem;
+					}
 				}
 
 				if ( !related || related !== elem ) {
-					elems.push({ elem: elem, handleObj: handleObj });
+					elems.push({ elem: elem, handleObj: handleObj, level: close.level });
 				}
 			}
 		}
@@ -2574,13 +3644,26 @@ function liveHandler( event ) {
 
 	for ( i = 0, l = elems.length; i < l; i++ ) {
 		match = elems[i];
+
+		if ( maxLevel && match.level > maxLevel ) {
+			break;
+		}
+
 		event.currentTarget = match.elem;
 		event.data = match.handleObj.data;
 		event.handleObj = match.handleObj;
 
-		if ( match.handleObj.origHandler.apply( match.elem, args ) === false ) {
-			stop = false;
-			break;
+		ret = match.handleObj.origHandler.apply( match.elem, arguments );
+
+		if ( ret === false || event.isPropagationStopped() ) {
+			maxLevel = match.level;
+
+			if ( ret === false ) {
+				stop = false;
+			}
+			if ( event.isImmediatePropagationStopped() ) {
+				break;
+			}
 		}
 	}
 
@@ -2588,7 +3671,7 @@ function liveHandler( event ) {
 }
 
 function liveConvert( type, selector ) {
-	return "live." + (type && type !== "*" ? type + "." : "") + selector.replace(/\./g, "`").replace(/ /g, "&");
+	return (type && type !== "*" ? type + "." : "") + selector.replace(rperiod, "`").replace(rspaces, "&");
 }
 
 jQuery.each( ("blur focus focusin focusout load resize scroll unload click dblclick " +
@@ -2596,8 +3679,15 @@ jQuery.each( ("blur focus focusin focusout load resize scroll unload click dblcl
 	"change select submit keydown keypress keyup error").split(" "), function( i, name ) {
 
 	// Handle event binding
-	jQuery.fn[ name ] = function( fn ) {
-		return fn ? this.bind( name, fn ) : this.trigger( name );
+	jQuery.fn[ name ] = function( data, fn ) {
+		if ( fn == null ) {
+			fn = data;
+			data = null;
+		}
+
+		return arguments.length > 0 ?
+			this.bind( name, data, fn ) :
+			this.trigger( name );
 	};
 
 	if ( jQuery.attrFn ) {
@@ -2605,48 +3695,38 @@ jQuery.each( ("blur focus focusin focusout load resize scroll unload click dblcl
 	}
 });
 
-// Prevent memory leaks in IE
-// Window isn't included so as not to unbind existing unload events
-// More info:
-//  - http://isaacschlueter.com/2006/10/msie-memory-leaks/
-if ( window.attachEvent && !window.addEventListener ) {
-	window.attachEvent("onunload", function() {
-		for ( var id in jQuery.cache ) {
-			if ( jQuery.cache[ id ].handle ) {
-				// Try/Catch is to handle iframes being unloaded, see #4280
-				try {
-					jQuery.event.remove( jQuery.cache[ id ].handle.elem );
-				} catch(e) {}
-			}
-		}
-	});
-}
+
+
 /*!
- * Sizzle CSS Selector Engine - v1.0
- *  Copyright 2009, The Dojo Foundation
+ * Sizzle CSS Selector Engine
+ *  Copyright 2011, The Dojo Foundation
  *  Released under the MIT, BSD, and GPL Licenses.
  *  More information: http://sizzlejs.com/
  */
 (function(){
 
-var chunker = /((?:\((?:\([^()]+\)|[^()]+)+\)|\[(?:\[[^[\]]*\]|['"][^'"]*['"]|[^[\]'"]+)+\]|\\.|[^ >+~,(\[\\]+)+|[>+~])(\s*,\s*)?((?:.|\r|\n)*)/g,
+var chunker = /((?:\((?:\([^()]+\)|[^()]+)+\)|\[(?:\[[^\[\]]*\]|['"][^'"]*['"]|[^\[\]'"]+)+\]|\\.|[^ >+~,(\[\\]+)+|[>+~])(\s*,\s*)?((?:.|\r|\n)*)/g,
 	done = 0,
 	toString = Object.prototype.toString,
 	hasDuplicate = false,
-	baseHasDuplicate = true;
+	baseHasDuplicate = true,
+	rBackslash = /\\/g,
+	rNonWord = /\W/;
 
 // Here we check if the JavaScript engine is using some sort of
 // optimization where it does not always call our comparision
 // function. If that is the case, discard the hasDuplicate value.
 //   Thus far that includes Google Chrome.
-[0, 0].sort(function(){
+[0, 0].sort(function() {
 	baseHasDuplicate = false;
 	return 0;
 });
 
-var Sizzle = function(selector, context, results, seed) {
+var Sizzle = function( selector, context, results, seed ) {
 	results = results || [];
-	var origContext = context = context || document;
+	context = context || document;
+
+	var origContext = context;
 
 	if ( context.nodeType !== 1 && context.nodeType !== 9 ) {
 		return [];
@@ -2656,24 +3736,34 @@ var Sizzle = function(selector, context, results, seed) {
 		return results;
 	}
 
-	var parts = [], m, set, checkSet, extra, prune = true, contextXML = isXML(context),
+	var m, set, checkSet, extra, ret, cur, pop, i,
+		prune = true,
+		contextXML = Sizzle.isXML( context ),
+		parts = [],
 		soFar = selector;
 	
 	// Reset the position of the chunker regexp (start from head)
-	while ( (chunker.exec(""), m = chunker.exec(soFar)) !== null ) {
-		soFar = m[3];
+	do {
+		chunker.exec( "" );
+		m = chunker.exec( soFar );
+
+		if ( m ) {
+			soFar = m[3];
 		
-		parts.push( m[1] );
+			parts.push( m[1] );
 		
-		if ( m[2] ) {
-			extra = m[3];
-			break;
+			if ( m[2] ) {
+				extra = m[3];
+				break;
+			}
 		}
-	}
+	} while ( m );
 
 	if ( parts.length > 1 && origPOS.exec( selector ) ) {
+
 		if ( parts.length === 2 && Expr.relative[ parts[0] ] ) {
 			set = posProcess( parts[0] + parts[1], context );
+
 		} else {
 			set = Expr.relative[ parts[0] ] ?
 				[ context ] :
@@ -2689,29 +3779,38 @@ var Sizzle = function(selector, context, results, seed) {
 				set = posProcess( selector, set );
 			}
 		}
+
 	} else {
 		// Take a shortcut and set the context if the root selector is an ID
 		// (but not if it'll be faster if the inner selector is an ID)
 		if ( !seed && parts.length > 1 && context.nodeType === 9 && !contextXML &&
 				Expr.match.ID.test(parts[0]) && !Expr.match.ID.test(parts[parts.length - 1]) ) {
-			var ret = Sizzle.find( parts.shift(), context, contextXML );
-			context = ret.expr ? Sizzle.filter( ret.expr, ret.set )[0] : ret.set[0];
+
+			ret = Sizzle.find( parts.shift(), context, contextXML );
+			context = ret.expr ?
+				Sizzle.filter( ret.expr, ret.set )[0] :
+				ret.set[0];
 		}
 
 		if ( context ) {
-			var ret = seed ?
+			ret = seed ?
 				{ expr: parts.pop(), set: makeArray(seed) } :
 				Sizzle.find( parts.pop(), parts.length === 1 && (parts[0] === "~" || parts[0] === "+") && context.parentNode ? context.parentNode : context, contextXML );
-			set = ret.expr ? Sizzle.filter( ret.expr, ret.set ) : ret.set;
+
+			set = ret.expr ?
+				Sizzle.filter( ret.expr, ret.set ) :
+				ret.set;
 
 			if ( parts.length > 0 ) {
-				checkSet = makeArray(set);
+				checkSet = makeArray( set );
+
 			} else {
 				prune = false;
 			}
 
 			while ( parts.length ) {
-				var cur = parts.pop(), pop = cur;
+				cur = parts.pop();
+				pop = cur;
 
 				if ( !Expr.relative[ cur ] ) {
 					cur = "";
@@ -2725,6 +3824,7 @@ var Sizzle = function(selector, context, results, seed) {
 
 				Expr.relative[ cur ]( checkSet, pop, contextXML );
 			}
+
 		} else {
 			checkSet = parts = [];
 		}
@@ -2741,19 +3841,22 @@ var Sizzle = function(selector, context, results, seed) {
 	if ( toString.call(checkSet) === "[object Array]" ) {
 		if ( !prune ) {
 			results.push.apply( results, checkSet );
+
 		} else if ( context && context.nodeType === 1 ) {
-			for ( var i = 0; checkSet[i] != null; i++ ) {
-				if ( checkSet[i] && (checkSet[i] === true || checkSet[i].nodeType === 1 && contains(context, checkSet[i])) ) {
+			for ( i = 0; checkSet[i] != null; i++ ) {
+				if ( checkSet[i] && (checkSet[i] === true || checkSet[i].nodeType === 1 && Sizzle.contains(context, checkSet[i])) ) {
 					results.push( set[i] );
 				}
 			}
+
 		} else {
-			for ( var i = 0; checkSet[i] != null; i++ ) {
+			for ( i = 0; checkSet[i] != null; i++ ) {
 				if ( checkSet[i] && checkSet[i].nodeType === 1 ) {
 					results.push( set[i] );
 				}
 			}
 		}
+
 	} else {
 		makeArray( checkSet, results );
 	}
@@ -2766,15 +3869,15 @@ var Sizzle = function(selector, context, results, seed) {
 	return results;
 };
 
-Sizzle.uniqueSort = function(results){
+Sizzle.uniqueSort = function( results ) {
 	if ( sortOrder ) {
 		hasDuplicate = baseHasDuplicate;
-		results.sort(sortOrder);
+		results.sort( sortOrder );
 
 		if ( hasDuplicate ) {
 			for ( var i = 1; i < results.length; i++ ) {
-				if ( results[i] === results[i-1] ) {
-					results.splice(i--, 1);
+				if ( results[i] === results[ i - 1 ] ) {
+					results.splice( i--, 1 );
 				}
 			}
 		}
@@ -2783,27 +3886,33 @@ Sizzle.uniqueSort = function(results){
 	return results;
 };
 
-Sizzle.matches = function(expr, set){
-	return Sizzle(expr, null, null, set);
+Sizzle.matches = function( expr, set ) {
+	return Sizzle( expr, null, null, set );
 };
 
-Sizzle.find = function(expr, context, isXML){
-	var set, match;
+Sizzle.matchesSelector = function( node, expr ) {
+	return Sizzle( expr, null, null, [node] ).length > 0;
+};
+
+Sizzle.find = function( expr, context, isXML ) {
+	var set;
 
 	if ( !expr ) {
 		return [];
 	}
 
 	for ( var i = 0, l = Expr.order.length; i < l; i++ ) {
-		var type = Expr.order[i], match;
+		var match,
+			type = Expr.order[i];
 		
 		if ( (match = Expr.leftMatch[ type ].exec( expr )) ) {
 			var left = match[1];
-			match.splice(1,1);
+			match.splice( 1, 1 );
 
 			if ( left.substr( left.length - 1 ) !== "\\" ) {
-				match[1] = (match[1] || "").replace(/\\/g, "");
+				match[1] = (match[1] || "").replace( rBackslash, "" );
 				set = Expr.find[ type ]( match, context, isXML );
+
 				if ( set != null ) {
 					expr = expr.replace( Expr.match[ type ], "" );
 					break;
@@ -2813,20 +3922,28 @@ Sizzle.find = function(expr, context, isXML){
 	}
 
 	if ( !set ) {
-		set = context.getElementsByTagName("*");
+		set = typeof context.getElementsByTagName !== "undefined" ?
+			context.getElementsByTagName( "*" ) :
+			[];
 	}
 
-	return {set: set, expr: expr};
+	return { set: set, expr: expr };
 };
 
-Sizzle.filter = function(expr, set, inplace, not){
-	var old = expr, result = [], curLoop = set, match, anyFound,
-		isXMLFilter = set && set[0] && isXML(set[0]);
+Sizzle.filter = function( expr, set, inplace, not ) {
+	var match, anyFound,
+		old = expr,
+		result = [],
+		curLoop = set,
+		isXMLFilter = set && set[0] && Sizzle.isXML( set[0] );
 
 	while ( expr && set.length ) {
 		for ( var type in Expr.filter ) {
 			if ( (match = Expr.leftMatch[ type ].exec( expr )) != null && match[2] ) {
-				var filter = Expr.filter[ type ], found, item, left = match[1];
+				var found, item,
+					filter = Expr.filter[ type ],
+					left = match[1];
+
 				anyFound = false;
 
 				match.splice(1,1);
@@ -2844,6 +3961,7 @@ Sizzle.filter = function(expr, set, inplace, not){
 
 					if ( !match ) {
 						anyFound = found = true;
+
 					} else if ( match === true ) {
 						continue;
 					}
@@ -2858,9 +3976,11 @@ Sizzle.filter = function(expr, set, inplace, not){
 							if ( inplace && found != null ) {
 								if ( pass ) {
 									anyFound = true;
+
 								} else {
 									curLoop[i] = false;
 								}
+
 							} else if ( pass ) {
 								result.push( item );
 								anyFound = true;
@@ -2889,6 +4009,7 @@ Sizzle.filter = function(expr, set, inplace, not){
 		if ( expr === old ) {
 			if ( anyFound == null ) {
 				Sizzle.error( expr );
+
 			} else {
 				break;
 			}
@@ -2906,30 +4027,38 @@ Sizzle.error = function( msg ) {
 
 var Expr = Sizzle.selectors = {
 	order: [ "ID", "NAME", "TAG" ],
+
 	match: {
-		ID: /#((?:[\w\u00c0-\uFFFF-]|\\.)+)/,
-		CLASS: /\.((?:[\w\u00c0-\uFFFF-]|\\.)+)/,
-		NAME: /\[name=['"]*((?:[\w\u00c0-\uFFFF-]|\\.)+)['"]*\]/,
-		ATTR: /\[\s*((?:[\w\u00c0-\uFFFF-]|\\.)+)\s*(?:(\S?=)\s*(['"]*)(.*?)\3|)\s*\]/,
-		TAG: /^((?:[\w\u00c0-\uFFFF\*-]|\\.)+)/,
-		CHILD: /:(only|nth|last|first)-child(?:\((even|odd|[\dn+-]*)\))?/,
-		POS: /:(nth|eq|gt|lt|first|last|even|odd)(?:\((\d*)\))?(?=[^-]|$)/,
-		PSEUDO: /:((?:[\w\u00c0-\uFFFF-]|\\.)+)(?:\((['"]?)((?:\([^\)]+\)|[^\(\)]*)+)\2\))?/
+		ID: /#((?:[\w\u00c0-\uFFFF\-]|\\.)+)/,
+		CLASS: /\.((?:[\w\u00c0-\uFFFF\-]|\\.)+)/,
+		NAME: /\[name=['"]*((?:[\w\u00c0-\uFFFF\-]|\\.)+)['"]*\]/,
+		ATTR: /\[\s*((?:[\w\u00c0-\uFFFF\-]|\\.)+)\s*(?:(\S?=)\s*(?:(['"])(.*?)\3|(#?(?:[\w\u00c0-\uFFFF\-]|\\.)*)|)|)\s*\]/,
+		TAG: /^((?:[\w\u00c0-\uFFFF\*\-]|\\.)+)/,
+		CHILD: /:(only|nth|last|first)-child(?:\(\s*(even|odd|(?:[+\-]?\d+|(?:[+\-]?\d*)?n\s*(?:[+\-]\s*\d+)?))\s*\))?/,
+		POS: /:(nth|eq|gt|lt|first|last|even|odd)(?:\((\d*)\))?(?=[^\-]|$)/,
+		PSEUDO: /:((?:[\w\u00c0-\uFFFF\-]|\\.)+)(?:\((['"]?)((?:\([^\)]+\)|[^\(\)]*)+)\2\))?/
 	},
+
 	leftMatch: {},
+
 	attrMap: {
 		"class": "className",
 		"for": "htmlFor"
 	},
+
 	attrHandle: {
-		href: function(elem){
-			return elem.getAttribute("href");
+		href: function( elem ) {
+			return elem.getAttribute( "href" );
+		},
+		type: function( elem ) {
+			return elem.getAttribute( "type" );
 		}
 	},
+
 	relative: {
 		"+": function(checkSet, part){
 			var isPartStr = typeof part === "string",
-				isTag = isPartStr && !/\W/.test(part),
+				isTag = isPartStr && !rNonWord.test( part ),
 				isPartStrNotTag = isPartStr && !isTag;
 
 			if ( isTag ) {
@@ -2950,22 +4079,29 @@ var Expr = Sizzle.selectors = {
 				Sizzle.filter( part, checkSet, true );
 			}
 		},
-		">": function(checkSet, part){
-			var isPartStr = typeof part === "string";
 
-			if ( isPartStr && !/\W/.test(part) ) {
+		">": function( checkSet, part ) {
+			var elem,
+				isPartStr = typeof part === "string",
+				i = 0,
+				l = checkSet.length;
+
+			if ( isPartStr && !rNonWord.test( part ) ) {
 				part = part.toLowerCase();
 
-				for ( var i = 0, l = checkSet.length; i < l; i++ ) {
-					var elem = checkSet[i];
+				for ( ; i < l; i++ ) {
+					elem = checkSet[i];
+
 					if ( elem ) {
 						var parent = elem.parentNode;
 						checkSet[i] = parent.nodeName.toLowerCase() === part ? parent : false;
 					}
 				}
+
 			} else {
-				for ( var i = 0, l = checkSet.length; i < l; i++ ) {
-					var elem = checkSet[i];
+				for ( ; i < l; i++ ) {
+					elem = checkSet[i];
+
 					if ( elem ) {
 						checkSet[i] = isPartStr ?
 							elem.parentNode :
@@ -2978,37 +4114,50 @@ var Expr = Sizzle.selectors = {
 				}
 			}
 		},
+
 		"": function(checkSet, part, isXML){
-			var doneName = done++, checkFn = dirCheck;
+			var nodeCheck,
+				doneName = done++,
+				checkFn = dirCheck;
 
-			if ( typeof part === "string" && !/\W/.test(part) ) {
-				var nodeCheck = part = part.toLowerCase();
+			if ( typeof part === "string" && !rNonWord.test( part ) ) {
+				part = part.toLowerCase();
+				nodeCheck = part;
 				checkFn = dirNodeCheck;
 			}
 
-			checkFn("parentNode", part, doneName, checkSet, nodeCheck, isXML);
+			checkFn( "parentNode", part, doneName, checkSet, nodeCheck, isXML );
 		},
-		"~": function(checkSet, part, isXML){
-			var doneName = done++, checkFn = dirCheck;
 
-			if ( typeof part === "string" && !/\W/.test(part) ) {
-				var nodeCheck = part = part.toLowerCase();
+		"~": function( checkSet, part, isXML ) {
+			var nodeCheck,
+				doneName = done++,
+				checkFn = dirCheck;
+
+			if ( typeof part === "string" && !rNonWord.test( part ) ) {
+				part = part.toLowerCase();
+				nodeCheck = part;
 				checkFn = dirNodeCheck;
 			}
 
-			checkFn("previousSibling", part, doneName, checkSet, nodeCheck, isXML);
+			checkFn( "previousSibling", part, doneName, checkSet, nodeCheck, isXML );
 		}
 	},
+
 	find: {
-		ID: function(match, context, isXML){
+		ID: function( match, context, isXML ) {
 			if ( typeof context.getElementById !== "undefined" && !isXML ) {
 				var m = context.getElementById(match[1]);
-				return m ? [m] : [];
+				// Check parentNode to catch when Blackberry 4.6 returns
+				// nodes that are no longer in the document #6963
+				return m && m.parentNode ? [m] : [];
 			}
 		},
-		NAME: function(match, context){
+
+		NAME: function( match, context ) {
 			if ( typeof context.getElementsByName !== "undefined" ) {
-				var ret = [], results = context.getElementsByName(match[1]);
+				var ret = [],
+					results = context.getElementsByName( match[1] );
 
 				for ( var i = 0, l = results.length; i < l; i++ ) {
 					if ( results[i].getAttribute("name") === match[1] ) {
@@ -3019,13 +4168,16 @@ var Expr = Sizzle.selectors = {
 				return ret.length === 0 ? null : ret;
 			}
 		},
-		TAG: function(match, context){
-			return context.getElementsByTagName(match[1]);
+
+		TAG: function( match, context ) {
+			if ( typeof context.getElementsByTagName !== "undefined" ) {
+				return context.getElementsByTagName( match[1] );
+			}
 		}
 	},
 	preFilter: {
-		CLASS: function(match, curLoop, inplace, result, not, isXML){
-			match = " " + match[1].replace(/\\/g, "") + " ";
+		CLASS: function( match, curLoop, inplace, result, not, isXML ) {
+			match = " " + match[1].replace( rBackslash, "" ) + " ";
 
 			if ( isXML ) {
 				return match;
@@ -3033,10 +4185,11 @@ var Expr = Sizzle.selectors = {
 
 			for ( var i = 0, elem; (elem = curLoop[i]) != null; i++ ) {
 				if ( elem ) {
-					if ( not ^ (elem.className && (" " + elem.className + " ").replace(/[\t\n]/g, " ").indexOf(match) >= 0) ) {
+					if ( not ^ (elem.className && (" " + elem.className + " ").replace(/[\t\n\r]/g, " ").indexOf(match) >= 0) ) {
 						if ( !inplace ) {
 							result.push( elem );
 						}
+
 					} else if ( inplace ) {
 						curLoop[i] = false;
 					}
@@ -3045,16 +4198,25 @@ var Expr = Sizzle.selectors = {
 
 			return false;
 		},
-		ID: function(match){
-			return match[1].replace(/\\/g, "");
+
+		ID: function( match ) {
+			return match[1].replace( rBackslash, "" );
 		},
-		TAG: function(match, curLoop){
-			return match[1].toLowerCase();
+
+		TAG: function( match, curLoop ) {
+			return match[1].replace( rBackslash, "" ).toLowerCase();
 		},
-		CHILD: function(match){
+
+		CHILD: function( match ) {
 			if ( match[1] === "nth" ) {
+				if ( !match[2] ) {
+					Sizzle.error( match[0] );
+				}
+
+				match[2] = match[2].replace(/^\+|\s*/g, '');
+
 				// parse equations like 'even', 'odd', '5', '2n', '3n+2', '4n-1', '-n+6'
-				var test = /(-?)(\d*)n((?:\+|-)?\d*)/.exec(
+				var test = /(-?)(\d*)(?:n([+\-]?\d*))?/.exec(
 					match[2] === "even" && "2n" || match[2] === "odd" && "2n+1" ||
 					!/\D/.test( match[2] ) && "0n+" + match[2] || match[2]);
 
@@ -3062,18 +4224,25 @@ var Expr = Sizzle.selectors = {
 				match[2] = (test[1] + (test[2] || 1)) - 0;
 				match[3] = test[3] - 0;
 			}
+			else if ( match[2] ) {
+				Sizzle.error( match[0] );
+			}
 
 			// TODO: Move to normal caching system
 			match[0] = done++;
 
 			return match;
 		},
-		ATTR: function(match, curLoop, inplace, result, not, isXML){
-			var name = match[1].replace(/\\/g, "");
+
+		ATTR: function( match, curLoop, inplace, result, not, isXML ) {
+			var name = match[1] = match[1].replace( rBackslash, "" );
 			
 			if ( !isXML && Expr.attrMap[name] ) {
 				match[1] = Expr.attrMap[name];
 			}
+
+			// Handle if an un-quoted value was used
+			match[4] = ( match[4] || match[5] || "" ).replace( rBackslash, "" );
 
 			if ( match[2] === "~=" ) {
 				match[4] = " " + match[4] + " ";
@@ -3081,159 +4250,217 @@ var Expr = Sizzle.selectors = {
 
 			return match;
 		},
-		PSEUDO: function(match, curLoop, inplace, result, not){
+
+		PSEUDO: function( match, curLoop, inplace, result, not ) {
 			if ( match[1] === "not" ) {
 				// If we're dealing with a complex expression, or a simple one
 				if ( ( chunker.exec(match[3]) || "" ).length > 1 || /^\w/.test(match[3]) ) {
 					match[3] = Sizzle(match[3], null, null, curLoop);
+
 				} else {
 					var ret = Sizzle.filter(match[3], curLoop, inplace, true ^ not);
+
 					if ( !inplace ) {
 						result.push.apply( result, ret );
 					}
+
 					return false;
 				}
+
 			} else if ( Expr.match.POS.test( match[0] ) || Expr.match.CHILD.test( match[0] ) ) {
 				return true;
 			}
 			
 			return match;
 		},
-		POS: function(match){
+
+		POS: function( match ) {
 			match.unshift( true );
+
 			return match;
 		}
 	},
+	
 	filters: {
-		enabled: function(elem){
+		enabled: function( elem ) {
 			return elem.disabled === false && elem.type !== "hidden";
 		},
-		disabled: function(elem){
+
+		disabled: function( elem ) {
 			return elem.disabled === true;
 		},
-		checked: function(elem){
+
+		checked: function( elem ) {
 			return elem.checked === true;
 		},
-		selected: function(elem){
+		
+		selected: function( elem ) {
 			// Accessing this property makes selected-by-default
 			// options in Safari work properly
-			elem.parentNode.selectedIndex;
+			if ( elem.parentNode ) {
+				elem.parentNode.selectedIndex;
+			}
+			
 			return elem.selected === true;
 		},
-		parent: function(elem){
+
+		parent: function( elem ) {
 			return !!elem.firstChild;
 		},
-		empty: function(elem){
+
+		empty: function( elem ) {
 			return !elem.firstChild;
 		},
-		has: function(elem, i, match){
+
+		has: function( elem, i, match ) {
 			return !!Sizzle( match[3], elem ).length;
 		},
-		header: function(elem){
-			return /h\d/i.test( elem.nodeName );
+
+		header: function( elem ) {
+			return (/h\d/i).test( elem.nodeName );
 		},
-		text: function(elem){
-			return "text" === elem.type;
+
+		text: function( elem ) {
+			var attr = elem.getAttribute( "type" ), type = elem.type;
+			// IE6 and 7 will map elem.type to 'text' for new HTML5 types (search, etc) 
+			// use getAttribute instead to test this case
+			return elem.nodeName.toLowerCase() === "input" && "text" === type && ( attr === type || attr === null );
 		},
-		radio: function(elem){
-			return "radio" === elem.type;
+
+		radio: function( elem ) {
+			return elem.nodeName.toLowerCase() === "input" && "radio" === elem.type;
 		},
-		checkbox: function(elem){
-			return "checkbox" === elem.type;
+
+		checkbox: function( elem ) {
+			return elem.nodeName.toLowerCase() === "input" && "checkbox" === elem.type;
 		},
-		file: function(elem){
-			return "file" === elem.type;
+
+		file: function( elem ) {
+			return elem.nodeName.toLowerCase() === "input" && "file" === elem.type;
 		},
-		password: function(elem){
-			return "password" === elem.type;
+
+		password: function( elem ) {
+			return elem.nodeName.toLowerCase() === "input" && "password" === elem.type;
 		},
-		submit: function(elem){
-			return "submit" === elem.type;
+
+		submit: function( elem ) {
+			var name = elem.nodeName.toLowerCase();
+			return (name === "input" || name === "button") && "submit" === elem.type;
 		},
-		image: function(elem){
-			return "image" === elem.type;
+
+		image: function( elem ) {
+			return elem.nodeName.toLowerCase() === "input" && "image" === elem.type;
 		},
-		reset: function(elem){
-			return "reset" === elem.type;
+
+		reset: function( elem ) {
+			var name = elem.nodeName.toLowerCase();
+			return (name === "input" || name === "button") && "reset" === elem.type;
 		},
-		button: function(elem){
-			return "button" === elem.type || elem.nodeName.toLowerCase() === "button";
+
+		button: function( elem ) {
+			var name = elem.nodeName.toLowerCase();
+			return name === "input" && "button" === elem.type || name === "button";
 		},
-		input: function(elem){
-			return /input|select|textarea|button/i.test(elem.nodeName);
+
+		input: function( elem ) {
+			return (/input|select|textarea|button/i).test( elem.nodeName );
+		},
+
+		focus: function( elem ) {
+			return elem === elem.ownerDocument.activeElement;
 		}
 	},
 	setFilters: {
-		first: function(elem, i){
+		first: function( elem, i ) {
 			return i === 0;
 		},
-		last: function(elem, i, match, array){
+
+		last: function( elem, i, match, array ) {
 			return i === array.length - 1;
 		},
-		even: function(elem, i){
+
+		even: function( elem, i ) {
 			return i % 2 === 0;
 		},
-		odd: function(elem, i){
+
+		odd: function( elem, i ) {
 			return i % 2 === 1;
 		},
-		lt: function(elem, i, match){
+
+		lt: function( elem, i, match ) {
 			return i < match[3] - 0;
 		},
-		gt: function(elem, i, match){
+
+		gt: function( elem, i, match ) {
 			return i > match[3] - 0;
 		},
-		nth: function(elem, i, match){
+
+		nth: function( elem, i, match ) {
 			return match[3] - 0 === i;
 		},
-		eq: function(elem, i, match){
+
+		eq: function( elem, i, match ) {
 			return match[3] - 0 === i;
 		}
 	},
 	filter: {
-		PSEUDO: function(elem, match, i, array){
-			var name = match[1], filter = Expr.filters[ name ];
+		PSEUDO: function( elem, match, i, array ) {
+			var name = match[1],
+				filter = Expr.filters[ name ];
 
 			if ( filter ) {
 				return filter( elem, i, match, array );
+
 			} else if ( name === "contains" ) {
-				return (elem.textContent || elem.innerText || getText([ elem ]) || "").indexOf(match[3]) >= 0;
+				return (elem.textContent || elem.innerText || Sizzle.getText([ elem ]) || "").indexOf(match[3]) >= 0;
+
 			} else if ( name === "not" ) {
 				var not = match[3];
 
-				for ( var i = 0, l = not.length; i < l; i++ ) {
-					if ( not[i] === elem ) {
+				for ( var j = 0, l = not.length; j < l; j++ ) {
+					if ( not[j] === elem ) {
 						return false;
 					}
 				}
 
 				return true;
+
 			} else {
-				Sizzle.error( "Syntax error, unrecognized expression: " + name );
+				Sizzle.error( name );
 			}
 		},
-		CHILD: function(elem, match){
-			var type = match[1], node = elem;
-			switch (type) {
-				case 'only':
-				case 'first':
+
+		CHILD: function( elem, match ) {
+			var type = match[1],
+				node = elem;
+
+			switch ( type ) {
+				case "only":
+				case "first":
 					while ( (node = node.previousSibling) )	 {
 						if ( node.nodeType === 1 ) { 
 							return false; 
 						}
 					}
+
 					if ( type === "first" ) { 
 						return true; 
 					}
+
 					node = elem;
-				case 'last':
+
+				case "last":
 					while ( (node = node.nextSibling) )	 {
 						if ( node.nodeType === 1 ) { 
 							return false; 
 						}
 					}
+
 					return true;
-				case 'nth':
-					var first = match[2], last = match[3];
+
+				case "nth":
+					var first = match[2],
+						last = match[3];
 
 					if ( first === 1 && last === 0 ) {
 						return true;
@@ -3244,33 +4471,41 @@ var Expr = Sizzle.selectors = {
 	
 					if ( parent && (parent.sizcache !== doneName || !elem.nodeIndex) ) {
 						var count = 0;
+						
 						for ( node = parent.firstChild; node; node = node.nextSibling ) {
 							if ( node.nodeType === 1 ) {
 								node.nodeIndex = ++count;
 							}
 						} 
+
 						parent.sizcache = doneName;
 					}
 					
 					var diff = elem.nodeIndex - last;
+
 					if ( first === 0 ) {
 						return diff === 0;
+
 					} else {
 						return ( diff % first === 0 && diff / first >= 0 );
 					}
 			}
 		},
-		ID: function(elem, match){
+
+		ID: function( elem, match ) {
 			return elem.nodeType === 1 && elem.getAttribute("id") === match;
 		},
-		TAG: function(elem, match){
+
+		TAG: function( elem, match ) {
 			return (match === "*" && elem.nodeType === 1) || elem.nodeName.toLowerCase() === match;
 		},
-		CLASS: function(elem, match){
+		
+		CLASS: function( elem, match ) {
 			return (" " + (elem.className || elem.getAttribute("class")) + " ")
 				.indexOf( match ) > -1;
 		},
-		ATTR: function(elem, match){
+
+		ATTR: function( elem, match ) {
 			var name = match[1],
 				result = Expr.attrHandle[ name ] ?
 					Expr.attrHandle[ name ]( elem ) :
@@ -3301,8 +4536,10 @@ var Expr = Sizzle.selectors = {
 				value === check || value.substr(0, check.length + 1) === check + "-" :
 				false;
 		},
-		POS: function(elem, match, i, array){
-			var name = match[2], filter = Expr.setFilters[ name ];
+
+		POS: function( elem, match, i, array ) {
+			var name = match[2],
+				filter = Expr.setFilters[ name ];
 
 			if ( filter ) {
 				return filter( elem, i, match, array );
@@ -3311,16 +4548,17 @@ var Expr = Sizzle.selectors = {
 	}
 };
 
-var origPOS = Expr.match.POS;
+var origPOS = Expr.match.POS,
+	fescape = function(all, num){
+		return "\\" + (num - 0 + 1);
+	};
 
 for ( var type in Expr.match ) {
-	Expr.match[ type ] = new RegExp( Expr.match[ type ].source + /(?![^\[]*\])(?![^\(]*\))/.source );
-	Expr.leftMatch[ type ] = new RegExp( /(^(?:.|\r|\n)*?)/.source + Expr.match[ type ].source.replace(/\\(\d+)/g, function(all, num){
-		return "\\" + (num - 0 + 1);
-	}));
+	Expr.match[ type ] = new RegExp( Expr.match[ type ].source + (/(?![^\[]*\])(?![^\(]*\))/.source) );
+	Expr.leftMatch[ type ] = new RegExp( /(^(?:.|\r|\n)*?)/.source + Expr.match[ type ].source.replace(/\\(\d+)/g, fescape) );
 }
 
-var makeArray = function(array, results) {
+var makeArray = function( array, results ) {
 	array = Array.prototype.slice.call( array, 0 );
 
 	if ( results ) {
@@ -3339,19 +4577,22 @@ try {
 	Array.prototype.slice.call( document.documentElement.childNodes, 0 )[0].nodeType;
 
 // Provide a fallback method if it does not work
-} catch(e){
-	makeArray = function(array, results) {
-		var ret = results || [];
+} catch( e ) {
+	makeArray = function( array, results ) {
+		var i = 0,
+			ret = results || [];
 
 		if ( toString.call(array) === "[object Array]" ) {
 			Array.prototype.push.apply( ret, array );
+
 		} else {
 			if ( typeof array.length === "number" ) {
-				for ( var i = 0, l = array.length; i < l; i++ ) {
+				for ( var l = array.length; i < l; i++ ) {
 					ret.push( array[i] );
 				}
+
 			} else {
-				for ( var i = 0; array[i]; i++ ) {
+				for ( ; array[i]; i++ ) {
 					ret.push( array[i] );
 				}
 			}
@@ -3361,62 +4602,104 @@ try {
 	};
 }
 
-var sortOrder;
+var sortOrder, siblingCheck;
 
 if ( document.documentElement.compareDocumentPosition ) {
 	sortOrder = function( a, b ) {
+		if ( a === b ) {
+			hasDuplicate = true;
+			return 0;
+		}
+
 		if ( !a.compareDocumentPosition || !b.compareDocumentPosition ) {
-			if ( a == b ) {
-				hasDuplicate = true;
-			}
 			return a.compareDocumentPosition ? -1 : 1;
 		}
 
-		var ret = a.compareDocumentPosition(b) & 4 ? -1 : a === b ? 0 : 1;
-		if ( ret === 0 ) {
-			hasDuplicate = true;
-		}
-		return ret;
+		return a.compareDocumentPosition(b) & 4 ? -1 : 1;
 	};
-} else if ( "sourceIndex" in document.documentElement ) {
+
+} else {
 	sortOrder = function( a, b ) {
-		if ( !a.sourceIndex || !b.sourceIndex ) {
-			if ( a == b ) {
-				hasDuplicate = true;
-			}
-			return a.sourceIndex ? -1 : 1;
+		// The nodes are identical, we can exit early
+		if ( a === b ) {
+			hasDuplicate = true;
+			return 0;
+
+		// Fallback to using sourceIndex (in IE) if it's available on both nodes
+		} else if ( a.sourceIndex && b.sourceIndex ) {
+			return a.sourceIndex - b.sourceIndex;
 		}
 
-		var ret = a.sourceIndex - b.sourceIndex;
-		if ( ret === 0 ) {
-			hasDuplicate = true;
-		}
-		return ret;
-	};
-} else if ( document.createRange ) {
-	sortOrder = function( a, b ) {
-		if ( !a.ownerDocument || !b.ownerDocument ) {
-			if ( a == b ) {
-				hasDuplicate = true;
-			}
-			return a.ownerDocument ? -1 : 1;
+		var al, bl,
+			ap = [],
+			bp = [],
+			aup = a.parentNode,
+			bup = b.parentNode,
+			cur = aup;
+
+		// If the nodes are siblings (or identical) we can do a quick check
+		if ( aup === bup ) {
+			return siblingCheck( a, b );
+
+		// If no parents were found then the nodes are disconnected
+		} else if ( !aup ) {
+			return -1;
+
+		} else if ( !bup ) {
+			return 1;
 		}
 
-		var aRange = a.ownerDocument.createRange(), bRange = b.ownerDocument.createRange();
-		aRange.setStart(a, 0);
-		aRange.setEnd(a, 0);
-		bRange.setStart(b, 0);
-		bRange.setEnd(b, 0);
-		var ret = aRange.compareBoundaryPoints(Range.START_TO_END, bRange);
-		if ( ret === 0 ) {
-			hasDuplicate = true;
+		// Otherwise they're somewhere else in the tree so we need
+		// to build up a full list of the parentNodes for comparison
+		while ( cur ) {
+			ap.unshift( cur );
+			cur = cur.parentNode;
 		}
-		return ret;
+
+		cur = bup;
+
+		while ( cur ) {
+			bp.unshift( cur );
+			cur = cur.parentNode;
+		}
+
+		al = ap.length;
+		bl = bp.length;
+
+		// Start walking down the tree looking for a discrepancy
+		for ( var i = 0; i < al && i < bl; i++ ) {
+			if ( ap[i] !== bp[i] ) {
+				return siblingCheck( ap[i], bp[i] );
+			}
+		}
+
+		// We ended someplace up the tree so do a sibling check
+		return i === al ?
+			siblingCheck( a, bp[i], -1 ) :
+			siblingCheck( ap[i], b, 1 );
+	};
+
+	siblingCheck = function( a, b, ret ) {
+		if ( a === b ) {
+			return ret;
+		}
+
+		var cur = a.nextSibling;
+
+		while ( cur ) {
+			if ( cur === b ) {
+				return -1;
+			}
+
+			cur = cur.nextSibling;
+		}
+
+		return 1;
 	};
 }
 
 // Utility function for retreiving the text value of an array of DOM nodes
-function getText( elems ) {
+Sizzle.getText = function( elems ) {
 	var ret = "", elem;
 
 	for ( var i = 0; elems[i]; i++ ) {
@@ -3428,43 +4711,52 @@ function getText( elems ) {
 
 		// Traverse everything else, except comment nodes
 		} else if ( elem.nodeType !== 8 ) {
-			ret += getText( elem.childNodes );
+			ret += Sizzle.getText( elem.childNodes );
 		}
 	}
 
 	return ret;
-}
+};
 
 // Check to see if the browser returns elements by name when
 // querying by getElementById (and provide a workaround)
 (function(){
 	// We're going to inject a fake input element with a specified name
 	var form = document.createElement("div"),
-		id = "script" + (new Date).getTime();
+		id = "script" + (new Date()).getTime(),
+		root = document.documentElement;
+
 	form.innerHTML = "<a name='" + id + "'/>";
 
 	// Inject it into the root element, check its status, and remove it quickly
-	var root = document.documentElement;
 	root.insertBefore( form, root.firstChild );
 
 	// The workaround has to do additional checks after a getElementById
 	// Which slows things down for other browsers (hence the branching)
 	if ( document.getElementById( id ) ) {
-		Expr.find.ID = function(match, context, isXML){
+		Expr.find.ID = function( match, context, isXML ) {
 			if ( typeof context.getElementById !== "undefined" && !isXML ) {
 				var m = context.getElementById(match[1]);
-				return m ? m.id === match[1] || typeof m.getAttributeNode !== "undefined" && m.getAttributeNode("id").nodeValue === match[1] ? [m] : undefined : [];
+
+				return m ?
+					m.id === match[1] || typeof m.getAttributeNode !== "undefined" && m.getAttributeNode("id").nodeValue === match[1] ?
+						[m] :
+						undefined :
+					[];
 			}
 		};
 
-		Expr.filter.ID = function(elem, match){
+		Expr.filter.ID = function( elem, match ) {
 			var node = typeof elem.getAttributeNode !== "undefined" && elem.getAttributeNode("id");
+
 			return elem.nodeType === 1 && node && node.nodeValue === match;
 		};
 	}
 
 	root.removeChild( form );
-	root = form = null; // release memory in IE
+
+	// release memory in IE
+	root = form = null;
 })();
 
 (function(){
@@ -3477,8 +4769,8 @@ function getText( elems ) {
 
 	// Make sure no comments are found
 	if ( div.getElementsByTagName("*").length > 0 ) {
-		Expr.find.TAG = function(match, context){
-			var results = context.getElementsByTagName(match[1]);
+		Expr.find.TAG = function( match, context ) {
+			var results = context.getElementsByTagName( match[1] );
 
 			// Filter out possible comments
 			if ( match[1] === "*" ) {
@@ -3499,19 +4791,25 @@ function getText( elems ) {
 
 	// Check to see if an attribute returns normalized href attributes
 	div.innerHTML = "<a href='#'></a>";
+
 	if ( div.firstChild && typeof div.firstChild.getAttribute !== "undefined" &&
 			div.firstChild.getAttribute("href") !== "#" ) {
-		Expr.attrHandle.href = function(elem){
-			return elem.getAttribute("href", 2);
+
+		Expr.attrHandle.href = function( elem ) {
+			return elem.getAttribute( "href", 2 );
 		};
 	}
 
-	div = null; // release memory in IE
+	// release memory in IE
+	div = null;
 })();
 
 if ( document.querySelectorAll ) {
 	(function(){
-		var oldSizzle = Sizzle, div = document.createElement("div");
+		var oldSizzle = Sizzle,
+			div = document.createElement("div"),
+			id = "__sizzle__";
+
 		div.innerHTML = "<p class='TEST'></p>";
 
 		// Safari can't handle uppercase or unicode characters when
@@ -3520,15 +4818,86 @@ if ( document.querySelectorAll ) {
 			return;
 		}
 	
-		Sizzle = function(query, context, extra, seed){
+		Sizzle = function( query, context, extra, seed ) {
 			context = context || document;
 
 			// Only use querySelectorAll on non-XML documents
 			// (ID selectors don't work in non-HTML documents)
-			if ( !seed && context.nodeType === 9 && !isXML(context) ) {
-				try {
-					return makeArray( context.querySelectorAll(query), extra );
-				} catch(e){}
+			if ( !seed && !Sizzle.isXML(context) ) {
+				// See if we find a selector to speed up
+				var match = /^(\w+$)|^\.([\w\-]+$)|^#([\w\-]+$)/.exec( query );
+				
+				if ( match && (context.nodeType === 1 || context.nodeType === 9) ) {
+					// Speed-up: Sizzle("TAG")
+					if ( match[1] ) {
+						return makeArray( context.getElementsByTagName( query ), extra );
+					
+					// Speed-up: Sizzle(".CLASS")
+					} else if ( match[2] && Expr.find.CLASS && context.getElementsByClassName ) {
+						return makeArray( context.getElementsByClassName( match[2] ), extra );
+					}
+				}
+				
+				if ( context.nodeType === 9 ) {
+					// Speed-up: Sizzle("body")
+					// The body element only exists once, optimize finding it
+					if ( query === "body" && context.body ) {
+						return makeArray( [ context.body ], extra );
+						
+					// Speed-up: Sizzle("#ID")
+					} else if ( match && match[3] ) {
+						var elem = context.getElementById( match[3] );
+
+						// Check parentNode to catch when Blackberry 4.6 returns
+						// nodes that are no longer in the document #6963
+						if ( elem && elem.parentNode ) {
+							// Handle the case where IE and Opera return items
+							// by name instead of ID
+							if ( elem.id === match[3] ) {
+								return makeArray( [ elem ], extra );
+							}
+							
+						} else {
+							return makeArray( [], extra );
+						}
+					}
+					
+					try {
+						return makeArray( context.querySelectorAll(query), extra );
+					} catch(qsaError) {}
+
+				// qSA works strangely on Element-rooted queries
+				// We can work around this by specifying an extra ID on the root
+				// and working up from there (Thanks to Andrew Dupont for the technique)
+				// IE 8 doesn't work on object elements
+				} else if ( context.nodeType === 1 && context.nodeName.toLowerCase() !== "object" ) {
+					var oldContext = context,
+						old = context.getAttribute( "id" ),
+						nid = old || id,
+						hasParent = context.parentNode,
+						relativeHierarchySelector = /^\s*[+~]/.test( query );
+
+					if ( !old ) {
+						context.setAttribute( "id", nid );
+					} else {
+						nid = nid.replace( /'/g, "\\$&" );
+					}
+					if ( relativeHierarchySelector && hasParent ) {
+						context = context.parentNode;
+					}
+
+					try {
+						if ( !relativeHierarchySelector || hasParent ) {
+							return makeArray( context.querySelectorAll( "[id='" + nid + "'] " + query ), extra );
+						}
+
+					} catch(pseudoError) {
+					} finally {
+						if ( !old ) {
+							oldContext.removeAttribute( "id" );
+						}
+					}
+				}
 			}
 		
 			return oldSizzle(query, context, extra, seed);
@@ -3538,9 +4907,54 @@ if ( document.querySelectorAll ) {
 			Sizzle[ prop ] = oldSizzle[ prop ];
 		}
 
-		div = null; // release memory in IE
+		// release memory in IE
+		div = null;
 	})();
 }
+
+(function(){
+	var html = document.documentElement,
+		matches = html.matchesSelector || html.mozMatchesSelector || html.webkitMatchesSelector || html.msMatchesSelector;
+
+	if ( matches ) {
+		// Check to see if it's possible to do matchesSelector
+		// on a disconnected node (IE 9 fails this)
+		var disconnectedMatch = !matches.call( document.createElement( "div" ), "div" ),
+			pseudoWorks = false;
+
+		try {
+			// This should fail with an exception
+			// Gecko does not error, returns false instead
+			matches.call( document.documentElement, "[test!='']:sizzle" );
+	
+		} catch( pseudoError ) {
+			pseudoWorks = true;
+		}
+
+		Sizzle.matchesSelector = function( node, expr ) {
+			// Make sure that attribute selectors are quoted
+			expr = expr.replace(/\=\s*([^'"\]]*)\s*\]/g, "='$1']");
+
+			if ( !Sizzle.isXML( node ) ) {
+				try { 
+					if ( pseudoWorks || !Expr.match.PSEUDO.test( expr ) && !/!=/.test( expr ) ) {
+						var ret = matches.call( node, expr );
+
+						// IE 9's matchesSelector returns false on disconnected nodes
+						if ( ret || !disconnectedMatch ||
+								// As well, disconnected nodes are said to be in a document
+								// fragment in IE 9, so check for that
+								node.document && node.document.nodeType !== 11 ) {
+							return ret;
+						}
+					}
+				} catch(e) {}
+			}
+
+			return Sizzle(expr, null, null, [node]).length > 0;
+		};
+	}
+})();
 
 (function(){
 	var div = document.createElement("div");
@@ -3561,21 +4975,24 @@ if ( document.querySelectorAll ) {
 	}
 	
 	Expr.order.splice(1, 0, "CLASS");
-	Expr.find.CLASS = function(match, context, isXML) {
+	Expr.find.CLASS = function( match, context, isXML ) {
 		if ( typeof context.getElementsByClassName !== "undefined" && !isXML ) {
 			return context.getElementsByClassName(match[1]);
 		}
 	};
 
-	div = null; // release memory in IE
+	// release memory in IE
+	div = null;
 })();
 
 function dirNodeCheck( dir, cur, doneName, checkSet, nodeCheck, isXML ) {
 	for ( var i = 0, l = checkSet.length; i < l; i++ ) {
 		var elem = checkSet[i];
+
 		if ( elem ) {
-			elem = elem[dir];
 			var match = false;
+
+			elem = elem[dir];
 
 			while ( elem ) {
 				if ( elem.sizcache === doneName ) {
@@ -3604,9 +5021,11 @@ function dirNodeCheck( dir, cur, doneName, checkSet, nodeCheck, isXML ) {
 function dirCheck( dir, cur, doneName, checkSet, nodeCheck, isXML ) {
 	for ( var i = 0, l = checkSet.length; i < l; i++ ) {
 		var elem = checkSet[i];
+
 		if ( elem ) {
-			elem = elem[dir];
 			var match = false;
+			
+			elem = elem[dir];
 
 			while ( elem ) {
 				if ( elem.sizcache === doneName ) {
@@ -3619,6 +5038,7 @@ function dirCheck( dir, cur, doneName, checkSet, nodeCheck, isXML ) {
 						elem.sizcache = doneName;
 						elem.sizset = i;
 					}
+
 					if ( typeof cur !== "string" ) {
 						if ( elem === cur ) {
 							match = true;
@@ -3639,21 +5059,34 @@ function dirCheck( dir, cur, doneName, checkSet, nodeCheck, isXML ) {
 	}
 }
 
-var contains = document.compareDocumentPosition ? function(a, b){
-	return !!(a.compareDocumentPosition(b) & 16);
-} : function(a, b){
-	return a !== b && (a.contains ? a.contains(b) : true);
-};
+if ( document.documentElement.contains ) {
+	Sizzle.contains = function( a, b ) {
+		return a !== b && (a.contains ? a.contains(b) : true);
+	};
 
-var isXML = function(elem){
+} else if ( document.documentElement.compareDocumentPosition ) {
+	Sizzle.contains = function( a, b ) {
+		return !!(a.compareDocumentPosition(b) & 16);
+	};
+
+} else {
+	Sizzle.contains = function() {
+		return false;
+	};
+}
+
+Sizzle.isXML = function( elem ) {
 	// documentElement is verified for cases where it doesn't yet exist
 	// (such as loading iframes in IE - #4833) 
 	var documentElement = (elem ? elem.ownerDocument || elem : 0).documentElement;
+
 	return documentElement ? documentElement.nodeName !== "HTML" : false;
 };
 
-var posProcess = function(selector, context){
-	var tmpSet = [], later = "", match,
+var posProcess = function( selector, context ) {
+	var match,
+		tmpSet = [],
+		later = "",
 		root = context.nodeType ? [context] : context;
 
 	// Position selectors must be done after the filter
@@ -3677,62 +5110,55 @@ jQuery.find = Sizzle;
 jQuery.expr = Sizzle.selectors;
 jQuery.expr[":"] = jQuery.expr.filters;
 jQuery.unique = Sizzle.uniqueSort;
-jQuery.text = getText;
-jQuery.isXMLDoc = isXML;
-jQuery.contains = contains;
+jQuery.text = Sizzle.getText;
+jQuery.isXMLDoc = Sizzle.isXML;
+jQuery.contains = Sizzle.contains;
 
-return;
-
-window.Sizzle = Sizzle;
 
 })();
+
+
 var runtil = /Until$/,
 	rparentsprev = /^(?:parents|prevUntil|prevAll)/,
 	// Note: This RegExp should be improved, or likely pulled from Sizzle
 	rmultiselector = /,/,
-	slice = Array.prototype.slice;
-
-// Implement the identical functionality for filter and not
-var winnow = function( elements, qualifier, keep ) {
-	if ( jQuery.isFunction( qualifier ) ) {
-		return jQuery.grep(elements, function( elem, i ) {
-			return !!qualifier.call( elem, i, elem ) === keep;
-		});
-
-	} else if ( qualifier.nodeType ) {
-		return jQuery.grep(elements, function( elem, i ) {
-			return (elem === qualifier) === keep;
-		});
-
-	} else if ( typeof qualifier === "string" ) {
-		var filtered = jQuery.grep(elements, function( elem ) {
-			return elem.nodeType === 1;
-		});
-
-		if ( isSimple.test( qualifier ) ) {
-			return jQuery.filter(qualifier, filtered, !keep);
-		} else {
-			qualifier = jQuery.filter( qualifier, filtered );
-		}
-	}
-
-	return jQuery.grep(elements, function( elem, i ) {
-		return (jQuery.inArray( elem, qualifier ) >= 0) === keep;
-	});
-};
+	isSimple = /^.[^:#\[\.,]*$/,
+	slice = Array.prototype.slice,
+	POS = jQuery.expr.match.POS,
+	// methods guaranteed to produce a unique set when starting from a unique set
+	guaranteedUnique = {
+		children: true,
+		contents: true,
+		next: true,
+		prev: true
+	};
 
 jQuery.fn.extend({
 	find: function( selector ) {
-		var ret = this.pushStack( "", "find", selector ), length = 0;
+		var self = this,
+			i, l;
 
-		for ( var i = 0, l = this.length; i < l; i++ ) {
+		if ( typeof selector !== "string" ) {
+			return jQuery( selector ).filter(function() {
+				for ( i = 0, l = self.length; i < l; i++ ) {
+					if ( jQuery.contains( self[ i ], this ) ) {
+						return true;
+					}
+				}
+			});
+		}
+
+		var ret = this.pushStack( "", "find", selector ),
+			length, n, r;
+
+		for ( i = 0, l = this.length; i < l; i++ ) {
 			length = ret.length;
 			jQuery.find( selector, this[i], ret );
 
 			if ( i > 0 ) {
 				// Make sure that the results are unique
-				for ( var n = length; n < ret.length; n++ ) {
-					for ( var r = 0; r < length; r++ ) {
+				for ( n = length; n < ret.length; n++ ) {
+					for ( r = 0; r < length; r++ ) {
 						if ( ret[r] === ret[n] ) {
 							ret.splice(n--, 1);
 							break;
@@ -3763,21 +5189,28 @@ jQuery.fn.extend({
 	filter: function( selector ) {
 		return this.pushStack( winnow(this, selector, true), "filter", selector );
 	},
-	
+
 	is: function( selector ) {
-		return !!selector && jQuery.filter( selector, this ).length > 0;
+		return !!selector && ( typeof selector === "string" ?
+			jQuery.filter( selector, this ).length > 0 :
+			this.filter( selector ).length > 0 );
 	},
 
 	closest: function( selectors, context ) {
+		var ret = [], i, l, cur = this[0];
+		
+		// Array
 		if ( jQuery.isArray( selectors ) ) {
-			var ret = [], cur = this[0], match, matches = {}, selector;
+			var match, selector,
+				matches = {},
+				level = 1;
 
 			if ( cur && selectors.length ) {
-				for ( var i = 0, l = selectors.length; i < l; i++ ) {
+				for ( i = 0, l = selectors.length; i < l; i++ ) {
 					selector = selectors[i];
 
-					if ( !matches[selector] ) {
-						matches[selector] = jQuery.expr.match.POS.test( selector ) ? 
+					if ( !matches[ selector ] ) {
+						matches[ selector ] = POS.test( selector ) ?
 							jQuery( selector, context || this.context ) :
 							selector;
 					}
@@ -3785,34 +5218,48 @@ jQuery.fn.extend({
 
 				while ( cur && cur.ownerDocument && cur !== context ) {
 					for ( selector in matches ) {
-						match = matches[selector];
+						match = matches[ selector ];
 
-						if ( match.jquery ? match.index(cur) > -1 : jQuery(cur).is(match) ) {
-							ret.push({ selector: selector, elem: cur });
-							delete matches[selector];
+						if ( match.jquery ? match.index( cur ) > -1 : jQuery( cur ).is( match ) ) {
+							ret.push({ selector: selector, elem: cur, level: level });
 						}
 					}
+
 					cur = cur.parentNode;
+					level++;
 				}
 			}
 
 			return ret;
 		}
 
-		var pos = jQuery.expr.match.POS.test( selectors ) ? 
-			jQuery( selectors, context || this.context ) : null;
+		// String
+		var pos = POS.test( selectors ) || typeof selectors !== "string" ?
+				jQuery( selectors, context || this.context ) :
+				0;
 
-		return this.map(function( i, cur ) {
-			while ( cur && cur.ownerDocument && cur !== context ) {
-				if ( pos ? pos.index(cur) > -1 : jQuery(cur).is(selectors) ) {
-					return cur;
+		for ( i = 0, l = this.length; i < l; i++ ) {
+			cur = this[i];
+
+			while ( cur ) {
+				if ( pos ? pos.index(cur) > -1 : jQuery.find.matchesSelector(cur, selectors) ) {
+					ret.push( cur );
+					break;
+
+				} else {
+					cur = cur.parentNode;
+					if ( !cur || !cur.ownerDocument || cur === context || cur.nodeType === 11 ) {
+						break;
+					}
 				}
-				cur = cur.parentNode;
 			}
-			return null;
-		});
+		}
+
+		ret = ret.length > 1 ? jQuery.unique( ret ) : ret;
+
+		return this.pushStack( ret, "closest", selectors );
 	},
-	
+
 	// Determine the position of an element within
 	// the matched set of elements
 	index: function( elem ) {
@@ -3830,8 +5277,8 @@ jQuery.fn.extend({
 
 	add: function( selector, context ) {
 		var set = typeof selector === "string" ?
-				jQuery( selector, context || this.context ) :
-				jQuery.makeArray( selector ),
+				jQuery( selector, context ) :
+				jQuery.makeArray( selector && selector.nodeType ? [ selector ] : selector ),
 			all = jQuery.merge( this.get(), set );
 
 		return this.pushStack( isDisconnected( set[0] ) || isDisconnected( all[0] ) ?
@@ -3892,8 +5339,13 @@ jQuery.each({
 	}
 }, function( name, fn ) {
 	jQuery.fn[ name ] = function( until, selector ) {
-		var ret = jQuery.map( this, fn, until );
-		
+		var ret = jQuery.map( this, fn, until ),
+			// The variable 'args' was introduced in
+			// https://github.com/jquery/jquery/commit/52a0238
+			// to work around a bug in Chrome 10 (Dev) and should be removed when the bug is fixed.
+			// http://code.google.com/p/v8/issues/detail?id=1050
+			args = slice.call(arguments);
+
 		if ( !runtil.test( name ) ) {
 			selector = until;
 		}
@@ -3902,13 +5354,13 @@ jQuery.each({
 			ret = jQuery.filter( selector, ret );
 		}
 
-		ret = this.length > 1 ? jQuery.unique( ret ) : ret;
+		ret = this.length > 1 && !guaranteedUnique[ name ] ? jQuery.unique( ret ) : ret;
 
 		if ( (this.length > 1 || rmultiselector.test( selector )) && rparentsprev.test( name ) ) {
 			ret = ret.reverse();
 		}
 
-		return this.pushStack( ret, name, slice.call(arguments).join(",") );
+		return this.pushStack( ret, name, args.join(",") );
 	};
 });
 
@@ -3918,11 +5370,15 @@ jQuery.extend({
 			expr = ":not(" + expr + ")";
 		}
 
-		return jQuery.find.matches(expr, elems);
+		return elems.length === 1 ?
+			jQuery.find.matchesSelector(elems[0], expr) ? [ elems[0] ] : [] :
+			jQuery.find.matches(expr, elems);
 	},
-	
+
 	dir: function( elem, dir, until ) {
-		var matched = [], cur = elem[dir];
+		var matched = [],
+			cur = elem[ dir ];
+
 		while ( cur && cur.nodeType !== 9 && (until === undefined || cur.nodeType !== 1 || !jQuery( cur ).is( until )) ) {
 			if ( cur.nodeType === 1 ) {
 				matched.push( cur );
@@ -3957,20 +5413,56 @@ jQuery.extend({
 		return r;
 	}
 });
+
+// Implement the identical functionality for filter and not
+function winnow( elements, qualifier, keep ) {
+
+	// Can't pass null or undefined to indexOf in Firefox 4
+	// Set to 0 to skip string check
+	qualifier = qualifier || 0;
+
+	if ( jQuery.isFunction( qualifier ) ) {
+		return jQuery.grep(elements, function( elem, i ) {
+			var retVal = !!qualifier.call( elem, i, elem );
+			return retVal === keep;
+		});
+
+	} else if ( qualifier.nodeType ) {
+		return jQuery.grep(elements, function( elem, i ) {
+			return (elem === qualifier) === keep;
+		});
+
+	} else if ( typeof qualifier === "string" ) {
+		var filtered = jQuery.grep(elements, function( elem ) {
+			return elem.nodeType === 1;
+		});
+
+		if ( isSimple.test( qualifier ) ) {
+			return jQuery.filter(qualifier, filtered, !keep);
+		} else {
+			qualifier = jQuery.filter( qualifier, filtered );
+		}
+	}
+
+	return jQuery.grep(elements, function( elem, i ) {
+		return (jQuery.inArray( elem, qualifier ) >= 0) === keep;
+	});
+}
+
+
+
+
 var rinlinejQuery = / jQuery\d+="(?:\d+|null)"/g,
 	rleadingWhitespace = /^\s+/,
-	rxhtmlTag = /(<([\w:]+)[^>]*?)\/>/g,
-	rselfClosing = /^(?:area|br|col|embed|hr|img|input|link|meta|param)$/i,
+	rxhtmlTag = /<(?!area|br|col|embed|hr|img|input|link|meta|param)(([\w:]+)[^>]*)\/>/ig,
 	rtagName = /<([\w:]+)/,
 	rtbody = /<tbody/i,
 	rhtml = /<|&#?\w+;/,
-	rnocache = /<script|<object|<embed|<option|<style/i,
-	rchecked = /checked\s*(?:[^=]|=\s*.checked.)/i,  // checked="checked" or checked (html5)
-	fcloseTag = function( all, front, tag ) {
-		return rselfClosing.test( tag ) ?
-			all :
-			front + "></" + tag + ">";
-	},
+	rnocache = /<(?:script|object|embed|option|style)/i,
+	// checked="checked" or checked
+	rchecked = /checked\s*(?:[^=]|=\s*.checked.)/i,
+	rscriptType = /\/(java|ecma)script/i,
+	rcleanScript = /^\s*<!(?:\[CDATA\[|\-\-)/,
 	wrapMap = {
 		option: [ 1, "<select multiple='multiple'>", "</select>" ],
 		legend: [ 1, "<fieldset>", "</fieldset>" ],
@@ -3995,7 +5487,8 @@ jQuery.fn.extend({
 	text: function( text ) {
 		if ( jQuery.isFunction(text) ) {
 			return this.each(function(i) {
-				var self = jQuery(this);
+				var self = jQuery( this );
+
 				self.text( text.call(this, i, self.text()) );
 			});
 		}
@@ -4030,7 +5523,7 @@ jQuery.fn.extend({
 				}
 
 				return elem;
-			}).append(this);
+			}).append( this );
 		}
 
 		return this;
@@ -4044,7 +5537,8 @@ jQuery.fn.extend({
 		}
 
 		return this.each(function() {
-			var self = jQuery( this ), contents = self.contents();
+			var self = jQuery( this ),
+				contents = self.contents();
 
 			if ( contents.length ) {
 				contents.wrapAll( html );
@@ -4108,7 +5602,7 @@ jQuery.fn.extend({
 			return set;
 		}
 	},
-	
+
 	// keepData is for internal use only--do not document
 	remove: function( selector, keepData ) {
 		for ( var i = 0, elem; (elem = this[i]) != null; i++ ) {
@@ -4119,11 +5613,11 @@ jQuery.fn.extend({
 				}
 
 				if ( elem.parentNode ) {
-					 elem.parentNode.removeChild( elem );
+					elem.parentNode.removeChild( elem );
 				}
 			}
 		}
-		
+
 		return this;
 	},
 
@@ -4139,46 +5633,17 @@ jQuery.fn.extend({
 				elem.removeChild( elem.firstChild );
 			}
 		}
-		
+
 		return this;
 	},
 
-	clone: function( events ) {
-		// Do the clone
-		var ret = this.map(function() {
-			if ( !jQuery.support.noCloneEvent && !jQuery.isXMLDoc(this) ) {
-				// IE copies events bound via attachEvent when
-				// using cloneNode. Calling detachEvent on the
-				// clone will also remove the events from the orignal
-				// In order to get around this, we use innerHTML.
-				// Unfortunately, this means some modifications to
-				// attributes in IE that are actually only stored
-				// as properties will not be copied (such as the
-				// the name attribute on an input).
-				var html = this.outerHTML, ownerDocument = this.ownerDocument;
-				if ( !html ) {
-					var div = ownerDocument.createElement("div");
-					div.appendChild( this.cloneNode(true) );
-					html = div.innerHTML;
-				}
+	clone: function( dataAndEvents, deepDataAndEvents ) {
+		dataAndEvents = dataAndEvents == null ? false : dataAndEvents;
+		deepDataAndEvents = deepDataAndEvents == null ? dataAndEvents : deepDataAndEvents;
 
-				return jQuery.clean([html.replace(rinlinejQuery, "")
-					// Handle the case in IE 8 where action=/test/> self-closes a tag
-					.replace(/=([^="'>\s]+\/)>/g, '="$1">')
-					.replace(rleadingWhitespace, "")], ownerDocument)[0];
-			} else {
-				return this.cloneNode(true);
-			}
+		return this.map( function () {
+			return jQuery.clone( this, dataAndEvents, deepDataAndEvents );
 		});
-
-		// Copy the events from the original to the clone
-		if ( events === true ) {
-			cloneCopyEvent( this, ret );
-			cloneCopyEvent( this.find("*"), ret.find("*") );
-		}
-
-		// Return the cloned set
-		return ret;
 	},
 
 	html: function( value ) {
@@ -4192,7 +5657,7 @@ jQuery.fn.extend({
 			(jQuery.support.leadingWhitespace || !rleadingWhitespace.test( value )) &&
 			!wrapMap[ (rtagName.exec( value ) || ["", ""])[1].toLowerCase() ] ) {
 
-			value = value.replace(rxhtmlTag, fcloseTag);
+			value = value.replace(rxhtmlTag, "<$1></$2>");
 
 			try {
 				for ( var i = 0, l = this.length; i < l; i++ ) {
@@ -4210,10 +5675,9 @@ jQuery.fn.extend({
 
 		} else if ( jQuery.isFunction( value ) ) {
 			this.each(function(i){
-				var self = jQuery(this), old = self.html();
-				self.empty().append(function(){
-					return value.call( this, i, old );
-				});
+				var self = jQuery( this );
+
+				self.html( value.call(this, i, self.html()) );
 			});
 
 		} else {
@@ -4235,13 +5699,14 @@ jQuery.fn.extend({
 			}
 
 			if ( typeof value !== "string" ) {
-				value = jQuery(value).detach();
+				value = jQuery( value ).detach();
 			}
 
 			return this.each(function() {
-				var next = this.nextSibling, parent = this.parentNode;
+				var next = this.nextSibling,
+					parent = this.parentNode;
 
-				jQuery(this).remove();
+				jQuery( this ).remove();
 
 				if ( next ) {
 					jQuery(next).before( value );
@@ -4250,7 +5715,9 @@ jQuery.fn.extend({
 				}
 			});
 		} else {
-			return this.pushStack( jQuery(jQuery.isFunction(value) ? value() : value), "replaceWith", value );
+			return this.length ?
+				this.pushStack( jQuery(jQuery.isFunction(value) ? value() : value), "replaceWith", value ) :
+				this;
 		}
 	},
 
@@ -4259,7 +5726,9 @@ jQuery.fn.extend({
 	},
 
 	domManip: function( args, table, callback ) {
-		var results, first, value = args[0], scripts = [], fragment, parent;
+		var results, first, fragment, parent,
+			value = args[0],
+			scripts = [];
 
 		// We can't cloneNode fragments that contain checked, in WebKit
 		if ( !jQuery.support.checkClone && arguments.length === 3 && typeof value === "string" && rchecked.test( value ) ) {
@@ -4284,11 +5753,11 @@ jQuery.fn.extend({
 				results = { fragment: parent };
 
 			} else {
-				results = buildFragment( args, this, scripts );
+				results = jQuery.buildFragment( args, this, scripts );
 			}
-			
+
 			fragment = results.fragment;
-			
+
 			if ( fragment.childNodes.length === 1 ) {
 				first = fragment = fragment.firstChild;
 			} else {
@@ -4298,13 +5767,20 @@ jQuery.fn.extend({
 			if ( first ) {
 				table = table && jQuery.nodeName( first, "tr" );
 
-				for ( var i = 0, l = this.length; i < l; i++ ) {
+				for ( var i = 0, l = this.length, lastIndex = l - 1; i < l; i++ ) {
 					callback.call(
 						table ?
 							root(this[i], first) :
 							this[i],
-						i > 0 || results.cacheable || this.length > 1  ?
-							fragment.cloneNode(true) :
+						// Make sure that we do not leak memory by inadvertently discarding
+						// the original fragment (which might have attached data) instead of
+						// using it; in addition, use the original fragment object for the last
+						// item instead of first because it can end up being emptied incorrectly
+						// in certain situations (Bug #8070).
+						// Fragments from the fragment cache must always be cloned and never used
+						// in place.
+						results.cacheable || (l > 1 && i < lastIndex) ?
+							jQuery.clone( fragment, true, true ) :
 							fragment
 					);
 				}
@@ -4316,56 +5792,119 @@ jQuery.fn.extend({
 		}
 
 		return this;
-
-		function root( elem, cur ) {
-			return jQuery.nodeName(elem, "table") ?
-				(elem.getElementsByTagName("tbody")[0] ||
-				elem.appendChild(elem.ownerDocument.createElement("tbody"))) :
-				elem;
-		}
 	}
 });
 
-function cloneCopyEvent(orig, ret) {
-	var i = 0;
+function root( elem, cur ) {
+	return jQuery.nodeName(elem, "table") ?
+		(elem.getElementsByTagName("tbody")[0] ||
+		elem.appendChild(elem.ownerDocument.createElement("tbody"))) :
+		elem;
+}
 
-	ret.each(function() {
-		if ( this.nodeName !== (orig[i] && orig[i].nodeName) ) {
-			return;
-		}
+function cloneCopyEvent( src, dest ) {
 
-		var oldData = jQuery.data( orig[i++] ), curData = jQuery.data( this, oldData ), events = oldData && oldData.events;
+	if ( dest.nodeType !== 1 || !jQuery.hasData( src ) ) {
+		return;
+	}
+
+	var internalKey = jQuery.expando,
+		oldData = jQuery.data( src ),
+		curData = jQuery.data( dest, oldData );
+
+	// Switch to use the internal data object, if it exists, for the next
+	// stage of data copying
+	if ( (oldData = oldData[ internalKey ]) ) {
+		var events = oldData.events;
+				curData = curData[ internalKey ] = jQuery.extend({}, oldData);
 
 		if ( events ) {
 			delete curData.handle;
 			curData.events = {};
 
 			for ( var type in events ) {
-				for ( var handler in events[ type ] ) {
-					jQuery.event.add( this, type, events[ type ][ handler ], events[ type ][ handler ].data );
+				for ( var i = 0, l = events[ type ].length; i < l; i++ ) {
+					jQuery.event.add( dest, type + ( events[ type ][ i ].namespace ? "." : "" ) + events[ type ][ i ].namespace, events[ type ][ i ], events[ type ][ i ].data );
 				}
 			}
 		}
-	});
+	}
 }
 
-function buildFragment( args, nodes, scripts ) {
+function cloneFixAttributes( src, dest ) {
+	var nodeName;
+
+	// We do not need to do anything for non-Elements
+	if ( dest.nodeType !== 1 ) {
+		return;
+	}
+
+	// clearAttributes removes the attributes, which we don't want,
+	// but also removes the attachEvent events, which we *do* want
+	if ( dest.clearAttributes ) {
+		dest.clearAttributes();
+	}
+
+	// mergeAttributes, in contrast, only merges back on the
+	// original attributes, not the events
+	if ( dest.mergeAttributes ) {
+		dest.mergeAttributes( src );
+	}
+
+	nodeName = dest.nodeName.toLowerCase();
+
+	// IE6-8 fail to clone children inside object elements that use
+	// the proprietary classid attribute value (rather than the type
+	// attribute) to identify the type of content to display
+	if ( nodeName === "object" ) {
+		dest.outerHTML = src.outerHTML;
+
+	} else if ( nodeName === "input" && (src.type === "checkbox" || src.type === "radio") ) {
+		// IE6-8 fails to persist the checked state of a cloned checkbox
+		// or radio button. Worse, IE6-7 fail to give the cloned element
+		// a checked appearance if the defaultChecked value isn't also set
+		if ( src.checked ) {
+			dest.defaultChecked = dest.checked = src.checked;
+		}
+
+		// IE6-7 get confused and end up setting the value of a cloned
+		// checkbox/radio button to an empty string instead of "on"
+		if ( dest.value !== src.value ) {
+			dest.value = src.value;
+		}
+
+	// IE6-8 fails to return the selected option to the default selected
+	// state when cloning options
+	} else if ( nodeName === "option" ) {
+		dest.selected = src.defaultSelected;
+
+	// IE6-8 fails to set the defaultValue to the correct value when
+	// cloning other types of input fields
+	} else if ( nodeName === "input" || nodeName === "textarea" ) {
+		dest.defaultValue = src.defaultValue;
+	}
+
+	// Event data gets referenced instead of copied if the expando
+	// gets copied too
+	dest.removeAttribute( jQuery.expando );
+}
+
+jQuery.buildFragment = function( args, nodes, scripts ) {
 	var fragment, cacheable, cacheresults,
 		doc = (nodes && nodes[0] ? nodes[0].ownerDocument || nodes[0] : document);
 
-	// Only cache "small" (1/2 KB) strings that are associated with the main document
+	// Only cache "small" (1/2 KB) HTML strings that are associated with the main document
 	// Cloning options loses the selected state, so don't cache them
 	// IE 6 doesn't like it when you put <object> or <embed> elements in a fragment
 	// Also, WebKit does not clone 'checked' attributes on cloneNode, so don't cache
 	if ( args.length === 1 && typeof args[0] === "string" && args[0].length < 512 && doc === document &&
-		!rnocache.test( args[0] ) && (jQuery.support.checkClone || !rchecked.test( args[0] )) ) {
+		args[0].charAt(0) === "<" && !rnocache.test( args[0] ) && (jQuery.support.checkClone || !rchecked.test( args[0] )) ) {
 
 		cacheable = true;
+
 		cacheresults = jQuery.fragments[ args[0] ];
-		if ( cacheresults ) {
-			if ( cacheresults !== 1 ) {
-				fragment = cacheresults;
-			}
+		if ( cacheresults && cacheresults !== 1 ) {
+			fragment = cacheresults;
 		}
 	}
 
@@ -4379,7 +5918,7 @@ function buildFragment( args, nodes, scripts ) {
 	}
 
 	return { fragment: fragment, cacheable: cacheable };
-}
+};
 
 jQuery.fragments = {};
 
@@ -4391,27 +5930,104 @@ jQuery.each({
 	replaceAll: "replaceWith"
 }, function( name, original ) {
 	jQuery.fn[ name ] = function( selector ) {
-		var ret = [], insert = jQuery( selector ),
+		var ret = [],
+			insert = jQuery( selector ),
 			parent = this.length === 1 && this[0].parentNode;
-		
+
 		if ( parent && parent.nodeType === 11 && parent.childNodes.length === 1 && insert.length === 1 ) {
 			insert[ original ]( this[0] );
 			return this;
-			
+
 		} else {
 			for ( var i = 0, l = insert.length; i < l; i++ ) {
 				var elems = (i > 0 ? this.clone(true) : this).get();
-				jQuery.fn[ original ].apply( jQuery(insert[i]), elems );
+				jQuery( insert[i] )[ original ]( elems );
 				ret = ret.concat( elems );
 			}
-		
+
 			return this.pushStack( ret, name, insert.selector );
 		}
 	};
 });
 
+function getAll( elem ) {
+	if ( "getElementsByTagName" in elem ) {
+		return elem.getElementsByTagName( "*" );
+
+	} else if ( "querySelectorAll" in elem ) {
+		return elem.querySelectorAll( "*" );
+
+	} else {
+		return [];
+	}
+}
+
+// Used in clean, fixes the defaultChecked property
+function fixDefaultChecked( elem ) {
+	if ( elem.type === "checkbox" || elem.type === "radio" ) {
+		elem.defaultChecked = elem.checked;
+	}
+}
+// Finds all inputs and passes them to fixDefaultChecked
+function findInputs( elem ) {
+	if ( jQuery.nodeName( elem, "input" ) ) {
+		fixDefaultChecked( elem );
+	} else if ( elem.getElementsByTagName ) {
+		jQuery.grep( elem.getElementsByTagName("input"), fixDefaultChecked );
+	}
+}
+
 jQuery.extend({
+	clone: function( elem, dataAndEvents, deepDataAndEvents ) {
+		var clone = elem.cloneNode(true),
+				srcElements,
+				destElements,
+				i;
+
+		if ( (!jQuery.support.noCloneEvent || !jQuery.support.noCloneChecked) &&
+				(elem.nodeType === 1 || elem.nodeType === 11) && !jQuery.isXMLDoc(elem) ) {
+			// IE copies events bound via attachEvent when using cloneNode.
+			// Calling detachEvent on the clone will also remove the events
+			// from the original. In order to get around this, we use some
+			// proprietary methods to clear the events. Thanks to MooTools
+			// guys for this hotness.
+
+			cloneFixAttributes( elem, clone );
+
+			// Using Sizzle here is crazy slow, so we use getElementsByTagName
+			// instead
+			srcElements = getAll( elem );
+			destElements = getAll( clone );
+
+			// Weird iteration because IE will replace the length property
+			// with an element if you are cloning the body and one of the
+			// elements on the page has a name or id of "length"
+			for ( i = 0; srcElements[i]; ++i ) {
+				cloneFixAttributes( srcElements[i], destElements[i] );
+			}
+		}
+
+		// Copy the events from the original to the clone
+		if ( dataAndEvents ) {
+			cloneCopyEvent( elem, clone );
+
+			if ( deepDataAndEvents ) {
+				srcElements = getAll( elem );
+				destElements = getAll( clone );
+
+				for ( i = 0; srcElements[i]; ++i ) {
+					cloneCopyEvent( srcElements[i], destElements[i] );
+				}
+			}
+		}
+
+		// Return the cloned set
+		return clone;
+	},
+
 	clean: function( elems, context, fragment, scripts ) {
+		var checkScriptType;
+
 		context = context || document;
 
 		// !context.createElement fails in IE with an error but returns typeof 'object'
@@ -4419,7 +6035,7 @@ jQuery.extend({
 			context = context.ownerDocument || context[0] && context[0].ownerDocument || document;
 		}
 
-		var ret = [];
+		var ret = [], j;
 
 		for ( var i = 0, elem; (elem = elems[i]) != null; i++ ) {
 			if ( typeof elem === "number" ) {
@@ -4431,54 +6047,67 @@ jQuery.extend({
 			}
 
 			// Convert html string into DOM nodes
-			if ( typeof elem === "string" && !rhtml.test( elem ) ) {
-				elem = context.createTextNode( elem );
+			if ( typeof elem === "string" ) {
+				if ( !rhtml.test( elem ) ) {
+					elem = context.createTextNode( elem );
+				} else {
+					// Fix "XHTML"-style tags in all browsers
+					elem = elem.replace(rxhtmlTag, "<$1></$2>");
 
-			} else if ( typeof elem === "string" ) {
-				// Fix "XHTML"-style tags in all browsers
-				elem = elem.replace(rxhtmlTag, fcloseTag);
+					// Trim whitespace, otherwise indexOf won't work as expected
+					var tag = (rtagName.exec( elem ) || ["", ""])[1].toLowerCase(),
+						wrap = wrapMap[ tag ] || wrapMap._default,
+						depth = wrap[0],
+						div = context.createElement("div");
 
-				// Trim whitespace, otherwise indexOf won't work as expected
-				var tag = (rtagName.exec( elem ) || ["", ""])[1].toLowerCase(),
-					wrap = wrapMap[ tag ] || wrapMap._default,
-					depth = wrap[0],
-					div = context.createElement("div");
+					// Go to html and back, then peel off extra wrappers
+					div.innerHTML = wrap[1] + elem + wrap[2];
 
-				// Go to html and back, then peel off extra wrappers
-				div.innerHTML = wrap[1] + elem + wrap[2];
+					// Move to the right depth
+					while ( depth-- ) {
+						div = div.lastChild;
+					}
 
-				// Move to the right depth
-				while ( depth-- ) {
-					div = div.lastChild;
-				}
+					// Remove IE's autoinserted <tbody> from table fragments
+					if ( !jQuery.support.tbody ) {
 
-				// Remove IE's autoinserted <tbody> from table fragments
-				if ( !jQuery.support.tbody ) {
+						// String was a <table>, *may* have spurious <tbody>
+						var hasBody = rtbody.test(elem),
+							tbody = tag === "table" && !hasBody ?
+								div.firstChild && div.firstChild.childNodes :
 
-					// String was a <table>, *may* have spurious <tbody>
-					var hasBody = rtbody.test(elem),
-						tbody = tag === "table" && !hasBody ?
-							div.firstChild && div.firstChild.childNodes :
+								// String was a bare <thead> or <tfoot>
+								wrap[1] === "<table>" && !hasBody ?
+									div.childNodes :
+									[];
 
-							// String was a bare <thead> or <tfoot>
-							wrap[1] === "<table>" && !hasBody ?
-								div.childNodes :
-								[];
-
-					for ( var j = tbody.length - 1; j >= 0 ; --j ) {
-						if ( jQuery.nodeName( tbody[ j ], "tbody" ) && !tbody[ j ].childNodes.length ) {
-							tbody[ j ].parentNode.removeChild( tbody[ j ] );
+						for ( j = tbody.length - 1; j >= 0 ; --j ) {
+							if ( jQuery.nodeName( tbody[ j ], "tbody" ) && !tbody[ j ].childNodes.length ) {
+								tbody[ j ].parentNode.removeChild( tbody[ j ] );
+							}
 						}
 					}
 
-				}
+					// IE completely kills leading whitespace when innerHTML is used
+					if ( !jQuery.support.leadingWhitespace && rleadingWhitespace.test( elem ) ) {
+						div.insertBefore( context.createTextNode( rleadingWhitespace.exec(elem)[0] ), div.firstChild );
+					}
 
-				// IE completely kills leading whitespace when innerHTML is used
-				if ( !jQuery.support.leadingWhitespace && rleadingWhitespace.test( elem ) ) {
-					div.insertBefore( context.createTextNode( rleadingWhitespace.exec(elem)[0] ), div.firstChild );
+					elem = div.childNodes;
 				}
+			}
 
-				elem = div.childNodes;
+			// Resets defaultChecked for any radios and checkboxes
+			// about to be appended to the DOM in IE 6/7 (#8060)
+			var len;
+			if ( !jQuery.support.appendChecked ) {
+				if ( elem[0] && typeof (len = elem.length) === "number" ) {
+					for ( j = 0; j < len; j++ ) {
+						findInputs( elem[j] );
+					}
+				} else {
+					findInputs( elem );
+				}
 			}
 
 			if ( elem.nodeType ) {
@@ -4489,13 +6118,18 @@ jQuery.extend({
 		}
 
 		if ( fragment ) {
-			for ( var i = 0; ret[i]; i++ ) {
+			checkScriptType = function( elem ) {
+				return !elem.type || rscriptType.test( elem.type );
+			};
+			for ( i = 0; ret[i]; i++ ) {
 				if ( scripts && jQuery.nodeName( ret[i], "script" ) && (!ret[i].type || ret[i].type.toLowerCase() === "text/javascript") ) {
 					scripts.push( ret[i].parentNode ? ret[i].parentNode.removeChild( ret[i] ) : ret[i] );
-				
+
 				} else {
 					if ( ret[i].nodeType === 1 ) {
-						ret.splice.apply( ret, [i + 1, 0].concat(jQuery.makeArray(ret[i].getElementsByTagName("script"))) );
+						var jsTags = jQuery.grep( ret[i].getElementsByTagName( "script" ), checkScriptType );
+
+						ret.splice.apply( ret, [i + 1, 0].concat( jsTags ) );
 					}
 					fragment.appendChild( ret[i] );
 				}
@@ -4504,233 +6138,214 @@ jQuery.extend({
 
 		return ret;
 	},
-	
+
 	cleanData: function( elems ) {
-		var data, id, cache = jQuery.cache,
-			special = jQuery.event.special,
+		var data, id, cache = jQuery.cache, internalKey = jQuery.expando, special = jQuery.event.special,
 			deleteExpando = jQuery.support.deleteExpando;
-		
+
 		for ( var i = 0, elem; (elem = elems[i]) != null; i++ ) {
+			if ( elem.nodeName && jQuery.noData[elem.nodeName.toLowerCase()] ) {
+				continue;
+			}
+
 			id = elem[ jQuery.expando ];
-			
+
 			if ( id ) {
-				data = cache[ id ];
-				
-				if ( data.events ) {
+				data = cache[ id ] && cache[ id ][ internalKey ];
+
+				if ( data && data.events ) {
 					for ( var type in data.events ) {
 						if ( special[ type ] ) {
 							jQuery.event.remove( elem, type );
 
+						// This is a shortcut to avoid jQuery.event.remove's overhead
 						} else {
-							removeEvent( elem, type, data.handle );
+							jQuery.removeEvent( elem, type, data.handle );
 						}
 					}
+
+					// Null the DOM reference to avoid IE6/7/8 leak (#7054)
+					if ( data.handle ) {
+						data.handle.elem = null;
+					}
 				}
-				
+
 				if ( deleteExpando ) {
 					delete elem[ jQuery.expando ];
 
 				} else if ( elem.removeAttribute ) {
 					elem.removeAttribute( jQuery.expando );
 				}
-				
+
 				delete cache[ id ];
 			}
 		}
 	}
 });
-// exclude the following css properties to add px
-var rexclude = /z-?index|font-?weight|opacity|zoom|line-?height/i,
-	ralpha = /alpha\([^)]*\)/,
+
+function evalScript( i, elem ) {
+	if ( elem.src ) {
+		jQuery.ajax({
+			url: elem.src,
+			async: false,
+			dataType: "script"
+		});
+	} else {
+		jQuery.globalEval( ( elem.text || elem.textContent || elem.innerHTML || "" ).replace( rcleanScript, "/*$0*/" ) );
+	}
+
+	if ( elem.parentNode ) {
+		elem.parentNode.removeChild( elem );
+	}
+}
+
+
+
+
+var ralpha = /alpha\([^)]*\)/i,
 	ropacity = /opacity=([^)]*)/,
-	rfloat = /float/i,
 	rdashAlpha = /-([a-z])/ig,
-	rupper = /([A-Z])/g,
+	// fixed for IE9, see #8346
+	rupper = /([A-Z]|^ms)/g,
 	rnumpx = /^-?\d+(?:px)?$/i,
 	rnum = /^-?\d/,
+	rrelNum = /^[+\-]=/,
+	rrelNumFilter = /[^+\-\.\de]+/g,
 
-	cssShow = { position: "absolute", visibility: "hidden", display:"block" },
+	cssShow = { position: "absolute", visibility: "hidden", display: "block" },
 	cssWidth = [ "Left", "Right" ],
 	cssHeight = [ "Top", "Bottom" ],
+	curCSS,
 
-	// cache check for defaultView.getComputedStyle
-	getComputedStyle = document.defaultView && document.defaultView.getComputedStyle,
-	// normalize float css property
-	styleFloat = jQuery.support.cssFloat ? "cssFloat" : "styleFloat",
+	getComputedStyle,
+	currentStyle,
+
 	fcamelCase = function( all, letter ) {
 		return letter.toUpperCase();
 	};
 
 jQuery.fn.css = function( name, value ) {
-	return access( this, name, value, true, function( elem, name, value ) {
-		if ( value === undefined ) {
-			return jQuery.curCSS( elem, name );
-		}
-		
-		if ( typeof value === "number" && !rexclude.test(name) ) {
-			value += "px";
-		}
+	// Setting 'undefined' is a no-op
+	if ( arguments.length === 2 && value === undefined ) {
+		return this;
+	}
 
-		jQuery.style( elem, name, value );
+	return jQuery.access( this, name, value, true, function( elem, name, value ) {
+		return value !== undefined ?
+			jQuery.style( elem, name, value ) :
+			jQuery.css( elem, name );
 	});
 };
 
 jQuery.extend({
-	style: function( elem, name, value ) {
-		// don't set styles on text and comment nodes
-		if ( !elem || elem.nodeType === 3 || elem.nodeType === 8 ) {
-			return undefined;
-		}
+	// Add in style property hooks for overriding the default
+	// behavior of getting and setting a style property
+	cssHooks: {
+		opacity: {
+			get: function( elem, computed ) {
+				if ( computed ) {
+					// We should always get a number back from opacity
+					var ret = curCSS( elem, "opacity", "opacity" );
+					return ret === "" ? "1" : ret;
 
-		// ignore negative width and height values #1599
-		if ( (name === "width" || name === "height") && parseFloat(value) < 0 ) {
-			value = undefined;
-		}
-
-		var style = elem.style || elem, set = value !== undefined;
-
-		// IE uses filters for opacity
-		if ( !jQuery.support.opacity && name === "opacity" ) {
-			if ( set ) {
-				// IE has trouble with opacity if it does not have layout
-				// Force it by setting the zoom level
-				style.zoom = 1;
-
-				// Set the alpha filter to set the opacity
-				var opacity = parseInt( value, 10 ) + "" === "NaN" ? "" : "alpha(opacity=" + value * 100 + ")";
-				var filter = style.filter || jQuery.curCSS( elem, "filter" ) || "";
-				style.filter = ralpha.test(filter) ? filter.replace(ralpha, opacity) : opacity;
-			}
-
-			return style.filter && style.filter.indexOf("opacity=") >= 0 ?
-				(parseFloat( ropacity.exec(style.filter)[1] ) / 100) + "":
-				"";
-		}
-
-		// Make sure we're using the right name for getting the float value
-		if ( rfloat.test( name ) ) {
-			name = styleFloat;
-		}
-
-		name = name.replace(rdashAlpha, fcamelCase);
-
-		if ( set ) {
-			style[ name ] = value;
-		}
-
-		return style[ name ];
-	},
-
-	css: function( elem, name, force, extra ) {
-		if ( name === "width" || name === "height" ) {
-			var val, props = cssShow, which = name === "width" ? cssWidth : cssHeight;
-
-			function getWH() {
-				val = name === "width" ? elem.offsetWidth : elem.offsetHeight;
-
-				if ( extra === "border" ) {
-					return;
+				} else {
+					return elem.style.opacity;
 				}
-
-				jQuery.each( which, function() {
-					if ( !extra ) {
-						val -= parseFloat(jQuery.curCSS( elem, "padding" + this, true)) || 0;
-					}
-
-					if ( extra === "margin" ) {
-						val += parseFloat(jQuery.curCSS( elem, "margin" + this, true)) || 0;
-					} else {
-						val -= parseFloat(jQuery.curCSS( elem, "border" + this + "Width", true)) || 0;
-					}
-				});
 			}
-
-			if ( elem.offsetWidth !== 0 ) {
-				getWH();
-			} else {
-				jQuery.swap( elem, props, getWH );
-			}
-
-			return Math.max(0, Math.round(val));
 		}
-
-		return jQuery.curCSS( elem, name, force );
 	},
 
-	curCSS: function( elem, name, force ) {
-		var ret, style = elem.style, filter;
+	// Exclude the following css properties to add px
+	cssNumber: {
+		"zIndex": true,
+		"fontWeight": true,
+		"opacity": true,
+		"zoom": true,
+		"lineHeight": true,
+		"widows": true,
+		"orphans": true
+	},
 
-		// IE uses filters for opacity
-		if ( !jQuery.support.opacity && name === "opacity" && elem.currentStyle ) {
-			ret = ropacity.test(elem.currentStyle.filter || "") ?
-				(parseFloat(RegExp.$1) / 100) + "" :
-				"";
+	// Add in properties whose names you wish to fix before
+	// setting or getting the value
+	cssProps: {
+		// normalize float css property
+		"float": jQuery.support.cssFloat ? "cssFloat" : "styleFloat"
+	},
 
-			return ret === "" ?
-				"1" :
-				ret;
+	// Get and set the style property on a DOM Node
+	style: function( elem, name, value, extra ) {
+		// Don't set styles on text and comment nodes
+		if ( !elem || elem.nodeType === 3 || elem.nodeType === 8 || !elem.style ) {
+			return;
 		}
 
-		// Make sure we're using the right name for getting the float value
-		if ( rfloat.test( name ) ) {
-			name = styleFloat;
+		// Make sure that we're working with the right name
+		var ret, type, origName = jQuery.camelCase( name ),
+			style = elem.style, hooks = jQuery.cssHooks[ origName ];
+
+		name = jQuery.cssProps[ origName ] || origName;
+
+		// Check if we're setting a value
+		if ( value !== undefined ) {
+			type = typeof value;
+
+			// Make sure that NaN and null values aren't set. See: #7116
+			if ( type === "number" && isNaN( value ) || value == null ) {
+				return;
+			}
+
+			// convert relative number strings (+= or -=) to relative numbers. #7345
+			if ( type === "string" && rrelNum.test( value ) ) {
+				value = +value.replace( rrelNumFilter, "" ) + parseFloat( jQuery.css( elem, name ) );
+			}
+
+			// If a number was passed in, add 'px' to the (except for certain CSS properties)
+			if ( type === "number" && !jQuery.cssNumber[ origName ] ) {
+				value += "px";
+			}
+
+			// If a hook was provided, use that value, otherwise just set the specified value
+			if ( !hooks || !("set" in hooks) || (value = hooks.set( elem, value )) !== undefined ) {
+				// Wrapped to prevent IE from throwing errors when 'invalid' values are provided
+				// Fixes bug #5509
+				try {
+					style[ name ] = value;
+				} catch(e) {}
+			}
+
+		} else {
+			// If a hook was provided get the non-computed value from there
+			if ( hooks && "get" in hooks && (ret = hooks.get( elem, false, extra )) !== undefined ) {
+				return ret;
+			}
+
+			// Otherwise just get the value from the style object
+			return style[ name ];
+		}
+	},
+
+	css: function( elem, name, extra ) {
+		var ret, hooks;
+
+		// Make sure that we're working with the right name
+		name = jQuery.camelCase( name );
+		hooks = jQuery.cssHooks[ name ];
+		name = jQuery.cssProps[ name ] || name;
+
+		// cssFloat needs a special treatment
+		if ( name === "cssFloat" ) {
+			name = "float";
 		}
 
-		if ( !force && style && style[ name ] ) {
-			ret = style[ name ];
+		// If a hook was provided get the computed value from there
+		if ( hooks && "get" in hooks && (ret = hooks.get( elem, true, extra )) !== undefined ) {
+			return ret;
 
-		} else if ( getComputedStyle ) {
-
-			// Only "float" is needed here
-			if ( rfloat.test( name ) ) {
-				name = "float";
-			}
-
-			name = name.replace( rupper, "-$1" ).toLowerCase();
-
-			var defaultView = elem.ownerDocument.defaultView;
-
-			if ( !defaultView ) {
-				return null;
-			}
-
-			var computedStyle = defaultView.getComputedStyle( elem, null );
-
-			if ( computedStyle ) {
-				ret = computedStyle.getPropertyValue( name );
-			}
-
-			// We should always get a number back from opacity
-			if ( name === "opacity" && ret === "" ) {
-				ret = "1";
-			}
-
-		} else if ( elem.currentStyle ) {
-			var camelCase = name.replace(rdashAlpha, fcamelCase);
-
-			ret = elem.currentStyle[ name ] || elem.currentStyle[ camelCase ];
-
-			// From the awesome hack by Dean Edwards
-			// http://erik.eae.net/archives/2007/07/27/18.54.15/#comment-102291
-
-			// If we're not dealing with a regular pixel number
-			// but a number that has a weird ending, we need to convert it to pixels
-			if ( !rnumpx.test( ret ) && rnum.test( ret ) ) {
-				// Remember the original values
-				var left = style.left, rsLeft = elem.runtimeStyle.left;
-
-				// Put in the new values to get a computed value out
-				elem.runtimeStyle.left = elem.currentStyle.left;
-				style.left = camelCase === "fontSize" ? "1em" : (ret || 0);
-				ret = style.pixelLeft + "px";
-
-				// Revert the changed values
-				style.left = left;
-				elem.runtimeStyle.left = rsLeft;
-			}
+		// Otherwise, if a way to get the computed value exists, use that
+		} else if ( curCSS ) {
+			return curCSS( elem, name );
 		}
-
-		return ret;
 	},
 
 	// A method for quickly swapping in/out CSS properties to get correct calculations
@@ -4746,55 +6361,374 @@ jQuery.extend({
 		callback.call( elem );
 
 		// Revert the old values
-		for ( var name in options ) {
+		for ( name in options ) {
 			elem.style[ name ] = old[ name ];
 		}
+	},
+
+	camelCase: function( string ) {
+		return string.replace( rdashAlpha, fcamelCase );
 	}
 });
 
+// DEPRECATED, Use jQuery.css() instead
+jQuery.curCSS = jQuery.css;
+
+jQuery.each(["height", "width"], function( i, name ) {
+	jQuery.cssHooks[ name ] = {
+		get: function( elem, computed, extra ) {
+			var val;
+
+			if ( computed ) {
+				if ( elem.offsetWidth !== 0 ) {
+					val = getWH( elem, name, extra );
+
+				} else {
+					jQuery.swap( elem, cssShow, function() {
+						val = getWH( elem, name, extra );
+					});
+				}
+
+				if ( val <= 0 ) {
+					val = curCSS( elem, name, name );
+
+					if ( val === "0px" && currentStyle ) {
+						val = currentStyle( elem, name, name );
+					}
+
+					if ( val != null ) {
+						// Should return "auto" instead of 0, use 0 for
+						// temporary backwards-compat
+						return val === "" || val === "auto" ? "0px" : val;
+					}
+				}
+
+				if ( val < 0 || val == null ) {
+					val = elem.style[ name ];
+
+					// Should return "auto" instead of 0, use 0 for
+					// temporary backwards-compat
+					return val === "" || val === "auto" ? "0px" : val;
+				}
+
+				return typeof val === "string" ? val : val + "px";
+			}
+		},
+
+		set: function( elem, value ) {
+			if ( rnumpx.test( value ) ) {
+				// ignore negative width and height values #1599
+				value = parseFloat(value);
+
+				if ( value >= 0 ) {
+					return value + "px";
+				}
+
+			} else {
+				return value;
+			}
+		}
+	};
+});
+
+if ( !jQuery.support.opacity ) {
+	jQuery.cssHooks.opacity = {
+		get: function( elem, computed ) {
+			// IE uses filters for opacity
+			return ropacity.test( (computed && elem.currentStyle ? elem.currentStyle.filter : elem.style.filter) || "" ) ?
+				( parseFloat( RegExp.$1 ) / 100 ) + "" :
+				computed ? "1" : "";
+		},
+
+		set: function( elem, value ) {
+			var style = elem.style,
+				currentStyle = elem.currentStyle;
+
+			// IE has trouble with opacity if it does not have layout
+			// Force it by setting the zoom level
+			style.zoom = 1;
+
+			// Set the alpha filter to set the opacity
+			var opacity = jQuery.isNaN( value ) ?
+				"" :
+				"alpha(opacity=" + value * 100 + ")",
+				filter = currentStyle && currentStyle.filter || style.filter || "";
+
+			style.filter = ralpha.test( filter ) ?
+				filter.replace( ralpha, opacity ) :
+				filter + " " + opacity;
+		}
+	};
+}
+
+jQuery(function() {
+	// This hook cannot be added until DOM ready because the support test
+	// for it is not run until after DOM ready
+	if ( !jQuery.support.reliableMarginRight ) {
+		jQuery.cssHooks.marginRight = {
+			get: function( elem, computed ) {
+				// WebKit Bug 13343 - getComputedStyle returns wrong value for margin-right
+				// Work around by temporarily setting element display to inline-block
+				var ret;
+				jQuery.swap( elem, { "display": "inline-block" }, function() {
+					if ( computed ) {
+						ret = curCSS( elem, "margin-right", "marginRight" );
+					} else {
+						ret = elem.style.marginRight;
+					}
+				});
+				return ret;
+			}
+		};
+	}
+});
+
+if ( document.defaultView && document.defaultView.getComputedStyle ) {
+	getComputedStyle = function( elem, name ) {
+		var ret, defaultView, computedStyle;
+
+		name = name.replace( rupper, "-$1" ).toLowerCase();
+
+		if ( !(defaultView = elem.ownerDocument.defaultView) ) {
+			return undefined;
+		}
+
+		if ( (computedStyle = defaultView.getComputedStyle( elem, null )) ) {
+			ret = computedStyle.getPropertyValue( name );
+			if ( ret === "" && !jQuery.contains( elem.ownerDocument.documentElement, elem ) ) {
+				ret = jQuery.style( elem, name );
+			}
+		}
+
+		return ret;
+	};
+}
+
+if ( document.documentElement.currentStyle ) {
+	currentStyle = function( elem, name ) {
+		var left,
+			ret = elem.currentStyle && elem.currentStyle[ name ],
+			rsLeft = elem.runtimeStyle && elem.runtimeStyle[ name ],
+			style = elem.style;
+
+		// From the awesome hack by Dean Edwards
+		// http://erik.eae.net/archives/2007/07/27/18.54.15/#comment-102291
+
+		// If we're not dealing with a regular pixel number
+		// but a number that has a weird ending, we need to convert it to pixels
+		if ( !rnumpx.test( ret ) && rnum.test( ret ) ) {
+			// Remember the original values
+			left = style.left;
+
+			// Put in the new values to get a computed value out
+			if ( rsLeft ) {
+				elem.runtimeStyle.left = elem.currentStyle.left;
+			}
+			style.left = name === "fontSize" ? "1em" : (ret || 0);
+			ret = style.pixelLeft + "px";
+
+			// Revert the changed values
+			style.left = left;
+			if ( rsLeft ) {
+				elem.runtimeStyle.left = rsLeft;
+			}
+		}
+
+		return ret === "" ? "auto" : ret;
+	};
+}
+
+curCSS = getComputedStyle || currentStyle;
+
+function getWH( elem, name, extra ) {
+	var which = name === "width" ? cssWidth : cssHeight,
+		val = name === "width" ? elem.offsetWidth : elem.offsetHeight;
+
+	if ( extra === "border" ) {
+		return val;
+	}
+
+	jQuery.each( which, function() {
+		if ( !extra ) {
+			val -= parseFloat(jQuery.css( elem, "padding" + this )) || 0;
+		}
+
+		if ( extra === "margin" ) {
+			val += parseFloat(jQuery.css( elem, "margin" + this )) || 0;
+
+		} else {
+			val -= parseFloat(jQuery.css( elem, "border" + this + "Width" )) || 0;
+		}
+	});
+
+	return val;
+}
+
 if ( jQuery.expr && jQuery.expr.filters ) {
 	jQuery.expr.filters.hidden = function( elem ) {
-		var width = elem.offsetWidth, height = elem.offsetHeight,
-			skip = elem.nodeName.toLowerCase() === "tr";
+		var width = elem.offsetWidth,
+			height = elem.offsetHeight;
 
-		return width === 0 && height === 0 && !skip ?
-			true :
-			width > 0 && height > 0 && !skip ?
-				false :
-				jQuery.curCSS(elem, "display") === "none";
+		return (width === 0 && height === 0) || (!jQuery.support.reliableHiddenOffsets && (elem.style.display || jQuery.css( elem, "display" )) === "none");
 	};
 
 	jQuery.expr.filters.visible = function( elem ) {
 		return !jQuery.expr.filters.hidden( elem );
 	};
 }
-var jsc = now(),
-	rscript = /<script(.|\s)*?\/script>/gi,
-	rselectTextarea = /select|textarea/i,
-	rinput = /color|date|datetime|email|hidden|month|number|password|range|search|tel|text|time|url|week/i,
-	jsre = /=\?(&|$)/,
+
+
+
+
+var r20 = /%20/g,
+	rbracket = /\[\]$/,
+	rCRLF = /\r?\n/g,
+	rhash = /#.*$/,
+	rheaders = /^(.*?):[ \t]*([^\r\n]*)\r?$/mg, // IE leaves an \r character at EOL
+	rinput = /^(?:color|date|datetime|email|hidden|month|number|password|range|search|tel|text|time|url|week)$/i,
+	// #7653, #8125, #8152: local protocol detection
+	rlocalProtocol = /^(?:about|app|app\-storage|.+\-extension|file|widget):$/,
+	rnoContent = /^(?:GET|HEAD)$/,
+	rprotocol = /^\/\//,
 	rquery = /\?/,
-	rts = /(\?|&)_=.*?(&|$)/,
-	rurl = /^(\w+:)?\/\/([^\/?#]+)/,
-	r20 = /%20/g,
+	rscript = /<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi,
+	rselectTextarea = /^(?:select|textarea)/i,
+	rspacesAjax = /\s+/,
+	rts = /([?&])_=[^&]*/,
+	rurl = /^([\w\+\.\-]+:)(?:\/\/([^\/?#:]*)(?::(\d+))?)?/,
 
 	// Keep a copy of the old load method
-	_load = jQuery.fn.load;
+	_load = jQuery.fn.load,
+
+	/* Prefilters
+	 * 1) They are useful to introduce custom dataTypes (see ajax/jsonp.js for an example)
+	 * 2) These are called:
+	 *    - BEFORE asking for a transport
+	 *    - AFTER param serialization (s.data is a string if s.processData is true)
+	 * 3) key is the dataType
+	 * 4) the catchall symbol "*" can be used
+	 * 5) execution will start with transport dataType and THEN continue down to "*" if needed
+	 */
+	prefilters = {},
+
+	/* Transports bindings
+	 * 1) key is the dataType
+	 * 2) the catchall symbol "*" can be used
+	 * 3) selection will start with transport dataType and THEN go to "*" if needed
+	 */
+	transports = {},
+
+	// Document location
+	ajaxLocation,
+
+	// Document location segments
+	ajaxLocParts;
+
+// #8138, IE may throw an exception when accessing
+// a field from window.location if document.domain has been set
+try {
+	ajaxLocation = location.href;
+} catch( e ) {
+	// Use the href attribute of an A element
+	// since IE will modify it given document.location
+	ajaxLocation = document.createElement( "a" );
+	ajaxLocation.href = "";
+	ajaxLocation = ajaxLocation.href;
+}
+
+// Segment location into parts
+ajaxLocParts = rurl.exec( ajaxLocation.toLowerCase() ) || [];
+
+// Base "constructor" for jQuery.ajaxPrefilter and jQuery.ajaxTransport
+function addToPrefiltersOrTransports( structure ) {
+
+	// dataTypeExpression is optional and defaults to "*"
+	return function( dataTypeExpression, func ) {
+
+		if ( typeof dataTypeExpression !== "string" ) {
+			func = dataTypeExpression;
+			dataTypeExpression = "*";
+		}
+
+		if ( jQuery.isFunction( func ) ) {
+			var dataTypes = dataTypeExpression.toLowerCase().split( rspacesAjax ),
+				i = 0,
+				length = dataTypes.length,
+				dataType,
+				list,
+				placeBefore;
+
+			// For each dataType in the dataTypeExpression
+			for(; i < length; i++ ) {
+				dataType = dataTypes[ i ];
+				// We control if we're asked to add before
+				// any existing element
+				placeBefore = /^\+/.test( dataType );
+				if ( placeBefore ) {
+					dataType = dataType.substr( 1 ) || "*";
+				}
+				list = structure[ dataType ] = structure[ dataType ] || [];
+				// then we add to the structure accordingly
+				list[ placeBefore ? "unshift" : "push" ]( func );
+			}
+		}
+	};
+}
+
+// Base inspection function for prefilters and transports
+function inspectPrefiltersOrTransports( structure, options, originalOptions, jqXHR,
+		dataType /* internal */, inspected /* internal */ ) {
+
+	dataType = dataType || options.dataTypes[ 0 ];
+	inspected = inspected || {};
+
+	inspected[ dataType ] = true;
+
+	var list = structure[ dataType ],
+		i = 0,
+		length = list ? list.length : 0,
+		executeOnly = ( structure === prefilters ),
+		selection;
+
+	for(; i < length && ( executeOnly || !selection ); i++ ) {
+		selection = list[ i ]( options, originalOptions, jqXHR );
+		// If we got redirected to another dataType
+		// we try there if executing only and not done already
+		if ( typeof selection === "string" ) {
+			if ( !executeOnly || inspected[ selection ] ) {
+				selection = undefined;
+			} else {
+				options.dataTypes.unshift( selection );
+				selection = inspectPrefiltersOrTransports(
+						structure, options, originalOptions, jqXHR, selection, inspected );
+			}
+		}
+	}
+	// If we're only executing or nothing was selected
+	// we try the catchall dataType if not done already
+	if ( ( executeOnly || !selection ) && !inspected[ "*" ] ) {
+		selection = inspectPrefiltersOrTransports(
+				structure, options, originalOptions, jqXHR, "*", inspected );
+	}
+	// unnecessary when only executing (prefilters)
+	// but it'll be ignored by the caller in that case
+	return selection;
+}
 
 jQuery.fn.extend({
 	load: function( url, params, callback ) {
-		if ( typeof url !== "string" ) {
-			return _load.call( this, url );
+		if ( typeof url !== "string" && _load ) {
+			return _load.apply( this, arguments );
 
 		// Don't do a request if no elements are being requested
 		} else if ( !this.length ) {
 			return this;
 		}
 
-		var off = url.indexOf(" ");
+		var off = url.indexOf( " " );
 		if ( off >= 0 ) {
-			var selector = url.slice(off, url.length);
-			url = url.slice(0, off);
+			var selector = url.slice( off, url.length );
+			url = url.slice( 0, off );
 		}
 
 		// Default to a GET request
@@ -4806,7 +6740,7 @@ jQuery.fn.extend({
 			if ( jQuery.isFunction( params ) ) {
 				// We assume that it's the callback
 				callback = params;
-				params = null;
+				params = undefined;
 
 			// Otherwise, build a param string
 			} else if ( typeof params === "object" ) {
@@ -4823,26 +6757,34 @@ jQuery.fn.extend({
 			type: type,
 			dataType: "html",
 			data: params,
-			complete: function( res, status ) {
+			// Complete callback (responseText is used internally)
+			complete: function( jqXHR, status, responseText ) {
+				// Store the response as specified by the jqXHR object
+				responseText = jqXHR.responseText;
 				// If successful, inject the HTML into all the matched elements
-				if ( status === "success" || status === "notmodified" ) {
+				if ( jqXHR.isResolved() ) {
+					// #4825: Get the actual response in case
+					// a dataFilter is present in ajaxSettings
+					jqXHR.done(function( r ) {
+						responseText = r;
+					});
 					// See if a selector was specified
 					self.html( selector ?
 						// Create a dummy div to hold the results
-						jQuery("<div />")
+						jQuery("<div>")
 							// inject the contents of the document in, removing the scripts
 							// to avoid any 'Permission Denied' errors in IE
-							.append(res.responseText.replace(rscript, ""))
+							.append(responseText.replace(rscript, ""))
 
 							// Locate the specified elements
 							.find(selector) :
 
 						// If not, just inject the full result
-						res.responseText );
+						responseText );
 				}
 
 				if ( callback ) {
-					self.each( callback, [res.responseText, status, res] );
+					self.each( callback, [ responseText, status, jqXHR ] );
 				}
 			}
 		});
@@ -4851,88 +6793,94 @@ jQuery.fn.extend({
 	},
 
 	serialize: function() {
-		return jQuery.param(this.serializeArray());
+		return jQuery.param( this.serializeArray() );
 	},
+
 	serializeArray: function() {
-		return this.map(function() {
-			return this.elements ? jQuery.makeArray(this.elements) : this;
+		return this.map(function(){
+			return this.elements ? jQuery.makeArray( this.elements ) : this;
 		})
-		.filter(function() {
+		.filter(function(){
 			return this.name && !this.disabled &&
-				(this.checked || rselectTextarea.test(this.nodeName) ||
-					rinput.test(this.type));
+				( this.checked || rselectTextarea.test( this.nodeName ) ||
+					rinput.test( this.type ) );
 		})
-		.map(function( i, elem ) {
-			var val = jQuery(this).val();
+		.map(function( i, elem ){
+			var val = jQuery( this ).val();
 
 			return val == null ?
 				null :
-				jQuery.isArray(val) ?
-					jQuery.map( val, function( val, i ) {
-						return { name: elem.name, value: val };
+				jQuery.isArray( val ) ?
+					jQuery.map( val, function( val, i ){
+						return { name: elem.name, value: val.replace( rCRLF, "\r\n" ) };
 					}) :
-					{ name: elem.name, value: val };
+					{ name: elem.name, value: val.replace( rCRLF, "\r\n" ) };
 		}).get();
 	}
 });
 
 // Attach a bunch of functions for handling common AJAX events
-jQuery.each( "ajaxStart ajaxStop ajaxComplete ajaxError ajaxSuccess ajaxSend".split(" "), function( i, o ) {
-	jQuery.fn[o] = function( f ) {
-		return this.bind(o, f);
+jQuery.each( "ajaxStart ajaxStop ajaxComplete ajaxError ajaxSuccess ajaxSend".split( " " ), function( i, o ){
+	jQuery.fn[ o ] = function( f ){
+		return this.bind( o, f );
+	};
+});
+
+jQuery.each( [ "get", "post" ], function( i, method ) {
+	jQuery[ method ] = function( url, data, callback, type ) {
+		// shift arguments if data argument was omitted
+		if ( jQuery.isFunction( data ) ) {
+			type = type || callback;
+			callback = data;
+			data = undefined;
+		}
+
+		return jQuery.ajax({
+			type: method,
+			url: url,
+			data: data,
+			success: callback,
+			dataType: type
+		});
 	};
 });
 
 jQuery.extend({
 
-	get: function( url, data, callback, type ) {
-		// shift arguments if data argument was omited
-		if ( jQuery.isFunction( data ) ) {
-			type = type || callback;
-			callback = data;
-			data = null;
-		}
-
-		return jQuery.ajax({
-			type: "GET",
-			url: url,
-			data: data,
-			success: callback,
-			dataType: type
-		});
-	},
-
 	getScript: function( url, callback ) {
-		return jQuery.get(url, null, callback, "script");
+		return jQuery.get( url, undefined, callback, "script" );
 	},
 
 	getJSON: function( url, data, callback ) {
-		return jQuery.get(url, data, callback, "json");
+		return jQuery.get( url, data, callback, "json" );
 	},
 
-	post: function( url, data, callback, type ) {
-		// shift arguments if data argument was omited
-		if ( jQuery.isFunction( data ) ) {
-			type = type || callback;
-			callback = data;
-			data = {};
+	// Creates a full fledged settings object into target
+	// with both ajaxSettings and settings fields.
+	// If target is omitted, writes into ajaxSettings.
+	ajaxSetup: function ( target, settings ) {
+		if ( !settings ) {
+			// Only one parameter, we extend ajaxSettings
+			settings = target;
+			target = jQuery.extend( true, jQuery.ajaxSettings, settings );
+		} else {
+			// target was provided, we extend into it
+			jQuery.extend( true, target, jQuery.ajaxSettings, settings );
 		}
-
-		return jQuery.ajax({
-			type: "POST",
-			url: url,
-			data: data,
-			success: callback,
-			dataType: type
-		});
-	},
-
-	ajaxSetup: function( settings ) {
-		jQuery.extend( jQuery.ajaxSettings, settings );
+		// Flatten fields we don't want deep extended
+		for( var field in { context: 1, url: 1 } ) {
+			if ( field in settings ) {
+				target[ field ] = settings[ field ];
+			} else if( field in jQuery.ajaxSettings ) {
+				target[ field ] = jQuery.ajaxSettings[ field ];
+			}
+		}
+		return target;
 	},
 
 	ajaxSettings: {
-		url: location.href,
+		url: ajaxLocation,
+		isLocal: rlocalProtocol.test( ajaxLocParts[ 1 ] ),
 		global: true,
 		type: "GET",
 		contentType: "application/x-www-form-urlencoded",
@@ -4941,507 +6889,1063 @@ jQuery.extend({
 		/*
 		timeout: 0,
 		data: null,
+		dataType: null,
 		username: null,
 		password: null,
+		cache: null,
 		traditional: false,
+		headers: {},
 		*/
-		// Create the request object; Microsoft failed to properly
-		// implement the XMLHttpRequest in IE7 (can't request local files),
-		// so we use the ActiveXObject when it is available
-		// This function can be overriden by calling jQuery.ajaxSetup
-		xhr: window.XMLHttpRequest && (window.location.protocol !== "file:" || !window.ActiveXObject) ?
-			function() {
-				return new window.XMLHttpRequest();
-			} :
-			function() {
-				try {
-					return new window.ActiveXObject("Microsoft.XMLHTTP");
-				} catch(e) {}
-			},
+
 		accepts: {
 			xml: "application/xml, text/xml",
 			html: "text/html",
-			script: "text/javascript, application/javascript",
-			json: "application/json, text/javascript",
 			text: "text/plain",
-			_default: "*/*"
+			json: "application/json, text/javascript",
+			"*": "*/*"
+		},
+
+		contents: {
+			xml: /xml/,
+			html: /html/,
+			json: /json/
+		},
+
+		responseFields: {
+			xml: "responseXML",
+			text: "responseText"
+		},
+
+		// List of data converters
+		// 1) key format is "source_type destination_type" (a single space in-between)
+		// 2) the catchall symbol "*" can be used for source_type
+		converters: {
+
+			// Convert anything to text
+			"* text": window.String,
+
+			// Text to html (true = no transformation)
+			"text html": true,
+
+			// Evaluate text as a json expression
+			"text json": jQuery.parseJSON,
+
+			// Parse text as xml
+			"text xml": jQuery.parseXML
 		}
 	},
 
-	// Last-Modified header cache for next request
-	lastModified: {},
-	etag: {},
+	ajaxPrefilter: addToPrefiltersOrTransports( prefilters ),
+	ajaxTransport: addToPrefiltersOrTransports( transports ),
 
-	ajax: function( origSettings ) {
-		var s = jQuery.extend(true, {}, jQuery.ajaxSettings, origSettings);
-		
-		var jsonp, status, data,
-			callbackContext = origSettings && origSettings.context || s,
-			type = s.type.toUpperCase();
+	// Main method
+	ajax: function( url, options ) {
 
-		// convert data if not already a string
+		// If url is an object, simulate pre-1.5 signature
+		if ( typeof url === "object" ) {
+			options = url;
+			url = undefined;
+		}
+
+		// Force options to be an object
+		options = options || {};
+
+		var // Create the final options object
+			s = jQuery.ajaxSetup( {}, options ),
+			// Callbacks context
+			callbackContext = s.context || s,
+			// Context for global events
+			// It's the callbackContext if one was provided in the options
+			// and if it's a DOM node or a jQuery collection
+			globalEventContext = callbackContext !== s &&
+				( callbackContext.nodeType || callbackContext instanceof jQuery ) ?
+						jQuery( callbackContext ) : jQuery.event,
+			// Deferreds
+			deferred = jQuery.Deferred(),
+			completeDeferred = jQuery._Deferred(),
+			// Status-dependent callbacks
+			statusCode = s.statusCode || {},
+			// ifModified key
+			ifModifiedKey,
+			// Headers (they are sent all at once)
+			requestHeaders = {},
+			requestHeadersNames = {},
+			// Response headers
+			responseHeadersString,
+			responseHeaders,
+			// transport
+			transport,
+			// timeout handle
+			timeoutTimer,
+			// Cross-domain detection vars
+			parts,
+			// The jqXHR state
+			state = 0,
+			// To know if global events are to be dispatched
+			fireGlobals,
+			// Loop variable
+			i,
+			// Fake xhr
+			jqXHR = {
+
+				readyState: 0,
+
+				// Caches the header
+				setRequestHeader: function( name, value ) {
+					if ( !state ) {
+						var lname = name.toLowerCase();
+						name = requestHeadersNames[ lname ] = requestHeadersNames[ lname ] || name;
+						requestHeaders[ name ] = value;
+					}
+					return this;
+				},
+
+				// Raw string
+				getAllResponseHeaders: function() {
+					return state === 2 ? responseHeadersString : null;
+				},
+
+				// Builds headers hashtable if needed
+				getResponseHeader: function( key ) {
+					var match;
+					if ( state === 2 ) {
+						if ( !responseHeaders ) {
+							responseHeaders = {};
+							while( ( match = rheaders.exec( responseHeadersString ) ) ) {
+								responseHeaders[ match[1].toLowerCase() ] = match[ 2 ];
+							}
+						}
+						match = responseHeaders[ key.toLowerCase() ];
+					}
+					return match === undefined ? null : match;
+				},
+
+				// Overrides response content-type header
+				overrideMimeType: function( type ) {
+					if ( !state ) {
+						s.mimeType = type;
+					}
+					return this;
+				},
+
+				// Cancel the request
+				abort: function( statusText ) {
+					statusText = statusText || "abort";
+					if ( transport ) {
+						transport.abort( statusText );
+					}
+					done( 0, statusText );
+					return this;
+				}
+			};
+
+		// Callback for when everything is done
+		// It is defined here because jslint complains if it is declared
+		// at the end of the function (which would be more logical and readable)
+		function done( status, statusText, responses, headers ) {
+
+			// Called once
+			if ( state === 2 ) {
+				return;
+			}
+
+			// State is "done" now
+			state = 2;
+
+			// Clear timeout if it exists
+			if ( timeoutTimer ) {
+				clearTimeout( timeoutTimer );
+			}
+
+			// Dereference transport for early garbage collection
+			// (no matter how long the jqXHR object will be used)
+			transport = undefined;
+
+			// Cache response headers
+			responseHeadersString = headers || "";
+
+			// Set readyState
+			jqXHR.readyState = status ? 4 : 0;
+
+			var isSuccess,
+				success,
+				error,
+				response = responses ? ajaxHandleResponses( s, jqXHR, responses ) : undefined,
+				lastModified,
+				etag;
+
+			// If successful, handle type chaining
+			if ( status >= 200 && status < 300 || status === 304 ) {
+
+				// Set the If-Modified-Since and/or If-None-Match header, if in ifModified mode.
+				if ( s.ifModified ) {
+
+					if ( ( lastModified = jqXHR.getResponseHeader( "Last-Modified" ) ) ) {
+						jQuery.lastModified[ ifModifiedKey ] = lastModified;
+					}
+					if ( ( etag = jqXHR.getResponseHeader( "Etag" ) ) ) {
+						jQuery.etag[ ifModifiedKey ] = etag;
+					}
+				}
+
+				// If not modified
+				if ( status === 304 ) {
+
+					statusText = "notmodified";
+					isSuccess = true;
+
+				// If we have data
+				} else {
+
+					try {
+						success = ajaxConvert( s, response );
+						statusText = "success";
+						isSuccess = true;
+					} catch(e) {
+						// We have a parsererror
+						statusText = "parsererror";
+						error = e;
+					}
+				}
+			} else {
+				// We extract error from statusText
+				// then normalize statusText and status for non-aborts
+				error = statusText;
+				if( !statusText || status ) {
+					statusText = "error";
+					if ( status < 0 ) {
+						status = 0;
+					}
+				}
+			}
+
+			// Set data for the fake xhr object
+			jqXHR.status = status;
+			jqXHR.statusText = statusText;
+
+			// Success/Error
+			if ( isSuccess ) {
+				deferred.resolveWith( callbackContext, [ success, statusText, jqXHR ] );
+			} else {
+				deferred.rejectWith( callbackContext, [ jqXHR, statusText, error ] );
+			}
+
+			// Status-dependent callbacks
+			jqXHR.statusCode( statusCode );
+			statusCode = undefined;
+
+			if ( fireGlobals ) {
+				globalEventContext.trigger( "ajax" + ( isSuccess ? "Success" : "Error" ),
+						[ jqXHR, s, isSuccess ? success : error ] );
+			}
+
+			// Complete
+			completeDeferred.resolveWith( callbackContext, [ jqXHR, statusText ] );
+
+			if ( fireGlobals ) {
+				globalEventContext.trigger( "ajaxComplete", [ jqXHR, s] );
+				// Handle the global AJAX counter
+				if ( !( --jQuery.active ) ) {
+					jQuery.event.trigger( "ajaxStop" );
+				}
+			}
+		}
+
+		// Attach deferreds
+		deferred.promise( jqXHR );
+		jqXHR.success = jqXHR.done;
+		jqXHR.error = jqXHR.fail;
+		jqXHR.complete = completeDeferred.done;
+
+		// Status-dependent callbacks
+		jqXHR.statusCode = function( map ) {
+			if ( map ) {
+				var tmp;
+				if ( state < 2 ) {
+					for( tmp in map ) {
+						statusCode[ tmp ] = [ statusCode[tmp], map[tmp] ];
+					}
+				} else {
+					tmp = map[ jqXHR.status ];
+					jqXHR.then( tmp, tmp );
+				}
+			}
+			return this;
+		};
+
+		// Remove hash character (#7531: and string promotion)
+		// Add protocol if not provided (#5866: IE7 issue with protocol-less urls)
+		// We also use the url parameter if available
+		s.url = ( ( url || s.url ) + "" ).replace( rhash, "" ).replace( rprotocol, ajaxLocParts[ 1 ] + "//" );
+
+		// Extract dataTypes list
+		s.dataTypes = jQuery.trim( s.dataType || "*" ).toLowerCase().split( rspacesAjax );
+
+		// Determine if a cross-domain request is in order
+		if ( s.crossDomain == null ) {
+			parts = rurl.exec( s.url.toLowerCase() );
+			s.crossDomain = !!( parts &&
+				( parts[ 1 ] != ajaxLocParts[ 1 ] || parts[ 2 ] != ajaxLocParts[ 2 ] ||
+					( parts[ 3 ] || ( parts[ 1 ] === "http:" ? 80 : 443 ) ) !=
+						( ajaxLocParts[ 3 ] || ( ajaxLocParts[ 1 ] === "http:" ? 80 : 443 ) ) )
+			);
+		}
+
+		// Convert data if not already a string
 		if ( s.data && s.processData && typeof s.data !== "string" ) {
 			s.data = jQuery.param( s.data, s.traditional );
 		}
 
-		// Handle JSONP Parameter Callbacks
-		if ( s.dataType === "jsonp" ) {
-			if ( type === "GET" ) {
-				if ( !jsre.test( s.url ) ) {
-					s.url += (rquery.test( s.url ) ? "&" : "?") + (s.jsonp || "callback") + "=?";
-				}
-			} else if ( !s.data || !jsre.test(s.data) ) {
-				s.data = (s.data ? s.data + "&" : "") + (s.jsonp || "callback") + "=?";
-			}
-			s.dataType = "json";
-		}
+		// Apply prefilters
+		inspectPrefiltersOrTransports( prefilters, s, options, jqXHR );
 
-		// Build temporary JSONP function
-		if ( s.dataType === "json" && (s.data && jsre.test(s.data) || jsre.test(s.url)) ) {
-			jsonp = s.jsonpCallback || ("jsonp" + jsc++);
-
-			// Replace the =? sequence both in the query string and the data
-			if ( s.data ) {
-				s.data = (s.data + "").replace(jsre, "=" + jsonp + "$1");
-			}
-
-			s.url = s.url.replace(jsre, "=" + jsonp + "$1");
-
-			// We need to make sure
-			// that a JSONP style response is executed properly
-			s.dataType = "script";
-
-			// Handle JSONP-style loading
-			window[ jsonp ] = window[ jsonp ] || function( tmp ) {
-				data = tmp;
-				success();
-				complete();
-				// Garbage collect
-				window[ jsonp ] = undefined;
-
-				try {
-					delete window[ jsonp ];
-				} catch(e) {}
-
-				if ( head ) {
-					head.removeChild( script );
-				}
-			};
-		}
-
-		if ( s.dataType === "script" && s.cache === null ) {
-			s.cache = false;
-		}
-
-		if ( s.cache === false && type === "GET" ) {
-			var ts = now();
-
-			// try replacing _= if it is there
-			var ret = s.url.replace(rts, "$1_=" + ts + "$2");
-
-			// if nothing was replaced, add timestamp to the end
-			s.url = ret + ((ret === s.url) ? (rquery.test(s.url) ? "&" : "?") + "_=" + ts : "");
-		}
-
-		// If data is available, append data to url for get requests
-		if ( s.data && type === "GET" ) {
-			s.url += (rquery.test(s.url) ? "&" : "?") + s.data;
-		}
-
-		// Watch for a new set of requests
-		if ( s.global && ! jQuery.active++ ) {
-			jQuery.event.trigger( "ajaxStart" );
-		}
-
-		// Matches an absolute URL, and saves the domain
-		var parts = rurl.exec( s.url ),
-			remote = parts && (parts[1] && parts[1] !== location.protocol || parts[2] !== location.host);
-
-		// If we're requesting a remote document
-		// and trying to load JSON or Script with a GET
-		if ( s.dataType === "script" && type === "GET" && remote ) {
-			var head = document.getElementsByTagName("head")[0] || document.documentElement;
-			var script = document.createElement("script");
-			script.src = s.url;
-			if ( s.scriptCharset ) {
-				script.charset = s.scriptCharset;
-			}
-
-			// Handle Script loading
-			if ( !jsonp ) {
-				var done = false;
-
-				// Attach handlers for all browsers
-				script.onload = script.onreadystatechange = function() {
-					if ( !done && (!this.readyState ||
-							this.readyState === "loaded" || this.readyState === "complete") ) {
-						done = true;
-						success();
-						complete();
-
-						// Handle memory leak in IE
-						script.onload = script.onreadystatechange = null;
-						if ( head && script.parentNode ) {
-							head.removeChild( script );
-						}
-					}
-				};
-			}
-
-			// Use insertBefore instead of appendChild  to circumvent an IE6 bug.
-			// This arises when a base node is used (#2709 and #4378).
-			head.insertBefore( script, head.firstChild );
-
-			// We handle everything using the script element injection
-			return undefined;
-		}
-
-		var requestDone = false;
-
-		// Create the request object
-		var xhr = s.xhr();
-
-		if ( !xhr ) {
-			return;
-		}
-
-		// Open the socket
-		// Passing null username, generates a login popup on Opera (#2865)
-		if ( s.username ) {
-			xhr.open(type, s.url, s.async, s.username, s.password);
-		} else {
-			xhr.open(type, s.url, s.async);
-		}
-
-		// Need an extra try/catch for cross domain requests in Firefox 3
-		try {
-			// Set the correct header, if data is being sent
-			if ( s.data || origSettings && origSettings.contentType ) {
-				xhr.setRequestHeader("Content-Type", s.contentType);
-			}
-
-			// Set the If-Modified-Since and/or If-None-Match header, if in ifModified mode.
-			if ( s.ifModified ) {
-				if ( jQuery.lastModified[s.url] ) {
-					xhr.setRequestHeader("If-Modified-Since", jQuery.lastModified[s.url]);
-				}
-
-				if ( jQuery.etag[s.url] ) {
-					xhr.setRequestHeader("If-None-Match", jQuery.etag[s.url]);
-				}
-			}
-
-			// Set header so the called script knows that it's an XMLHttpRequest
-			// Only send the header if it's not a remote XHR
-			if ( !remote ) {
-				xhr.setRequestHeader("X-Requested-With", "XMLHttpRequest");
-			}
-
-			// Set the Accepts header for the server, depending on the dataType
-			xhr.setRequestHeader("Accept", s.dataType && s.accepts[ s.dataType ] ?
-				s.accepts[ s.dataType ] + ", */*" :
-				s.accepts._default );
-		} catch(e) {}
-
-		// Allow custom headers/mimetypes and early abort
-		if ( s.beforeSend && s.beforeSend.call(callbackContext, xhr, s) === false ) {
-			// Handle the global AJAX counter
-			if ( s.global && ! --jQuery.active ) {
-				jQuery.event.trigger( "ajaxStop" );
-			}
-
-			// close opended socket
-			xhr.abort();
+		// If request was aborted inside a prefiler, stop there
+		if ( state === 2 ) {
 			return false;
 		}
 
-		if ( s.global ) {
-			trigger("ajaxSend", [xhr, s]);
+		// We can fire global events as of now if asked to
+		fireGlobals = s.global;
+
+		// Uppercase the type
+		s.type = s.type.toUpperCase();
+
+		// Determine if request has content
+		s.hasContent = !rnoContent.test( s.type );
+
+		// Watch for a new set of requests
+		if ( fireGlobals && jQuery.active++ === 0 ) {
+			jQuery.event.trigger( "ajaxStart" );
 		}
 
-		// Wait for a response to come back
-		var onreadystatechange = xhr.onreadystatechange = function( isTimeout ) {
-			// The request was aborted
-			if ( !xhr || xhr.readyState === 0 || isTimeout === "abort" ) {
-				// Opera doesn't call onreadystatechange before this point
-				// so we simulate the call
-				if ( !requestDone ) {
-					complete();
-				}
+		// More options handling for requests with no content
+		if ( !s.hasContent ) {
 
-				requestDone = true;
-				if ( xhr ) {
-					xhr.onreadystatechange = jQuery.noop;
-				}
+			// If data is available, append data to url
+			if ( s.data ) {
+				s.url += ( rquery.test( s.url ) ? "&" : "?" ) + s.data;
+			}
 
-			// The transfer is complete and the data is available, or the request timed out
-			} else if ( !requestDone && xhr && (xhr.readyState === 4 || isTimeout === "timeout") ) {
-				requestDone = true;
-				xhr.onreadystatechange = jQuery.noop;
+			// Get ifModifiedKey before adding the anti-cache parameter
+			ifModifiedKey = s.url;
 
-				status = isTimeout === "timeout" ?
-					"timeout" :
-					!jQuery.httpSuccess( xhr ) ?
-						"error" :
-						s.ifModified && jQuery.httpNotModified( xhr, s.url ) ?
-							"notmodified" :
-							"success";
+			// Add anti-cache in url if needed
+			if ( s.cache === false ) {
 
-				var errMsg;
+				var ts = jQuery.now(),
+					// try replacing _= if it is there
+					ret = s.url.replace( rts, "$1_=" + ts );
 
-				if ( status === "success" ) {
-					// Watch for, and catch, XML document parse errors
-					try {
-						// process the data (runs the xml through httpData regardless of callback)
-						data = jQuery.httpData( xhr, s.dataType, s );
-					} catch(err) {
-						status = "parsererror";
-						errMsg = err;
-					}
-				}
+				// if nothing was replaced, add timestamp to the end
+				s.url = ret + ( (ret === s.url ) ? ( rquery.test( s.url ) ? "&" : "?" ) + "_=" + ts : "" );
+			}
+		}
 
-				// Make sure that the request was successful or notmodified
-				if ( status === "success" || status === "notmodified" ) {
-					// JSONP handles its own success callback
-					if ( !jsonp ) {
-						success();
-					}
+		// Set the correct header, if data is being sent
+		if ( s.data && s.hasContent && s.contentType !== false || options.contentType ) {
+			jqXHR.setRequestHeader( "Content-Type", s.contentType );
+		}
+
+		// Set the If-Modified-Since and/or If-None-Match header, if in ifModified mode.
+		if ( s.ifModified ) {
+			ifModifiedKey = ifModifiedKey || s.url;
+			if ( jQuery.lastModified[ ifModifiedKey ] ) {
+				jqXHR.setRequestHeader( "If-Modified-Since", jQuery.lastModified[ ifModifiedKey ] );
+			}
+			if ( jQuery.etag[ ifModifiedKey ] ) {
+				jqXHR.setRequestHeader( "If-None-Match", jQuery.etag[ ifModifiedKey ] );
+			}
+		}
+
+		// Set the Accepts header for the server, depending on the dataType
+		jqXHR.setRequestHeader(
+			"Accept",
+			s.dataTypes[ 0 ] && s.accepts[ s.dataTypes[0] ] ?
+				s.accepts[ s.dataTypes[0] ] + ( s.dataTypes[ 0 ] !== "*" ? ", */*; q=0.01" : "" ) :
+				s.accepts[ "*" ]
+		);
+
+		// Check for headers option
+		for ( i in s.headers ) {
+			jqXHR.setRequestHeader( i, s.headers[ i ] );
+		}
+
+		// Allow custom headers/mimetypes and early abort
+		if ( s.beforeSend && ( s.beforeSend.call( callbackContext, jqXHR, s ) === false || state === 2 ) ) {
+				// Abort if not done already
+				jqXHR.abort();
+				return false;
+
+		}
+
+		// Install callbacks on deferreds
+		for ( i in { success: 1, error: 1, complete: 1 } ) {
+			jqXHR[ i ]( s[ i ] );
+		}
+
+		// Get transport
+		transport = inspectPrefiltersOrTransports( transports, s, options, jqXHR );
+
+		// If no transport, we auto-abort
+		if ( !transport ) {
+			done( -1, "No Transport" );
+		} else {
+			jqXHR.readyState = 1;
+			// Send global event
+			if ( fireGlobals ) {
+				globalEventContext.trigger( "ajaxSend", [ jqXHR, s ] );
+			}
+			// Timeout
+			if ( s.async && s.timeout > 0 ) {
+				timeoutTimer = setTimeout( function(){
+					jqXHR.abort( "timeout" );
+				}, s.timeout );
+			}
+
+			try {
+				state = 1;
+				transport.send( requestHeaders, done );
+			} catch (e) {
+				// Propagate exception as error if not done
+				if ( status < 2 ) {
+					done( -1, e );
+				// Simply rethrow otherwise
 				} else {
-					jQuery.handleError(s, xhr, status, errMsg);
-				}
-
-				// Fire the complete handlers
-				complete();
-
-				if ( isTimeout === "timeout" ) {
-					xhr.abort();
-				}
-
-				// Stop memory leaks
-				if ( s.async ) {
-					xhr = null;
+					jQuery.error( e );
 				}
 			}
-		};
-
-		// Override the abort handler, if we can (IE doesn't allow it, but that's OK)
-		// Opera doesn't fire onreadystatechange at all on abort
-		try {
-			var oldAbort = xhr.abort;
-			xhr.abort = function() {
-				if ( xhr ) {
-					oldAbort.call( xhr );
-				}
-
-				onreadystatechange( "abort" );
-			};
-		} catch(e) { }
-
-		// Timeout checker
-		if ( s.async && s.timeout > 0 ) {
-			setTimeout(function() {
-				// Check to see if the request is still happening
-				if ( xhr && !requestDone ) {
-					onreadystatechange( "timeout" );
-				}
-			}, s.timeout);
 		}
 
-		// Send the data
-		try {
-			xhr.send( type === "POST" || type === "PUT" || type === "DELETE" ? s.data : null );
-		} catch(e) {
-			jQuery.handleError(s, xhr, null, e);
-			// Fire the complete handlers
-			complete();
-		}
-
-		// firefox 1.5 doesn't fire statechange for sync requests
-		if ( !s.async ) {
-			onreadystatechange();
-		}
-
-		function success() {
-			// If a local callback was specified, fire it and pass it the data
-			if ( s.success ) {
-				s.success.call( callbackContext, data, status, xhr );
-			}
-
-			// Fire the global callback
-			if ( s.global ) {
-				trigger( "ajaxSuccess", [xhr, s] );
-			}
-		}
-
-		function complete() {
-			// Process result
-			if ( s.complete ) {
-				s.complete.call( callbackContext, xhr, status);
-			}
-
-			// The request was completed
-			if ( s.global ) {
-				trigger( "ajaxComplete", [xhr, s] );
-			}
-
-			// Handle the global AJAX counter
-			if ( s.global && ! --jQuery.active ) {
-				jQuery.event.trigger( "ajaxStop" );
-			}
-		}
-		
-		function trigger(type, args) {
-			(s.context ? jQuery(s.context) : jQuery.event).trigger(type, args);
-		}
-
-		// return XMLHttpRequest to allow aborting the request etc.
-		return xhr;
-	},
-
-	handleError: function( s, xhr, status, e ) {
-		// If a local callback was specified, fire it
-		if ( s.error ) {
-			s.error.call( s.context || s, xhr, status, e );
-		}
-
-		// Fire the global callback
-		if ( s.global ) {
-			(s.context ? jQuery(s.context) : jQuery.event).trigger( "ajaxError", [xhr, s, e] );
-		}
-	},
-
-	// Counter for holding the number of active queries
-	active: 0,
-
-	// Determines if an XMLHttpRequest was successful or not
-	httpSuccess: function( xhr ) {
-		try {
-			// IE error sometimes returns 1223 when it should be 204 so treat it as success, see #1450
-			return !xhr.status && location.protocol === "file:" ||
-				// Opera returns 0 when status is 304
-				( xhr.status >= 200 && xhr.status < 300 ) ||
-				xhr.status === 304 || xhr.status === 1223 || xhr.status === 0;
-		} catch(e) {}
-
-		return false;
-	},
-
-	// Determines if an XMLHttpRequest returns NotModified
-	httpNotModified: function( xhr, url ) {
-		var lastModified = xhr.getResponseHeader("Last-Modified"),
-			etag = xhr.getResponseHeader("Etag");
-
-		if ( lastModified ) {
-			jQuery.lastModified[url] = lastModified;
-		}
-
-		if ( etag ) {
-			jQuery.etag[url] = etag;
-		}
-
-		// Opera returns 0 when status is 304
-		return xhr.status === 304 || xhr.status === 0;
-	},
-
-	httpData: function( xhr, type, s ) {
-		var ct = xhr.getResponseHeader("content-type") || "",
-			xml = type === "xml" || !type && ct.indexOf("xml") >= 0,
-			data = xml ? xhr.responseXML : xhr.responseText;
-
-		if ( xml && data.documentElement.nodeName === "parsererror" ) {
-			jQuery.error( "parsererror" );
-		}
-
-		// Allow a pre-filtering function to sanitize the response
-		// s is checked to keep backwards compatibility
-		if ( s && s.dataFilter ) {
-			data = s.dataFilter( data, type );
-		}
-
-		// The filter can actually parse the response
-		if ( typeof data === "string" ) {
-			// Get the JavaScript object, if JSON is used.
-			if ( type === "json" || !type && ct.indexOf("json") >= 0 ) {
-				data = jQuery.parseJSON( data );
-
-			// If the type is "script", eval it in global context
-			} else if ( type === "script" || !type && ct.indexOf("javascript") >= 0 ) {
-				jQuery.globalEval( data );
-			}
-		}
-
-		return data;
+		return jqXHR;
 	},
 
 	// Serialize an array of form elements or a set of
 	// key/values into a query string
 	param: function( a, traditional ) {
-		var s = [];
-		
+		var s = [],
+			add = function( key, value ) {
+				// If value is a function, invoke it and return its value
+				value = jQuery.isFunction( value ) ? value() : value;
+				s[ s.length ] = encodeURIComponent( key ) + "=" + encodeURIComponent( value );
+			};
+
 		// Set traditional to true for jQuery <= 1.3.2 behavior.
 		if ( traditional === undefined ) {
 			traditional = jQuery.ajaxSettings.traditional;
 		}
-		
+
 		// If an array was passed in, assume that it is an array of form elements.
-		if ( jQuery.isArray(a) || a.jquery ) {
+		if ( jQuery.isArray( a ) || ( a.jquery && !jQuery.isPlainObject( a ) ) ) {
 			// Serialize the form elements
 			jQuery.each( a, function() {
 				add( this.name, this.value );
 			});
-			
+
 		} else {
 			// If traditional, encode the "old" way (the way 1.3.2 or older
 			// did it), otherwise encode params recursively.
 			for ( var prefix in a ) {
-				buildParams( prefix, a[prefix] );
+				buildParams( prefix, a[ prefix ], traditional, add );
 			}
 		}
 
 		// Return the resulting serialization
-		return s.join("&").replace(r20, "+");
+		return s.join( "&" ).replace( r20, "+" );
+	}
+});
 
-		function buildParams( prefix, obj ) {
-			if ( jQuery.isArray(obj) ) {
-				// Serialize array item.
-				jQuery.each( obj, function( i, v ) {
-					if ( traditional || /\[\]$/.test( prefix ) ) {
-						// Treat each array item as a scalar.
-						add( prefix, v );
-					} else {
-						// If array item is non-scalar (array or object), encode its
-						// numeric index to resolve deserialization ambiguity issues.
-						// Note that rack (as of 1.0.0) can't currently deserialize
-						// nested arrays properly, and attempting to do so may cause
-						// a server error. Possible fixes are to modify rack's
-						// deserialization algorithm or to provide an option or flag
-						// to force array serialization to be shallow.
-						buildParams( prefix + "[" + ( typeof v === "object" || jQuery.isArray(v) ? i : "" ) + "]", v );
-					}
-				});
-					
-			} else if ( !traditional && obj != null && typeof obj === "object" ) {
-				// Serialize object item.
-				jQuery.each( obj, function( k, v ) {
-					buildParams( prefix + "[" + k + "]", v );
-				});
-					
+function buildParams( prefix, obj, traditional, add ) {
+	if ( jQuery.isArray( obj ) ) {
+		// Serialize array item.
+		jQuery.each( obj, function( i, v ) {
+			if ( traditional || rbracket.test( prefix ) ) {
+				// Treat each array item as a scalar.
+				add( prefix, v );
+
 			} else {
-				// Serialize scalar item.
-				add( prefix, obj );
+				// If array item is non-scalar (array or object), encode its
+				// numeric index to resolve deserialization ambiguity issues.
+				// Note that rack (as of 1.0.0) can't currently deserialize
+				// nested arrays properly, and attempting to do so may cause
+				// a server error. Possible fixes are to modify rack's
+				// deserialization algorithm or to provide an option or flag
+				// to force array serialization to be shallow.
+				buildParams( prefix + "[" + ( typeof v === "object" || jQuery.isArray(v) ? i : "" ) + "]", v, traditional, add );
+			}
+		});
+
+	} else if ( !traditional && obj != null && typeof obj === "object" ) {
+		// Serialize object item.
+		for ( var name in obj ) {
+			buildParams( prefix + "[" + name + "]", obj[ name ], traditional, add );
+		}
+
+	} else {
+		// Serialize scalar item.
+		add( prefix, obj );
+	}
+}
+
+// This is still on the jQuery object... for now
+// Want to move this to jQuery.ajax some day
+jQuery.extend({
+
+	// Counter for holding the number of active queries
+	active: 0,
+
+	// Last-Modified header cache for next request
+	lastModified: {},
+	etag: {}
+
+});
+
+/* Handles responses to an ajax request:
+ * - sets all responseXXX fields accordingly
+ * - finds the right dataType (mediates between content-type and expected dataType)
+ * - returns the corresponding response
+ */
+function ajaxHandleResponses( s, jqXHR, responses ) {
+
+	var contents = s.contents,
+		dataTypes = s.dataTypes,
+		responseFields = s.responseFields,
+		ct,
+		type,
+		finalDataType,
+		firstDataType;
+
+	// Fill responseXXX fields
+	for( type in responseFields ) {
+		if ( type in responses ) {
+			jqXHR[ responseFields[type] ] = responses[ type ];
+		}
+	}
+
+	// Remove auto dataType and get content-type in the process
+	while( dataTypes[ 0 ] === "*" ) {
+		dataTypes.shift();
+		if ( ct === undefined ) {
+			ct = s.mimeType || jqXHR.getResponseHeader( "content-type" );
+		}
+	}
+
+	// Check if we're dealing with a known content-type
+	if ( ct ) {
+		for ( type in contents ) {
+			if ( contents[ type ] && contents[ type ].test( ct ) ) {
+				dataTypes.unshift( type );
+				break;
+			}
+		}
+	}
+
+	// Check to see if we have a response for the expected dataType
+	if ( dataTypes[ 0 ] in responses ) {
+		finalDataType = dataTypes[ 0 ];
+	} else {
+		// Try convertible dataTypes
+		for ( type in responses ) {
+			if ( !dataTypes[ 0 ] || s.converters[ type + " " + dataTypes[0] ] ) {
+				finalDataType = type;
+				break;
+			}
+			if ( !firstDataType ) {
+				firstDataType = type;
+			}
+		}
+		// Or just use first one
+		finalDataType = finalDataType || firstDataType;
+	}
+
+	// If we found a dataType
+	// We add the dataType to the list if needed
+	// and return the corresponding response
+	if ( finalDataType ) {
+		if ( finalDataType !== dataTypes[ 0 ] ) {
+			dataTypes.unshift( finalDataType );
+		}
+		return responses[ finalDataType ];
+	}
+}
+
+// Chain conversions given the request and the original response
+function ajaxConvert( s, response ) {
+
+	// Apply the dataFilter if provided
+	if ( s.dataFilter ) {
+		response = s.dataFilter( response, s.dataType );
+	}
+
+	var dataTypes = s.dataTypes,
+		converters = {},
+		i,
+		key,
+		length = dataTypes.length,
+		tmp,
+		// Current and previous dataTypes
+		current = dataTypes[ 0 ],
+		prev,
+		// Conversion expression
+		conversion,
+		// Conversion function
+		conv,
+		// Conversion functions (transitive conversion)
+		conv1,
+		conv2;
+
+	// For each dataType in the chain
+	for( i = 1; i < length; i++ ) {
+
+		// Create converters map
+		// with lowercased keys
+		if ( i === 1 ) {
+			for( key in s.converters ) {
+				if( typeof key === "string" ) {
+					converters[ key.toLowerCase() ] = s.converters[ key ];
+				}
 			}
 		}
 
-		function add( key, value ) {
-			// If value is a function, invoke it and return its value
-			value = jQuery.isFunction(value) ? value() : value;
-			s[ s.length ] = encodeURIComponent(key) + "=" + encodeURIComponent(value);
+		// Get the dataTypes
+		prev = current;
+		current = dataTypes[ i ];
+
+		// If current is auto dataType, update it to prev
+		if( current === "*" ) {
+			current = prev;
+		// If no auto and dataTypes are actually different
+		} else if ( prev !== "*" && prev !== current ) {
+
+			// Get the converter
+			conversion = prev + " " + current;
+			conv = converters[ conversion ] || converters[ "* " + current ];
+
+			// If there is no direct converter, search transitively
+			if ( !conv ) {
+				conv2 = undefined;
+				for( conv1 in converters ) {
+					tmp = conv1.split( " " );
+					if ( tmp[ 0 ] === prev || tmp[ 0 ] === "*" ) {
+						conv2 = converters[ tmp[1] + " " + current ];
+						if ( conv2 ) {
+							conv1 = converters[ conv1 ];
+							if ( conv1 === true ) {
+								conv = conv2;
+							} else if ( conv2 === true ) {
+								conv = conv1;
+							}
+							break;
+						}
+					}
+				}
+			}
+			// If we found no converter, dispatch an error
+			if ( !( conv || conv2 ) ) {
+				jQuery.error( "No conversion from " + conversion.replace(" "," to ") );
+			}
+			// If found converter is not an equivalence
+			if ( conv !== true ) {
+				// Convert with 1 or 2 converters accordingly
+				response = conv ? conv( response ) : conv2( conv1(response) );
+			}
+		}
+	}
+	return response;
+}
+
+
+
+
+var jsc = jQuery.now(),
+	jsre = /(\=)\?(&|$)|\?\?/i;
+
+// Default jsonp settings
+jQuery.ajaxSetup({
+	jsonp: "callback",
+	jsonpCallback: function() {
+		return jQuery.expando + "_" + ( jsc++ );
+	}
+});
+
+// Detect, normalize options and install callbacks for jsonp requests
+jQuery.ajaxPrefilter( "json jsonp", function( s, originalSettings, jqXHR ) {
+
+	var inspectData = s.contentType === "application/x-www-form-urlencoded" &&
+		( typeof s.data === "string" );
+
+	if ( s.dataTypes[ 0 ] === "jsonp" ||
+		s.jsonp !== false && ( jsre.test( s.url ) ||
+				inspectData && jsre.test( s.data ) ) ) {
+
+		var responseContainer,
+			jsonpCallback = s.jsonpCallback =
+				jQuery.isFunction( s.jsonpCallback ) ? s.jsonpCallback() : s.jsonpCallback,
+			previous = window[ jsonpCallback ],
+			url = s.url,
+			data = s.data,
+			replace = "$1" + jsonpCallback + "$2";
+
+		if ( s.jsonp !== false ) {
+			url = url.replace( jsre, replace );
+			if ( s.url === url ) {
+				if ( inspectData ) {
+					data = data.replace( jsre, replace );
+				}
+				if ( s.data === data ) {
+					// Add callback manually
+					url += (/\?/.test( url ) ? "&" : "?") + s.jsonp + "=" + jsonpCallback;
+				}
+			}
+		}
+
+		s.url = url;
+		s.data = data;
+
+		// Install callback
+		window[ jsonpCallback ] = function( response ) {
+			responseContainer = [ response ];
+		};
+
+		// Clean-up function
+		jqXHR.always(function() {
+			// Set callback back to previous value
+			window[ jsonpCallback ] = previous;
+			// Call if it was a function and we have a response
+			if ( responseContainer && jQuery.isFunction( previous ) ) {
+				window[ jsonpCallback ]( responseContainer[ 0 ] );
+			}
+		});
+
+		// Use data converter to retrieve json after script execution
+		s.converters["script json"] = function() {
+			if ( !responseContainer ) {
+				jQuery.error( jsonpCallback + " was not called" );
+			}
+			return responseContainer[ 0 ];
+		};
+
+		// force json dataType
+		s.dataTypes[ 0 ] = "json";
+
+		// Delegate to script
+		return "script";
+	}
+});
+
+
+
+
+// Install script dataType
+jQuery.ajaxSetup({
+	accepts: {
+		script: "text/javascript, application/javascript, application/ecmascript, application/x-ecmascript"
+	},
+	contents: {
+		script: /javascript|ecmascript/
+	},
+	converters: {
+		"text script": function( text ) {
+			jQuery.globalEval( text );
+			return text;
 		}
 	}
 });
+
+// Handle cache's special case and global
+jQuery.ajaxPrefilter( "script", function( s ) {
+	if ( s.cache === undefined ) {
+		s.cache = false;
+	}
+	if ( s.crossDomain ) {
+		s.type = "GET";
+		s.global = false;
+	}
+});
+
+// Bind script tag hack transport
+jQuery.ajaxTransport( "script", function(s) {
+
+	// This transport only deals with cross domain requests
+	if ( s.crossDomain ) {
+
+		var script,
+			head = document.head || document.getElementsByTagName( "head" )[0] || document.documentElement;
+
+		return {
+
+			send: function( _, callback ) {
+
+				script = document.createElement( "script" );
+
+				script.async = "async";
+
+				if ( s.scriptCharset ) {
+					script.charset = s.scriptCharset;
+				}
+
+				script.src = s.url;
+
+				// Attach handlers for all browsers
+				script.onload = script.onreadystatechange = function( _, isAbort ) {
+
+					if ( isAbort || !script.readyState || /loaded|complete/.test( script.readyState ) ) {
+
+						// Handle memory leak in IE
+						script.onload = script.onreadystatechange = null;
+
+						// Remove the script
+						if ( head && script.parentNode ) {
+							head.removeChild( script );
+						}
+
+						// Dereference the script
+						script = undefined;
+
+						// Callback if not abort
+						if ( !isAbort ) {
+							callback( 200, "success" );
+						}
+					}
+				};
+				// Use insertBefore instead of appendChild  to circumvent an IE6 bug.
+				// This arises when a base node is used (#2709 and #4378).
+				head.insertBefore( script, head.firstChild );
+			},
+
+			abort: function() {
+				if ( script ) {
+					script.onload( 0, 1 );
+				}
+			}
+		};
+	}
+});
+
+
+
+
+var // #5280: Internet Explorer will keep connections alive if we don't abort on unload
+	xhrOnUnloadAbort = window.ActiveXObject ? function() {
+		// Abort all pending requests
+		for ( var key in xhrCallbacks ) {
+			xhrCallbacks[ key ]( 0, 1 );
+		}
+	} : false,
+	xhrId = 0,
+	xhrCallbacks;
+
+// Functions to create xhrs
+function createStandardXHR() {
+	try {
+		return new window.XMLHttpRequest();
+	} catch( e ) {}
+}
+
+function createActiveXHR() {
+	try {
+		return new window.ActiveXObject( "Microsoft.XMLHTTP" );
+	} catch( e ) {}
+}
+
+// Create the request object
+// (This is still attached to ajaxSettings for backward compatibility)
+jQuery.ajaxSettings.xhr = window.ActiveXObject ?
+	/* Microsoft failed to properly
+	 * implement the XMLHttpRequest in IE7 (can't request local files),
+	 * so we use the ActiveXObject when it is available
+	 * Additionally XMLHttpRequest can be disabled in IE7/IE8 so
+	 * we need a fallback.
+	 */
+	function() {
+		return !this.isLocal && createStandardXHR() || createActiveXHR();
+	} :
+	// For all other browsers, use the standard XMLHttpRequest object
+	createStandardXHR;
+
+// Determine support properties
+(function( xhr ) {
+	jQuery.extend( jQuery.support, {
+		ajax: !!xhr,
+		cors: !!xhr && ( "withCredentials" in xhr )
+	});
+})( jQuery.ajaxSettings.xhr() );
+
+// Create transport if the browser can provide an xhr
+if ( jQuery.support.ajax ) {
+
+	jQuery.ajaxTransport(function( s ) {
+		// Cross domain only allowed if supported through XMLHttpRequest
+		if ( !s.crossDomain || jQuery.support.cors ) {
+
+			var callback;
+
+			return {
+				send: function( headers, complete ) {
+
+					// Get a new xhr
+					var xhr = s.xhr(),
+						handle,
+						i;
+
+					// Open the socket
+					// Passing null username, generates a login popup on Opera (#2865)
+					if ( s.username ) {
+						xhr.open( s.type, s.url, s.async, s.username, s.password );
+					} else {
+						xhr.open( s.type, s.url, s.async );
+					}
+
+					// Apply custom fields if provided
+					if ( s.xhrFields ) {
+						for ( i in s.xhrFields ) {
+							xhr[ i ] = s.xhrFields[ i ];
+						}
+					}
+
+					// Override mime type if needed
+					if ( s.mimeType && xhr.overrideMimeType ) {
+						xhr.overrideMimeType( s.mimeType );
+					}
+
+					// X-Requested-With header
+					// For cross-domain requests, seeing as conditions for a preflight are
+					// akin to a jigsaw puzzle, we simply never set it to be sure.
+					// (it can always be set on a per-request basis or even using ajaxSetup)
+					// For same-domain requests, won't change header if already provided.
+					if ( !s.crossDomain && !headers["X-Requested-With"] ) {
+						headers[ "X-Requested-With" ] = "XMLHttpRequest";
+					}
+
+					// Need an extra try/catch for cross domain requests in Firefox 3
+					try {
+						for ( i in headers ) {
+							xhr.setRequestHeader( i, headers[ i ] );
+						}
+					} catch( _ ) {}
+
+					// Do send the request
+					// This may raise an exception which is actually
+					// handled in jQuery.ajax (so no try/catch here)
+					xhr.send( ( s.hasContent && s.data ) || null );
+
+					// Listener
+					callback = function( _, isAbort ) {
+
+						var status,
+							statusText,
+							responseHeaders,
+							responses,
+							xml;
+
+						// Firefox throws exceptions when accessing properties
+						// of an xhr when a network error occured
+						// http://helpful.knobs-dials.com/index.php/Component_returned_failure_code:_0x80040111_(NS_ERROR_NOT_AVAILABLE)
+						try {
+
+							// Was never called and is aborted or complete
+							if ( callback && ( isAbort || xhr.readyState === 4 ) ) {
+
+								// Only called once
+								callback = undefined;
+
+								// Do not keep as active anymore
+								if ( handle ) {
+									xhr.onreadystatechange = jQuery.noop;
+									if ( xhrOnUnloadAbort ) {
+										delete xhrCallbacks[ handle ];
+									}
+								}
+
+								// If it's an abort
+								if ( isAbort ) {
+									// Abort it manually if needed
+									if ( xhr.readyState !== 4 ) {
+										xhr.abort();
+									}
+								} else {
+									status = xhr.status;
+									responseHeaders = xhr.getAllResponseHeaders();
+									responses = {};
+									xml = xhr.responseXML;
+
+									// Construct response list
+									if ( xml && xml.documentElement /* #4958 */ ) {
+										responses.xml = xml;
+									}
+									responses.text = xhr.responseText;
+
+									// Firefox throws an exception when accessing
+									// statusText for faulty cross-domain requests
+									try {
+										statusText = xhr.statusText;
+									} catch( e ) {
+										// We normalize with Webkit giving an empty statusText
+										statusText = "";
+									}
+
+									// Filter status for non standard behaviors
+
+									// If the request is local and we have data: assume a success
+									// (success with no data won't get notified, that's the best we
+									// can do given current implementations)
+									if ( !status && s.isLocal && !s.crossDomain ) {
+										status = responses.text ? 200 : 404;
+									// IE - #1450: sometimes returns 1223 when it should be 204
+									} else if ( status === 1223 ) {
+										status = 204;
+									}
+								}
+							}
+						} catch( firefoxAccessException ) {
+							if ( !isAbort ) {
+								complete( -1, firefoxAccessException );
+							}
+						}
+
+						// Call complete if needed
+						if ( responses ) {
+							complete( status, statusText, responses, responseHeaders );
+						}
+					};
+
+					// if we're in sync mode or it's in cache
+					// and has been retrieved directly (IE6 & IE7)
+					// we need to manually fire the callback
+					if ( !s.async || xhr.readyState === 4 ) {
+						callback();
+					} else {
+						handle = ++xhrId;
+						if ( xhrOnUnloadAbort ) {
+							// Create the active xhrs callbacks list if needed
+							// and attach the unload handler
+							if ( !xhrCallbacks ) {
+								xhrCallbacks = {};
+								jQuery( window ).unload( xhrOnUnloadAbort );
+							}
+							// Add to list of active xhrs callbacks
+							xhrCallbacks[ handle ] = callback;
+						}
+						xhr.onreadystatechange = callback;
+					}
+				},
+
+				abort: function() {
+					if ( callback ) {
+						callback(0,1);
+					}
+				}
+			};
+		}
+	});
+}
+
+
+
+
 var elemdisplay = {},
-	rfxtypes = /toggle|show|hide/,
-	rfxnum = /^([+-]=)?([\d+-.]+)(.*)$/,
+	iframe, iframeDoc,
+	rfxtypes = /^(?:toggle|show|hide)$/,
+	rfxnum = /^([+\-]=)?([\d+.\-]+)([a-z%]*)$/i,
 	timerId,
 	fxAttrs = [
 		// height animations
@@ -5450,69 +7954,80 @@ var elemdisplay = {},
 		[ "width", "marginLeft", "marginRight", "paddingLeft", "paddingRight" ],
 		// opacity animations
 		[ "opacity" ]
-	];
+	],
+	fxNow,
+	requestAnimationFrame = window.webkitRequestAnimationFrame ||
+	    window.mozRequestAnimationFrame ||
+	    window.oRequestAnimationFrame;
 
 jQuery.fn.extend({
-	show: function( speed, callback ) {
-		if ( speed || speed === 0) {
-			return this.animate( genFx("show", 3), speed, callback);
+	show: function( speed, easing, callback ) {
+		var elem, display;
+
+		if ( speed || speed === 0 ) {
+			return this.animate( genFx("show", 3), speed, easing, callback);
 
 		} else {
-			for ( var i = 0, l = this.length; i < l; i++ ) {
-				var old = jQuery.data(this[i], "olddisplay");
+			for ( var i = 0, j = this.length; i < j; i++ ) {
+				elem = this[i];
 
-				this[i].style.display = old || "";
+				if ( elem.style ) {
+					display = elem.style.display;
 
-				if ( jQuery.css(this[i], "display") === "none" ) {
-					var nodeName = this[i].nodeName, display;
-
-					if ( elemdisplay[ nodeName ] ) {
-						display = elemdisplay[ nodeName ];
-
-					} else {
-						var elem = jQuery("<" + nodeName + " />").appendTo("body");
-
-						display = elem.css("display");
-
-						if ( display === "none" ) {
-							display = "block";
-						}
-
-						elem.remove();
-
-						elemdisplay[ nodeName ] = display;
+					// Reset the inline display of this element to learn if it is
+					// being hidden by cascaded rules or not
+					if ( !jQuery._data(elem, "olddisplay") && display === "none" ) {
+						display = elem.style.display = "";
 					}
 
-					jQuery.data(this[i], "olddisplay", display);
+					// Set elements which have been overridden with display: none
+					// in a stylesheet to whatever the default browser style is
+					// for such an element
+					if ( display === "" && jQuery.css( elem, "display" ) === "none" ) {
+						jQuery._data(elem, "olddisplay", defaultDisplay(elem.nodeName));
+					}
 				}
 			}
 
-			// Set the display of the elements in a second loop
+			// Set the display of most of the elements in a second loop
 			// to avoid the constant reflow
-			for ( var j = 0, k = this.length; j < k; j++ ) {
-				this[j].style.display = jQuery.data(this[j], "olddisplay") || "";
+			for ( i = 0; i < j; i++ ) {
+				elem = this[i];
+
+				if ( elem.style ) {
+					display = elem.style.display;
+
+					if ( display === "" || display === "none" ) {
+						elem.style.display = jQuery._data(elem, "olddisplay") || "";
+					}
+				}
 			}
 
 			return this;
 		}
 	},
 
-	hide: function( speed, callback ) {
+	hide: function( speed, easing, callback ) {
 		if ( speed || speed === 0 ) {
-			return this.animate( genFx("hide", 3), speed, callback);
+			return this.animate( genFx("hide", 3), speed, easing, callback);
 
 		} else {
-			for ( var i = 0, l = this.length; i < l; i++ ) {
-				var old = jQuery.data(this[i], "olddisplay");
-				if ( !old && old !== "none" ) {
-					jQuery.data(this[i], "olddisplay", jQuery.css(this[i], "display"));
+			for ( var i = 0, j = this.length; i < j; i++ ) {
+				if ( this[i].style ) {
+					var display = jQuery.css( this[i], "display" );
+
+					if ( display !== "none" && !jQuery._data( this[i], "olddisplay" ) ) {
+						jQuery._data( this[i], "olddisplay", display );
+					}
 				}
 			}
 
 			// Set the display of the elements in a second loop
 			// to avoid the constant reflow
-			for ( var j = 0, k = this.length; j < k; j++ ) {
-				this[j].style.display = "none";
+			for ( i = 0; i < j; i++ ) {
+				if ( this[i].style ) {
+					this[i].style.display = "none";
+				}
 			}
 
 			return this;
@@ -5522,7 +8037,7 @@ jQuery.fn.extend({
 	// Save the old toggle function
 	_toggle: jQuery.fn.toggle,
 
-	toggle: function( fn, fn2 ) {
+	toggle: function( fn, fn2, callback ) {
 		var bool = typeof fn === "boolean";
 
 		if ( jQuery.isFunction(fn) && jQuery.isFunction(fn2) ) {
@@ -5535,54 +8050,97 @@ jQuery.fn.extend({
 			});
 
 		} else {
-			this.animate(genFx("toggle", 3), fn, fn2);
+			this.animate(genFx("toggle", 3), fn, fn2, callback);
 		}
 
 		return this;
 	},
 
-	fadeTo: function( speed, to, callback ) {
+	fadeTo: function( speed, to, easing, callback ) {
 		return this.filter(":hidden").css("opacity", 0).show().end()
-					.animate({opacity: to}, speed, callback);
+					.animate({opacity: to}, speed, easing, callback);
 	},
 
 	animate: function( prop, speed, easing, callback ) {
 		var optall = jQuery.speed(speed, easing, callback);
 
 		if ( jQuery.isEmptyObject( prop ) ) {
-			return this.each( optall.complete );
+			return this.each( optall.complete, [ false ] );
 		}
 
+		// Do not change referenced properties as per-property easing will be lost
+		prop = jQuery.extend( {}, prop );
+
 		return this[ optall.queue === false ? "each" : "queue" ](function() {
-			var opt = jQuery.extend({}, optall), p,
-				hidden = this.nodeType === 1 && jQuery(this).is(":hidden"),
-				self = this;
+			// XXX 'this' does not always have a nodeName when running the
+			// test suite
+
+			if ( optall.queue === false ) {
+				jQuery._mark( this );
+			}
+
+			var opt = jQuery.extend( {}, optall ),
+				isElement = this.nodeType === 1,
+				hidden = isElement && jQuery(this).is(":hidden"),
+				name, val, p,
+				display, e,
+				parts, start, end, unit;
+
+			// will store per property easing and be used to determine when an animation is complete
+			opt.animatedProperties = {};
 
 			for ( p in prop ) {
-				var name = p.replace(rdashAlpha, fcamelCase);
 
+				// property name normalization
+				name = jQuery.camelCase( p );
 				if ( p !== name ) {
 					prop[ name ] = prop[ p ];
 					delete prop[ p ];
-					p = name;
 				}
 
-				if ( prop[p] === "hide" && hidden || prop[p] === "show" && !hidden ) {
-					return opt.complete.call(this);
+				val = prop[ name ];
+
+				// easing resolution: per property > opt.specialEasing > opt.easing > 'swing' (default)
+				if ( jQuery.isArray( val ) ) {
+					opt.animatedProperties[ name ] = val[ 1 ];
+					val = prop[ name ] = val[ 0 ];
+				} else {
+					opt.animatedProperties[ name ] = opt.specialEasing && opt.specialEasing[ name ] || opt.easing || 'swing';
 				}
 
-				if ( ( p === "height" || p === "width" ) && this.style ) {
-					// Store display property
-					opt.display = jQuery.css(this, "display");
+				if ( val === "hide" && hidden || val === "show" && !hidden ) {
+					return opt.complete.call( this );
+				}
 
+				if ( isElement && ( name === "height" || name === "width" ) ) {
 					// Make sure that nothing sneaks out
-					opt.overflow = this.style.overflow;
-				}
+					// Record all 3 overflow attributes because IE does not
+					// change the overflow attribute when overflowX and
+					// overflowY are set to the same value
+					opt.overflow = [ this.style.overflow, this.style.overflowX, this.style.overflowY ];
 
-				if ( jQuery.isArray( prop[p] ) ) {
-					// Create (if needed) and add to specialEasing
-					(opt.specialEasing = opt.specialEasing || {})[p] = prop[p][1];
-					prop[p] = prop[p][0];
+					// Set display property to inline-block for height/width
+					// animations on inline elements that are having width/height
+					// animated
+					if ( jQuery.css( this, "display" ) === "inline" &&
+							jQuery.css( this, "float" ) === "none" ) {
+						if ( !jQuery.support.inlineBlockNeedsLayout ) {
+							this.style.display = "inline-block";
+
+						} else {
+							display = defaultDisplay( this.nodeName );
+
+							// inline-level elements accept inline-block;
+							// block-level elements need to be inline with layout
+							if ( display === "inline" ) {
+								this.style.display = "inline-block";
+
+							} else {
+								this.style.display = "inline";
+								this.style.zoom = 1;
+							}
+						}
+					}
 				}
 			}
 
@@ -5590,32 +8148,31 @@ jQuery.fn.extend({
 				this.style.overflow = "hidden";
 			}
 
-			opt.curAnim = jQuery.extend({}, prop);
-
-			jQuery.each( prop, function( name, val ) {
-				var e = new jQuery.fx( self, opt, name );
+			for ( p in prop ) {
+				e = new jQuery.fx( this, opt, p );
+				val = prop[ p ];
 
 				if ( rfxtypes.test(val) ) {
-					e[ val === "toggle" ? hidden ? "show" : "hide" : val ]( prop );
+					e[ val === "toggle" ? hidden ? "show" : "hide" : val ]();
 
 				} else {
-					var parts = rfxnum.exec(val),
-						start = e.cur(true) || 0;
+					parts = rfxnum.exec( val );
+					start = e.cur();
 
 					if ( parts ) {
-						var end = parseFloat( parts[2] ),
-							unit = parts[3] || "px";
+						end = parseFloat( parts[2] );
+						unit = parts[3] || ( jQuery.cssNumber[ p ] ? "" : "px" );
 
 						// We need to compute starting value
 						if ( unit !== "px" ) {
-							self.style[ name ] = (end || 1) + unit;
-							start = ((end || 1) / e.cur(true)) * start;
-							self.style[ name ] = start + unit;
+							jQuery.style( this, p, (end || 1) + unit);
+							start = ((end || 1) / e.cur()) * start;
+							jQuery.style( this, p, start + unit);
 						}
 
 						// If a +=/-= token was provided, we're doing a relative animation
 						if ( parts[1] ) {
-							end = ((parts[1] === "-=" ? -1 : 1) * end) + start;
+							end = ( (parts[ 1 ] === "-=" ? -1 : 1) * end ) + start;
 						}
 
 						e.custom( start, end, unit );
@@ -5624,7 +8181,7 @@ jQuery.fn.extend({
 						e.custom( start, val, "" );
 					}
 				}
-			});
+			}
 
 			// For JS strict compliance
 			return true;
@@ -5632,15 +8189,18 @@ jQuery.fn.extend({
 	},
 
 	stop: function( clearQueue, gotoEnd ) {
-		var timers = jQuery.timers;
-
 		if ( clearQueue ) {
 			this.queue([]);
 		}
 
 		this.each(function() {
-			// go in reverse order so anything added to the queue during the loop is ignored
-			for ( var i = timers.length - 1; i >= 0; i-- ) {
+			var timers = jQuery.timers,
+				i = timers.length;
+			// clear marker counters if we know they won't be
+			if ( !gotoEnd ) {
+				jQuery._unmark( true, this );
+			}
+			while ( i-- ) {
 				if ( timers[i].elem === this ) {
 					if (gotoEnd) {
 						// force the next step to be the last
@@ -5662,22 +8222,44 @@ jQuery.fn.extend({
 
 });
 
+// Animations created synchronously will run synchronously
+function createFxNow() {
+	setTimeout( clearFxNow, 0 );
+	return ( fxNow = jQuery.now() );
+}
+
+function clearFxNow() {
+	fxNow = undefined;
+}
+
+// Generate parameters to create a standard animation
+function genFx( type, num ) {
+	var obj = {};
+
+	jQuery.each( fxAttrs.concat.apply([], fxAttrs.slice(0,num)), function() {
+		obj[ this ] = type;
+	});
+
+	return obj;
+}
+
 // Generate shortcuts for custom animations
 jQuery.each({
 	slideDown: genFx("show", 1),
 	slideUp: genFx("hide", 1),
 	slideToggle: genFx("toggle", 1),
 	fadeIn: { opacity: "show" },
-	fadeOut: { opacity: "hide" }
+	fadeOut: { opacity: "hide" },
+	fadeToggle: { opacity: "toggle" }
 }, function( name, props ) {
-	jQuery.fn[ name ] = function( speed, callback ) {
-		return this.animate( props, speed, callback );
+	jQuery.fn[ name ] = function( speed, easing, callback ) {
+		return this.animate( props, speed, easing, callback );
 	};
 });
 
 jQuery.extend({
 	speed: function( speed, easing, fn ) {
-		var opt = speed && typeof speed === "object" ? speed : {
+		var opt = speed && typeof speed === "object" ? jQuery.extend({}, speed) : {
 			complete: fn || !fn && easing ||
 				jQuery.isFunction( speed ) && speed,
 			duration: speed,
@@ -5685,14 +8267,17 @@ jQuery.extend({
 		};
 
 		opt.duration = jQuery.fx.off ? 0 : typeof opt.duration === "number" ? opt.duration :
-			jQuery.fx.speeds[opt.duration] || jQuery.fx.speeds._default;
+			opt.duration in jQuery.fx.speeds ? jQuery.fx.speeds[opt.duration] : jQuery.fx.speeds._default;
 
 		// Queueing
 		opt.old = opt.complete;
-		opt.complete = function() {
+		opt.complete = function( noUnmark ) {
 			if ( opt.queue !== false ) {
-				jQuery(this).dequeue();
+				jQuery.dequeue( this );
+			} else if ( noUnmark !== false ) {
+				jQuery._unmark( this );
 			}
+
 			if ( jQuery.isFunction( opt.old ) ) {
 				opt.old.call( this );
 			}
@@ -5717,9 +8302,7 @@ jQuery.extend({
 		this.elem = elem;
 		this.prop = prop;
 
-		if ( !options.orig ) {
-			options.orig = {};
-		}
+		options.orig = options.orig || {};
 	}
 
 });
@@ -5732,33 +8315,35 @@ jQuery.fx.prototype = {
 		}
 
 		(jQuery.fx.step[this.prop] || jQuery.fx.step._default)( this );
-
-		// Set display property to block for height/width animations
-		if ( ( this.prop === "height" || this.prop === "width" ) && this.elem.style ) {
-			this.elem.style.display = "block";
-		}
 	},
 
 	// Get the current size
-	cur: function( force ) {
+	cur: function() {
 		if ( this.elem[this.prop] != null && (!this.elem.style || this.elem.style[this.prop] == null) ) {
 			return this.elem[ this.prop ];
 		}
 
-		var r = parseFloat(jQuery.css(this.elem, this.prop, force));
-		return r && r > -10000 ? r : parseFloat(jQuery.curCSS(this.elem, this.prop)) || 0;
+		var parsed,
+			r = jQuery.css( this.elem, this.prop );
+		// Empty strings, null, undefined and "auto" are converted to 0,
+		// complex values such as "rotate(1rad)" are returned as is,
+		// simple values such as "10px" are parsed to Float.
+		return isNaN( parsed = parseFloat( r ) ) ? !r || r === "auto" ? 0 : r : parsed;
 	},
 
 	// Start an animation from one number to another
 	custom: function( from, to, unit ) {
-		this.startTime = now();
+		var self = this,
+			fx = jQuery.fx,
+			raf;
+
+		this.startTime = fxNow || createFxNow();
 		this.start = from;
 		this.end = to;
-		this.unit = unit || this.unit || "px";
+		this.unit = unit || this.unit || ( jQuery.cssNumber[ this.prop ] ? "" : "px" );
 		this.now = this.start;
 		this.pos = this.state = 0;
 
-		var self = this;
 		function t( gotoEnd ) {
 			return self.step(gotoEnd);
 		}
@@ -5766,7 +8351,20 @@ jQuery.fx.prototype = {
 		t.elem = this.elem;
 
 		if ( t() && jQuery.timers.push(t) && !timerId ) {
-			timerId = setInterval(jQuery.fx.tick, 13);
+			// Use requestAnimationFrame instead of setInterval if available
+			if ( requestAnimationFrame ) {
+				timerId = 1;
+				raf = function() {
+					// When timerId gets set to null at any point, this stops
+					if ( timerId ) {
+						requestAnimationFrame( raf );
+						fx.tick();
+					}
+				};
+				requestAnimationFrame( raf );
+			} else {
+				timerId = setInterval( fx.tick, fx.interval );
+			}
 		}
 	},
 
@@ -5797,63 +8395,64 @@ jQuery.fx.prototype = {
 
 	// Each step of an animation
 	step: function( gotoEnd ) {
-		var t = now(), done = true;
+		var t = fxNow || createFxNow(),
+			done = true,
+			elem = this.elem,
+			options = this.options,
+			i, n;
 
-		if ( gotoEnd || t >= this.options.duration + this.startTime ) {
+		if ( gotoEnd || t >= options.duration + this.startTime ) {
 			this.now = this.end;
 			this.pos = this.state = 1;
 			this.update();
 
-			this.options.curAnim[ this.prop ] = true;
+			options.animatedProperties[ this.prop ] = true;
 
-			for ( var i in this.options.curAnim ) {
-				if ( this.options.curAnim[i] !== true ) {
+			for ( i in options.animatedProperties ) {
+				if ( options.animatedProperties[i] !== true ) {
 					done = false;
 				}
 			}
 
 			if ( done ) {
-				if ( this.options.display != null ) {
-					// Reset the overflow
-					this.elem.style.overflow = this.options.overflow;
+				// Reset the overflow
+				if ( options.overflow != null && !jQuery.support.shrinkWrapBlocks ) {
 
-					// Reset the display
-					var old = jQuery.data(this.elem, "olddisplay");
-					this.elem.style.display = old ? old : this.options.display;
-
-					if ( jQuery.css(this.elem, "display") === "none" ) {
-						this.elem.style.display = "block";
-					}
+					jQuery.each( [ "", "X", "Y" ], function (index, value) {
+						elem.style[ "overflow" + value ] = options.overflow[index];
+					});
 				}
 
 				// Hide the element if the "hide" operation was done
-				if ( this.options.hide ) {
-					jQuery(this.elem).hide();
+				if ( options.hide ) {
+					jQuery(elem).hide();
 				}
 
 				// Reset the properties, if the item has been hidden or shown
-				if ( this.options.hide || this.options.show ) {
-					for ( var p in this.options.curAnim ) {
-						jQuery.style(this.elem, p, this.options.orig[p]);
+				if ( options.hide || options.show ) {
+					for ( var p in options.animatedProperties ) {
+						jQuery.style( elem, p, options.orig[p] );
 					}
 				}
 
 				// Execute the complete function
-				this.options.complete.call( this.elem );
+				options.complete.call( elem );
 			}
 
 			return false;
 
 		} else {
-			var n = t - this.startTime;
-			this.state = n / this.options.duration;
+			// classical easing cannot be used with an Infinity duration
+			if ( options.duration == Infinity ) {
+				this.now = t;
+			} else {
+				n = t - this.startTime;
+				this.state = n / options.duration;
 
-			// Perform the easing function, defaults to swing
-			var specialEasing = this.options.specialEasing && this.options.specialEasing[this.prop];
-			var defaultEasing = this.options.easing || (jQuery.easing.swing ? "swing" : "linear");
-			this.pos = jQuery.easing[specialEasing || defaultEasing](this.state, n, 0, 1, this.options.duration);
-			this.now = this.start + ((this.end - this.start) * this.pos);
-
+				// Perform the easing function, defaults to swing
+				this.pos = jQuery.easing[ options.animatedProperties[ this.prop ] ]( this.state, n, 0, 1, options.duration );
+				this.now = this.start + ((this.end - this.start) * this.pos);
+			}
 			// Perform the next step of the animation
 			this.update();
 		}
@@ -5864,9 +8463,7 @@ jQuery.fx.prototype = {
 
 jQuery.extend( jQuery.fx, {
 	tick: function() {
-		var timers = jQuery.timers;
-
-		for ( var i = 0; i < timers.length; i++ ) {
+		for ( var timers = jQuery.timers, i = 0 ; i < timers.length ; ++i ) {
 			if ( !timers[i]() ) {
 				timers.splice(i--, 1);
 			}
@@ -5876,22 +8473,24 @@ jQuery.extend( jQuery.fx, {
 			jQuery.fx.stop();
 		}
 	},
-		
+
+	interval: 13,
+
 	stop: function() {
 		clearInterval( timerId );
 		timerId = null;
 	},
-	
+
 	speeds: {
 		slow: 600,
- 		fast: 200,
- 		// Default speed
- 		_default: 400
+		fast: 200,
+		// Default speed
+		_default: 400
 	},
 
 	step: {
 		opacity: function( fx ) {
-			jQuery.style(fx.elem, "opacity", fx.now);
+			jQuery.style( fx.elem, "opacity", fx.now );
 		},
 
 		_default: function( fx ) {
@@ -5912,20 +8511,62 @@ if ( jQuery.expr && jQuery.expr.filters ) {
 	};
 }
 
-function genFx( type, num ) {
-	var obj = {};
+// Try to restore the default display value of an element
+function defaultDisplay( nodeName ) {
 
-	jQuery.each( fxAttrs.concat.apply([], fxAttrs.slice(0,num)), function() {
-		obj[ this ] = type;
-	});
+	if ( !elemdisplay[ nodeName ] ) {
 
-	return obj;
+		var elem = jQuery( "<" + nodeName + ">" ).appendTo( "body" ),
+			display = elem.css( "display" );
+
+		elem.remove();
+
+		// If the simple way fails,
+		// get element's real default display by attaching it to a temp iframe
+		if ( display === "none" || display === "" ) {
+			// No iframe to use yet, so create it
+			if ( !iframe ) {
+				iframe = document.createElement( "iframe" );
+				iframe.frameBorder = iframe.width = iframe.height = 0;
+			}
+
+			document.body.appendChild( iframe );
+
+			// Create a cacheable copy of the iframe document on first call.
+			// IE and Opera will allow us to reuse the iframeDoc without re-writing the fake html
+			// document to it, Webkit & Firefox won't allow reusing the iframe document
+			if ( !iframeDoc || !iframe.createElement ) {
+				iframeDoc = ( iframe.contentWindow || iframe.contentDocument ).document;
+				iframeDoc.write( "<!doctype><html><body></body></html>" );
+			}
+
+			elem = iframeDoc.createElement( nodeName );
+
+			iframeDoc.body.appendChild( elem );
+
+			display = jQuery.css( elem, "display" );
+
+			document.body.removeChild( iframe );
+		}
+
+		// Store the correct default display
+		elemdisplay[ nodeName ] = display;
+	}
+
+	return elemdisplay[ nodeName ];
 }
+
+
+
+
+var rtable = /^t(?:able|d|h)$/i,
+	rroot = /^(?:body|html)$/i;
+
 if ( "getBoundingClientRect" in document.documentElement ) {
 	jQuery.fn.offset = function( options ) {
-		var elem = this[0];
+		var elem = this[0], box;
 
-		if ( options ) { 
+		if ( options ) {
 			return this.each(function( i ) {
 				jQuery.offset.setOffset( this, options, i );
 			});
@@ -5939,10 +8580,26 @@ if ( "getBoundingClientRect" in document.documentElement ) {
 			return jQuery.offset.bodyOffset( elem );
 		}
 
-		var box = elem.getBoundingClientRect(), doc = elem.ownerDocument, body = doc.body, docElem = doc.documentElement,
-			clientTop = docElem.clientTop || body.clientTop || 0, clientLeft = docElem.clientLeft || body.clientLeft || 0,
-			top  = box.top  + (self.pageYOffset || jQuery.support.boxModel && docElem.scrollTop  || body.scrollTop ) - clientTop,
-			left = box.left + (self.pageXOffset || jQuery.support.boxModel && docElem.scrollLeft || body.scrollLeft) - clientLeft;
+		try {
+			box = elem.getBoundingClientRect();
+		} catch(e) {}
+
+		var doc = elem.ownerDocument,
+			docElem = doc.documentElement;
+
+		// Make sure we're not dealing with a disconnected DOM node
+		if ( !box || !jQuery.contains( docElem, elem ) ) {
+			return box ? { top: box.top, left: box.left } : { top: 0, left: 0 };
+		}
+
+		var body = doc.body,
+			win = getWindow(doc),
+			clientTop  = docElem.clientTop  || body.clientTop  || 0,
+			clientLeft = docElem.clientLeft || body.clientLeft || 0,
+			scrollTop  = win.pageYOffset || jQuery.support.boxModel && docElem.scrollTop  || body.scrollTop,
+			scrollLeft = win.pageXOffset || jQuery.support.boxModel && docElem.scrollLeft || body.scrollLeft,
+			top  = box.top  + scrollTop  - clientTop,
+			left = box.left + scrollLeft - clientLeft;
 
 		return { top: top, left: left };
 	};
@@ -5951,7 +8608,7 @@ if ( "getBoundingClientRect" in document.documentElement ) {
 	jQuery.fn.offset = function( options ) {
 		var elem = this[0];
 
-		if ( options ) { 
+		if ( options ) {
 			return this.each(function( i ) {
 				jQuery.offset.setOffset( this, options, i );
 			});
@@ -5967,11 +8624,16 @@ if ( "getBoundingClientRect" in document.documentElement ) {
 
 		jQuery.offset.initialize();
 
-		var offsetParent = elem.offsetParent, prevOffsetParent = elem,
-			doc = elem.ownerDocument, computedStyle, docElem = doc.documentElement,
-			body = doc.body, defaultView = doc.defaultView,
+		var computedStyle,
+			offsetParent = elem.offsetParent,
+			prevOffsetParent = elem,
+			doc = elem.ownerDocument,
+			docElem = doc.documentElement,
+			body = doc.body,
+			defaultView = doc.defaultView,
 			prevComputedStyle = defaultView ? defaultView.getComputedStyle( elem, null ) : elem.currentStyle,
-			top = elem.offsetTop, left = elem.offsetLeft;
+			top = elem.offsetTop,
+			left = elem.offsetLeft;
 
 		while ( (elem = elem.parentNode) && elem !== body && elem !== docElem ) {
 			if ( jQuery.offset.supportsFixedPosition && prevComputedStyle.position === "fixed" ) {
@@ -5986,12 +8648,13 @@ if ( "getBoundingClientRect" in document.documentElement ) {
 				top  += elem.offsetTop;
 				left += elem.offsetLeft;
 
-				if ( jQuery.offset.doesNotAddBorder && !(jQuery.offset.doesAddBorderForTableAndCells && /^t(able|d|h)$/i.test(elem.nodeName)) ) {
+				if ( jQuery.offset.doesNotAddBorder && !(jQuery.offset.doesAddBorderForTableAndCells && rtable.test(elem.nodeName)) ) {
 					top  += parseFloat( computedStyle.borderTopWidth  ) || 0;
 					left += parseFloat( computedStyle.borderLeftWidth ) || 0;
 				}
 
-				prevOffsetParent = offsetParent, offsetParent = elem.offsetParent;
+				prevOffsetParent = offsetParent;
+				offsetParent = elem.offsetParent;
 			}
 
 			if ( jQuery.offset.subtractsBorderForOverflowNotVisible && computedStyle.overflow !== "visible" ) {
@@ -6018,7 +8681,7 @@ if ( "getBoundingClientRect" in document.documentElement ) {
 
 jQuery.offset = {
 	initialize: function() {
-		var body = document.body, container = document.createElement("div"), innerDiv, checkDiv, table, td, bodyMarginTop = parseFloat( jQuery.curCSS(body, "marginTop", true) ) || 0,
+		var body = document.body, container = document.createElement("div"), innerDiv, checkDiv, table, td, bodyMarginTop = parseFloat( jQuery.css(body, "marginTop") ) || 0,
 			html = "<div style='position:absolute;top:0;left:0;margin:0;border:5px solid #000;padding:0;width:1px;height:1px;'><div></div></div><table style='position:absolute;top:0;left:0;margin:0;border:5px solid #000;padding:0;width:1px;height:1px;' cellpadding='0' cellspacing='0'><tr><td></td></tr></table>";
 
 		jQuery.extend( container.style, { position: "absolute", top: 0, left: 0, margin: 0, border: 0, width: "1px", height: "1px", visibility: "hidden" } );
@@ -6032,53 +8695,74 @@ jQuery.offset = {
 		this.doesNotAddBorder = (checkDiv.offsetTop !== 5);
 		this.doesAddBorderForTableAndCells = (td.offsetTop === 5);
 
-		checkDiv.style.position = "fixed", checkDiv.style.top = "20px";
+		checkDiv.style.position = "fixed";
+		checkDiv.style.top = "20px";
+
 		// safari subtracts parent border width here which is 5px
 		this.supportsFixedPosition = (checkDiv.offsetTop === 20 || checkDiv.offsetTop === 15);
 		checkDiv.style.position = checkDiv.style.top = "";
 
-		innerDiv.style.overflow = "hidden", innerDiv.style.position = "relative";
+		innerDiv.style.overflow = "hidden";
+		innerDiv.style.position = "relative";
+
 		this.subtractsBorderForOverflowNotVisible = (checkDiv.offsetTop === -5);
 
 		this.doesNotIncludeMarginInBodyOffset = (body.offsetTop !== bodyMarginTop);
 
 		body.removeChild( container );
-		body = container = innerDiv = checkDiv = table = td = null;
 		jQuery.offset.initialize = jQuery.noop;
 	},
 
 	bodyOffset: function( body ) {
-		var top = body.offsetTop, left = body.offsetLeft;
+		var top = body.offsetTop,
+			left = body.offsetLeft;
 
 		jQuery.offset.initialize();
 
 		if ( jQuery.offset.doesNotIncludeMarginInBodyOffset ) {
-			top  += parseFloat( jQuery.curCSS(body, "marginTop",  true) ) || 0;
-			left += parseFloat( jQuery.curCSS(body, "marginLeft", true) ) || 0;
+			top  += parseFloat( jQuery.css(body, "marginTop") ) || 0;
+			left += parseFloat( jQuery.css(body, "marginLeft") ) || 0;
 		}
 
 		return { top: top, left: left };
 	},
-	
+
 	setOffset: function( elem, options, i ) {
+		var position = jQuery.css( elem, "position" );
+
 		// set position first, in-case top/left are set even on static elem
-		if ( /static/.test( jQuery.curCSS( elem, "position" ) ) ) {
+		if ( position === "static" ) {
 			elem.style.position = "relative";
 		}
-		var curElem   = jQuery( elem ),
+
+		var curElem = jQuery( elem ),
 			curOffset = curElem.offset(),
-			curTop    = parseInt( jQuery.curCSS( elem, "top",  true ), 10 ) || 0,
-			curLeft   = parseInt( jQuery.curCSS( elem, "left", true ), 10 ) || 0;
+			curCSSTop = jQuery.css( elem, "top" ),
+			curCSSLeft = jQuery.css( elem, "left" ),
+			calculatePosition = (position === "absolute" || position === "fixed") && jQuery.inArray("auto", [curCSSTop, curCSSLeft]) > -1,
+			props = {}, curPosition = {}, curTop, curLeft;
+
+		// need to be able to calculate position if either top or left is auto and position is either absolute or fixed
+		if ( calculatePosition ) {
+			curPosition = curElem.position();
+			curTop = curPosition.top;
+			curLeft = curPosition.left;
+		} else {
+			curTop = parseFloat( curCSSTop ) || 0;
+			curLeft = parseFloat( curCSSLeft ) || 0;
+		}
 
 		if ( jQuery.isFunction( options ) ) {
 			options = options.call( elem, i, curOffset );
 		}
 
-		var props = {
-			top:  (options.top  - curOffset.top)  + curTop,
-			left: (options.left - curOffset.left) + curLeft
-		};
-		
+		if (options.top != null) {
+			props.top = (options.top - curOffset.top) + curTop;
+		}
+		if (options.left != null) {
+			props.left = (options.left - curOffset.left) + curLeft;
+		}
+
 		if ( "using" in options ) {
 			options.using.call( elem, props );
 		} else {
@@ -6101,17 +8785,17 @@ jQuery.fn.extend({
 
 		// Get correct offsets
 		offset       = this.offset(),
-		parentOffset = /^body|html$/i.test(offsetParent[0].nodeName) ? { top: 0, left: 0 } : offsetParent.offset();
+		parentOffset = rroot.test(offsetParent[0].nodeName) ? { top: 0, left: 0 } : offsetParent.offset();
 
 		// Subtract element margins
 		// note: when an element has margin: auto the offsetLeft and marginLeft
 		// are the same in Safari causing offset.left to incorrectly be 0
-		offset.top  -= parseFloat( jQuery.curCSS(elem, "marginTop",  true) ) || 0;
-		offset.left -= parseFloat( jQuery.curCSS(elem, "marginLeft", true) ) || 0;
+		offset.top  -= parseFloat( jQuery.css(elem, "marginTop") ) || 0;
+		offset.left -= parseFloat( jQuery.css(elem, "marginLeft") ) || 0;
 
 		// Add offsetParent borders
-		parentOffset.top  += parseFloat( jQuery.curCSS(offsetParent[0], "borderTopWidth",  true) ) || 0;
-		parentOffset.left += parseFloat( jQuery.curCSS(offsetParent[0], "borderLeftWidth", true) ) || 0;
+		parentOffset.top  += parseFloat( jQuery.css(offsetParent[0], "borderTopWidth") ) || 0;
+		parentOffset.left += parseFloat( jQuery.css(offsetParent[0], "borderLeftWidth") ) || 0;
 
 		// Subtract the two offsets
 		return {
@@ -6123,7 +8807,7 @@ jQuery.fn.extend({
 	offsetParent: function() {
 		return this.map(function() {
 			var offsetParent = this.offsetParent || document.body;
-			while ( offsetParent && (!/^body|html$/i.test(offsetParent.nodeName) && jQuery.css(offsetParent, "position") === "static") ) {
+			while ( offsetParent && (!rroot.test(offsetParent.nodeName) && jQuery.css(offsetParent, "position") === "static") ) {
 				offsetParent = offsetParent.offsetParent;
 			}
 			return offsetParent;
@@ -6136,29 +8820,16 @@ jQuery.fn.extend({
 jQuery.each( ["Left", "Top"], function( i, name ) {
 	var method = "scroll" + name;
 
-	jQuery.fn[ method ] = function(val) {
-		var elem = this[0], win;
-		
-		if ( !elem ) {
-			return null;
-		}
+	jQuery.fn[ method ] = function( val ) {
+		var elem, win;
 
-		if ( val !== undefined ) {
-			// Set the scroll offset
-			return this.each(function() {
-				win = getWindow( this );
+		if ( val === undefined ) {
+			elem = this[ 0 ];
 
-				if ( win ) {
-					win.scrollTo(
-						!i ? val : jQuery(win).scrollLeft(),
-						 i ? val : jQuery(win).scrollTop()
-					);
+			if ( !elem ) {
+				return null;
+			}
 
-				} else {
-					this[ method ] = val;
-				}
-			});
-		} else {
 			win = getWindow( elem );
 
 			// Return the scroll offset
@@ -6167,16 +8838,35 @@ jQuery.each( ["Left", "Top"], function( i, name ) {
 					win.document.body[ method ] :
 				elem[ method ];
 		}
+
+		// Set the scroll offset
+		return this.each(function() {
+			win = getWindow( this );
+
+			if ( win ) {
+				win.scrollTo(
+					!i ? val : jQuery( win ).scrollLeft(),
+					 i ? val : jQuery( win ).scrollTop()
+				);
+
+			} else {
+				this[ method ] = val;
+			}
+		});
 	};
 });
 
 function getWindow( elem ) {
-	return ("scrollTo" in elem && elem.document) ?
+	return jQuery.isWindow( elem ) ?
 		elem :
 		elem.nodeType === 9 ?
 			elem.defaultView || elem.parentWindow :
 			false;
 }
+
+
+
+
 // Create innerHeight, innerWidth, outerHeight and outerWidth methods
 jQuery.each([ "Height", "Width" ], function( i, name ) {
 
@@ -6185,14 +8875,14 @@ jQuery.each([ "Height", "Width" ], function( i, name ) {
 	// innerHeight and innerWidth
 	jQuery.fn["inner" + name] = function() {
 		return this[0] ?
-			jQuery.css( this[0], type, false, "padding" ) :
+			parseFloat( jQuery.css( this[0], type, "padding" ) ) :
 			null;
 	};
 
 	// outerHeight and outerWidth
 	jQuery.fn["outer" + name] = function( margin ) {
 		return this[0] ?
-			jQuery.css( this[0], type, false, margin ? "margin" : "border" ) :
+			parseFloat( jQuery.css( this[0], type, margin ? "margin" : "border" ) ) :
 			null;
 	};
 
@@ -6202,7 +8892,7 @@ jQuery.each([ "Height", "Width" ], function( i, name ) {
 		if ( !elem ) {
 			return size == null ? null : this;
 		}
-		
+
 		if ( jQuery.isFunction( size ) ) {
 			return this.each(function( i ) {
 				var self = jQuery( this );
@@ -6210,36 +8900,42 @@ jQuery.each([ "Height", "Width" ], function( i, name ) {
 			});
 		}
 
-		return ("scrollTo" in elem && elem.document) ? // does it walk and quack like a window?
+		if ( jQuery.isWindow( elem ) ) {
 			// Everyone else use document.documentElement or document.body depending on Quirks vs Standards mode
-			elem.document.compatMode === "CSS1Compat" && elem.document.documentElement[ "client" + name ] ||
-			elem.document.body[ "client" + name ] :
+			// 3rd condition allows Nokia support, as it supports the docElem prop but not CSS1Compat
+			var docElemProp = elem.document.documentElement[ "client" + name ];
+			return elem.document.compatMode === "CSS1Compat" && docElemProp ||
+				elem.document.body[ "client" + name ] || docElemProp;
 
-			// Get document width or height
-			(elem.nodeType === 9) ? // is it a document
-				// Either scroll[Width/Height] or offset[Width/Height], whichever is greater
-				Math.max(
-					elem.documentElement["client" + name],
-					elem.body["scroll" + name], elem.documentElement["scroll" + name],
-					elem.body["offset" + name], elem.documentElement["offset" + name]
-				) :
+		// Get document width or height
+		} else if ( elem.nodeType === 9 ) {
+			// Either scroll[Width/Height] or offset[Width/Height], whichever is greater
+			return Math.max(
+				elem.documentElement["client" + name],
+				elem.body["scroll" + name], elem.documentElement["scroll" + name],
+				elem.body["offset" + name], elem.documentElement["offset" + name]
+			);
 
-				// Get or set width or height on the element
-				size === undefined ?
-					// Get width or height on the element
-					jQuery.css( elem, type ) :
+		// Get or set width or height on the element
+		} else if ( size === undefined ) {
+			var orig = jQuery.css( elem, type ),
+				ret = parseFloat( orig );
 
-					// Set the width or height on the element (default to pixels if value is unitless)
-					this.css( type, typeof size === "string" ? size : size + "px" );
+			return jQuery.isNaN( ret ) ? orig : ret;
+
+		// Set the width or height on the element (default to pixels if value is unitless)
+		} else {
+			return this.css( type, typeof size === "string" ? size : size + "px" );
+		}
 	};
 
 });
-// Expose jQuery to the global object
-window.jQuery = window.$ = jQuery;
 
+
+window.jQuery = window.$ = jQuery;
 })(window);
 /*!
- * jQuery UI 1.8.11
+ * jQuery UI 1.8.12
  *
  * Copyright 2011, AUTHORS.txt (http://jqueryui.com/about)
  * Dual licensed under the MIT or GPL Version 2 licenses.
@@ -6258,7 +8954,7 @@ if ( $.ui.version ) {
 }
 
 $.extend( $.ui, {
-	version: "1.8.11",
+	version: "1.8.12",
 
 	keyCode: {
 		ALT: 18,
@@ -6547,7 +9243,7 @@ $.extend( $.ui, {
 
 })( jQuery );
 /*!
- * jQuery UI Widget 1.8.11
+ * jQuery UI Widget 1.8.12
  *
  * Copyright 2011, AUTHORS.txt (http://jqueryui.com/about)
  * Dual licensed under the MIT or GPL Version 2 licenses.
@@ -6809,7 +9505,7 @@ $.Widget.prototype = {
 
 })( jQuery );
 /*!
- * jQuery UI Mouse 1.8.11
+ * jQuery UI Mouse 1.8.12
  *
  * Copyright 2011, AUTHORS.txt (http://jqueryui.com/about)
  * Dual licensed under the MIT or GPL Version 2 licenses.
@@ -6965,7 +9661,7 @@ $.widget("ui.mouse", {
 
 })(jQuery);
 /*
- * jQuery UI Position 1.8.11
+ * jQuery UI Position 1.8.12
  *
  * Copyright 2011, AUTHORS.txt (http://jqueryui.com/about)
  * Dual licensed under the MIT or GPL Version 2 licenses.
@@ -7223,7 +9919,7 @@ if ( !$.offset.setOffset ) {
  * http://wiki.fluidproject.org/display/fluid/Fluid+Licensing
  *
  * For information on copyright, see the individual Infusion source code files: 
- * https://source.fluidproject.org/svn/fluid/infusion/
+ * https://github.com/fluid-project/infusion/
  */
 
 /*
@@ -7231,6 +9927,7 @@ Copyright 2007-2010 University of Cambridge
 Copyright 2007-2009 University of Toronto
 Copyright 2007-2009 University of California, Berkeley
 Copyright 2010 Lucendo Development Ltd.
+Copyright 2010-2011 OCAD University
 
 Licensed under the Educational Community License (ECL), Version 2.0 or the New
 BSD license. You may not use this file except in compliance with one these
@@ -7244,7 +9941,7 @@ https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
 /*global console, window, fluid:true, fluid_1_4:true, jQuery, opera, YAHOO*/
 
 // JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
+/*jslint white: true, funcinvoke: true, continue: true, jslintok: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
 
 var fluid_1_4 = fluid_1_4 || {};
 var fluid = fluid || fluid_1_4;
@@ -7260,14 +9957,20 @@ var fluid = fluid || fluid_1_4;
     
     var softFailure = [false];
     
+    // This function will be patched from FluidIoC.js in order to describe complex activities
+    fluid.describeActivity = function () {
+        return [];
+    };
+    
     /**
      * Causes an error message to be logged to the console and a real runtime error to be thrown.
      * 
      * @param {String|Error} message the error message to log
+     * @param ... Additional arguments
      */
-    fluid.fail = function (message) {
+    fluid.fail = function (message /*, ... */) { // jslint:ok - whitespace in arg list
         fluid.setLogging(true);
-        fluid.log(message.message ? message.message : message);
+        fluid.log.apply(null, ["ASSERTION FAILED: "].concat(fluid.makeArray(arguments)).concat(fluid.describeActivity()));
         if (softFailure[0]) {
             throw new Error(message);
         } else {
@@ -7283,9 +9986,34 @@ var fluid = fluid || fluid_1_4;
         }
     };
     
+    fluid.notrycatch = false;
+    
+    // A wrapper for the try/catch/finally language feature, to aid debugging on environments
+    // such as IE, where any try will destroy stack information for errors
+    fluid.tryCatch = function (tryfun, catchfun, finallyfun) {
+        finallyfun = finallyfun || fluid.identity;
+        if (fluid.notrycatch) {
+            var togo = tryfun();
+            finallyfun();
+            return togo;
+        } else {
+            try {
+                return tryfun();  
+            } catch (e) {
+                if (catchfun) {
+                    catchfun(e);
+                } else { 
+                    throw (e);
+                }
+            } finally {
+                finallyfun();
+            }
+        }
+    };
+    
     // TODO: rescued from kettleCouchDB.js - clean up in time
     fluid.expect = function (name, members, target) {
-        fluid.transform($.makeArray(members), function (key) {
+        fluid.transform(fluid.makeArray(members), function (key) {
             if (typeof target[key] === "undefined") {
                 fluid.fail(name + " missing required parameter " + key);
             }
@@ -7293,13 +10021,14 @@ var fluid = fluid || fluid_1_4;
     };
 
     // Logging
+
+    var logging;
         
     /** Returns whether logging is enabled **/
-    fluid.isLogging = function() {
+    fluid.isLogging = function () {
         return logging;
     };
 
-    var logging;
     /** method to allow user to enable logging (off by default) */
     fluid.setLogging = function (enabled) {
         if (typeof enabled === "boolean") {
@@ -7309,19 +10038,35 @@ var fluid = fluid || fluid_1_4;
         }
     };
 
+    // On some dodgy environments (notably IE9 and recent alphas of Firebug 1.8), 
+    // console.log/debug are incomplete function objects and need to be operated via
+    // this trick: http://stackoverflow.com/questions/5472938/does-ie9-support-console-log-and-is-it-a-real-function
+    fluid.applyHostFunction = function (obj, func, args) {
+        if (func.apply) {
+            func.apply(obj, args);
+        } else {
+            var applier = Function.prototype.bind.call(func, obj);
+            applier.apply(obj, args);
+        }
+    };
+
     /** Log a message to a suitable environmental console. If the standard "console" 
      * stream is available, the message will be sent there - otherwise either the
      * YAHOO logger or the Opera "postError" stream will be used. Logging must first
-     * be enabled with a call fo the fluid.setLogging(true) function.
+     * be enabled with a call to the fluid.setLogging(true) function.
      */
-    fluid.log = function (str) {
+    fluid.log = function (message /*, ... */) { // jslint:ok - whitespace in arg list
         if (logging) {
-            str = fluid.renderTimestamp(new Date()) + ":  " + str;
+            var arg0 = fluid.renderTimestamp(new Date()) + ":  "; 
+            var args = [arg0].concat(fluid.makeArray(arguments));
+            var str = args.join("");
             if (typeof (console) !== "undefined") {
                 if (console.debug) {
-                    console.debug(str);
+                    fluid.applyHostFunction(console, console.debug, args);
+                } else if (typeof (console.log) === "function") {
+                    fluid.applyHostFunction(console, console.log, args);
                 } else {
-                    console.log(str);
+                    console.log(str); // this branch executes on old IE, fully synthetic console.log
                 }
             } else if (typeof (YAHOO) !== "undefined") {
                 YAHOO.log(str);
@@ -7563,7 +10308,7 @@ var fluid = fluid || fluid_1_4;
     /** Return the keys in the supplied object as an array **/
     fluid.keys = function (obj) {
         var togo = [];
-        fluid.each(obj, function(value, key) {
+        fluid.each(obj, function (value, key) {
             togo.push(key);
         });
         return togo;
@@ -7573,12 +10318,12 @@ var fluid = fluid || fluid_1_4;
      * Searches through the supplied object, and returns <code>true</code> if the supplied value
      * can be found 
      */
-    fluid.contains = function(obj, value) {
-        return obj? fluid.find(obj, function (thisValue, key) {
+    fluid.contains = function (obj, value) {
+        return obj ? fluid.find(obj, function (thisValue, key) {
             if (value === thisValue) {
                 return true;
             }
-        }): undefined;
+        }) : undefined;
     };
     
     /** 
@@ -7602,6 +10347,17 @@ var fluid = fluid || fluid_1_4;
      * See fluid.keyForValue instead.
      */
     fluid.findKeyInObject = fluid.keyForValue;
+    
+    /** Converts an array into an object whose keys are the elements of the array, each with the value "true"
+     */ 
+    
+    fluid.arrayToHash = function (array) {
+        var togo = {};
+        fluid.each(array, function (el) {
+            togo[el] = true;
+        });
+        return togo;
+    };
     
     /** 
      * Clears an object or array of its contents. For objects, each property is deleted.
@@ -7892,16 +10648,22 @@ var fluid = fluid || fluid_1_4;
     
     fluid.registerNamespace("fluid.event");
     
+    fluid.generateUniquePrefix = function () {
+        return (Math.floor(Math.random() * 1e12)).toString(36) + "-";
+    };
+    
+    var fluid_prefix = fluid.generateUniquePrefix(); 
+    
     var fluid_guid = 1;
     
-    /** Allocate an integer value that will be unique for this session **/
+    /** Allocate an string value that will be very likely unique within this (browser) process **/
     
     fluid.allocateGuid = function () {
-        return fluid_guid++;
+        return fluid_prefix + (fluid_guid++);
     };
     
     fluid.event.identifyListener = function (listener) {
-        if (typeof(listener) === "string") {
+        if (typeof (listener) === "string") {
             return listener; 
         }
         if (!listener.$$guid) {
@@ -7910,8 +10672,8 @@ var fluid = fluid || fluid_1_4;
         return listener.$$guid;
     };
     
-    fluid.event.mapPriority = function (priority) {
-        return (priority === null || priority === undefined ? 0 : 
+    fluid.event.mapPriority = function (priority, count) {
+        return (priority === null || priority === undefined ? -count : 
            (priority === "last" ? -Number.MAX_VALUE :
               (priority === "first" ? Number.MAX_VALUE : priority)));
     };
@@ -7946,19 +10708,18 @@ var fluid = fluid || fluid_1_4;
             for (var i in listeners) {
                 var lisrec = listeners[i];
                 var listener = lisrec.listener;
-                if (typeof(listener) === "string") {
-                    listenerFunc = fluid.getGlobalValue(listener);
+                if (typeof (listener) === "string") {
+                    var listenerFunc = fluid.getGlobalValue(listener);
                     if (!listenerFunc) {
                         fluid.fail("Unable to look up name " + listener + " as a global function"); 
-                    }
-                    else {
+                    } else {
                         listener = lisrec.listener = listenerFunc;
                     }
                 }
                 if (lisrec.predicate && !lisrec.predicate(listener, args)) {
                     continue;
                 }
-                try {
+                var value = fluid.tryCatch(function () {
                     var ret = (wrapper ? wrapper(listener) : listener).apply(null, args);
                     if (preventable && ret === false) {
                         return false;
@@ -7966,9 +10727,12 @@ var fluid = fluid || fluid_1_4;
                     if (unicast) {
                         return ret;
                     }
-                } catch (e) {
+                }, function (e) { // jslint:ok - function within a loop, only invoked synchronously
                     fluid.log("FireEvent received exception " + e.message + " e " + e + " firing to listener " + i);
                     throw (e);       
+                }); // jslint:ok - function within loop
+                if (value !== undefined) {
+                    return value;
                 }
             }
         }
@@ -7986,7 +10750,7 @@ var fluid = fluid || fluid_1_4;
                 }
 
                 listeners[namespace] = {listener: listener, predicate: predicate, priority: 
-                    fluid.event.mapPriority(priority)};
+                    fluid.event.mapPriority(priority, sortedListeners.length)};
                 sortedListeners = fluid.event.sortListeners(listeners);
             },
 
@@ -8016,11 +10780,9 @@ var fluid = fluid || fluid_1_4;
             for (var i = 0; i < value.length; ++i) {
                 fluid.event.addListenerToFirer(firer, value[i], namespace); 
             }
-        }
-        else if (typeof(value) === "function" || typeof(value) === "string") {
+        } else if (typeof (value) === "function" || typeof (value) === "string") {
             firer.addListener(value, namespace);
-        } 
-        else if (value && typeof(value) === "object") {
+        } else if (value && typeof (value) === "object") {
             firer.addListener(value.listener, namespace || value.namespace, value.predicate, value.priority);
         }
     };
@@ -8062,8 +10824,8 @@ var fluid = fluid || fluid_1_4;
             var event;
             if (isIoCEvent && pass === "IoC") {
                 if (!fluid.event.resolveEvent) {
-                    fluid.fail("fluid.event.resolveEvent could not be loaded - please include FluidIoC.js in order to operate IoC-driven event with descriptor " + 
-                        JSON.stringify(eventSpec));
+                    fluid.fail("fluid.event.resolveEvent could not be loaded - please include FluidIoC.js in order to operate IoC-driven event with descriptor ", 
+                        eventSpec);
                 } else {
                     event = fluid.event.resolveEvent(that, eventKey, eventSpec);
                 }
@@ -8093,13 +10855,13 @@ var fluid = fluid || fluid_1_4;
         initEvents(that, options.events, "flat"); 
         initEvents(that, options.events, "IoC");
         // TODO: manually expand these late so that members attached to ourselves with preInitFunction can be detected
-        var listeners = fluid.expandOptions? fluid.expandOptions(options.listeners, that) : options.listeners;
+        var listeners = fluid.expandOptions ? fluid.expandOptions(options.listeners, that) : options.listeners;
         fluid.mergeListeners(that, that.events, listeners);
     };
     
     fluid.mergeListenersPolicy = function (target, source) {
         var togo = target || {};
-        fluid.each(source, function(listeners, key) {
+        fluid.each(source, function (listeners, key) {
             togo[key] = fluid.makeArray(source[key]).concat(fluid.makeArray(listeners));
         });
         return togo;
@@ -8142,22 +10904,20 @@ var fluid = fluid || fluid_1_4;
     };
     
     // unsupported, NON-API function
-    fluid.mergeLifecycleFunction = function(target, source) {
+    fluid.mergeLifecycleFunction = function (target, source) {
         fluid.event.addListenerToFirer(target, source);
         return target;
     };
     
-    fluid.rootMergePolicy = fluid.transform(fluid.lifecycleFunctions, function() {
-            return fluid.mergeLifecycleFunction;
-        }
-    );
+    fluid.rootMergePolicy = fluid.transform(fluid.lifecycleFunctions, function () {
+        return fluid.mergeLifecycleFunction;
+    });
         
     // unsupported, NON-API function
-    fluid.makeLifecycleFirers = function() {
-        return fluid.transform(fluid.lifecycleFunctions, function() {
-            return fluid.event.getEventFirer()
-            }
-        );
+    fluid.makeLifecycleFirers = function () {
+        return fluid.transform(fluid.lifecycleFunctions, function () {
+            return fluid.event.getEventFirer();
+        });
     };
     
     // unsupported, NON-API function
@@ -8215,6 +10975,9 @@ var fluid = fluid || fluid_1_4;
         if (options === undefined) {
             return fluid.resolveGradedOptions(componentName);
         } else {
+            if (options && options.options) {
+                fluid.fail("Probable error in options structure with option named \"options\" - perhaps you meant to write these options at top level in fluid.defaults?");  
+            }
             fluid.rawDefaults(componentName, options);
             if (fluid.hasGrade(options, "autoInit")) {
                 fluid.makeComponent(componentName, fluid.resolveGradedOptions(componentName));
@@ -8226,7 +10989,7 @@ var fluid = fluid || fluid_1_4;
         if (!options.initFunction || !options.gradeNames) {
             fluid.fail("Cannot autoInit component " + componentName + " which does not have an initFunction and gradeName defined");
         }
-        var creator = function() {
+        var creator = function () {
             return fluid.initComponent(componentName, arguments);
         };
         var existing = fluid.getGlobalValue(componentName);
@@ -8236,8 +10999,8 @@ var fluid = fluid || fluid_1_4;
         fluid.setGlobalValue(componentName, creator);
     };
         
-    fluid.makeComponents = function(components, env) {
-        fluid.each(components, function(value, key) {
+    fluid.makeComponents = function (components, env) {
+        fluid.each(components, function (value, key) {
             var options = {
                 gradeNames: fluid.makeArray(value).concat(["autoInit"])
             };
@@ -8316,13 +11079,13 @@ var fluid = fluid || fluid_1_4;
       
         for (var name in source) {
             var path = (basePath ? basePath + "." : "") + name;
-            var newPolicy = policy && typeof(policy) !== "string" ? policy[path] : policy;
+            var newPolicy = policy && typeof (policy) !== "string" ? policy[path] : policy;
             var thisTarget = target[name];
             var thisSource = source[name];
             var primitiveTarget = fluid.isPrimitive(thisTarget);
     
             if (thisSource !== undefined) {
-                if (thisSource !== null && typeof(thisSource) === "object" &&
+                if (thisSource !== null && typeof (thisSource) === "object" &&
                         !fluid.isDOMNode(thisSource) && !thisSource.jquery && thisSource !== fluid.VALUE &&
                         !fluid.mergePolicyIs(newPolicy, "preserve") && !fluid.mergePolicyIs(newPolicy, "nomerge") && !fluid.mergePolicyIs(newPolicy, "noexpand")) {
                     if (primitiveTarget) {
@@ -8330,7 +11093,7 @@ var fluid = fluid || fluid_1_4;
                     }
                     mergeImpl(policy, path, thisTarget, thisSource, newPolicy, rec);
                 } else {
-                    if (typeof(newPolicy) === "function") {
+                    if (typeof (newPolicy) === "function") {
                         target[name] = newPolicy.call(null, thisTarget, thisSource, name);
                     } else if (!fluid.isValue(thisTarget) || !fluid.mergePolicyIs(newPolicy, "reverse")) {
                         // TODO: When "grades" are implemented, grandfather in any paired applier to perform these operations
@@ -8383,14 +11146,22 @@ var fluid = fluid || fluid_1_4;
     };
 
     // unsupported, NON-API function
-    fluid.transformOptions = function (mergeArgs) {
-        var transRec = mergeArgs[1].transformOptions;
+    fluid.transformOptions = function (mergeArgs, transRec) {
         fluid.expect("Options transformation record", ["transformer", "config"], transRec);
         var transFunc = fluid.getGlobalValue(transRec.transformer);
-        var togo = fluid.transform(mergeArgs, function(value, key) {
-            return key === 0? value : transFunc.call(null, value, transRec.config);
+        var togo = fluid.transform(mergeArgs, function (value, key) {
+            return key === 0 ? value : transFunc.call(null, value, transRec.config);
         });
         return togo;
+    };
+    
+    // unsupporter, NON-API function
+    fluid.lastTransformationRecord = function (extraArgs) {
+        for (var i = extraArgs.length - 1; i >= 0; --i) {
+            if (extraArgs[i] && extraArgs[i].transformOptions) {
+                return extraArgs[i].transformOptions;
+            } 
+        }
     };
 
     /**
@@ -8412,8 +11183,7 @@ var fluid = fluid || fluid_1_4;
         if (!defaultGrades) {
             defaults = fluid.censorKeys(defaults, fluid.keys(fluid.lifecycleFunctions));
             mergeArgs = [mergePolicy, localOptions];
-        }
-        else {
+        } else {
             mergeArgs = [mergePolicy];
         }
         var extraArgs;
@@ -8422,8 +11192,9 @@ var fluid = fluid || fluid_1_4;
         } else {
             extraArgs = [defaults, userOptions];
         }
-        if (extraArgs[1] && extraArgs[1].transformOptions) {
-            extraArgs = fluid.transformOptions(extraArgs);
+        var transRec = fluid.lastTransformationRecord(extraArgs);
+        if (transRec) {
+            extraArgs = fluid.transformOptions(extraArgs, transRec);
         }
         mergeArgs = mergeArgs.concat(extraArgs);
         that.options = fluid.merge.apply(null, mergeArgs);
@@ -8468,10 +11239,10 @@ var fluid = fluid || fluid_1_4;
      *  minimal form of Fluid component */
        
     fluid.typeTag = function (name) {
-        return {
+        return name ? {
             typeName: name,
             id: fluid.allocateGuid()
-        };
+        } : null;
     };
     
     /** A combined "component and grade name" which allows type tags to be declaratively constructed
@@ -8479,7 +11250,7 @@ var fluid = fluid || fluid_1_4;
     
     fluid.typeFount = function (options) {
         var that = fluid.initLittleComponent("fluid.typeFount", options);
-        return that.options.targetTypeName? fluid.typeTag(that.options.targetTypeName) : null;
+        return fluid.typeTag(that.options.targetTypeName);
     };
     
     /**
@@ -8511,8 +11282,8 @@ var fluid = fluid || fluid_1_4;
         return that;
     };
     
-    fluid.clearLifecycleFunctions = function(options) {
-        fluid.each(fluid.lifecycleFunctions, function(value, key) {
+    fluid.clearLifecycleFunctions = function (options) {
+        fluid.each(fluid.lifecycleFunctions, function (value, key) {
             delete options[key];
         });
         delete options.initFunction; 
@@ -8531,7 +11302,7 @@ var fluid = fluid || fluid_1_4;
         }
         that.options.finalInitFunction.fire(that);
         fluid.clearLifecycleFunctions(that.options);
-        return that.options.returnedPath? fluid.get(that, that.options.returnedPath) : that;
+        return that.options.returnedPath ? fluid.get(that, that.options.returnedPath) : that;
     };
 
     // unsupported, NON-API function
@@ -8609,6 +11380,14 @@ var fluid = fluid || fluid_1_4;
 
   // **** VIEW-DEPENDENT DEFINITIONS BELOW HERE
 
+    fluid.checkTryCatchParameter = function () {
+        var location = window.location || { search: "", protocol: "file:" };
+        var GETParams = location.search.slice(1).split('&');
+        return fluid.contains(GETParams, "notrycatch");
+    };
+    
+    fluid.notrycatch = fluid.checkTryCatchParameter();
+    
     /**
      * Fetches a single container element and returns it as a jQuery.
      * 
@@ -8628,11 +11407,8 @@ var fluid = fluid || fluid_1_4;
                 containerSpec = container.selector;
             }
             var count = container.length !== undefined ? container.length : 0;
-            fluid.fail({
-                name: "NotOne",
-                message: count > 1 ? "More than one (" + count + ") container elements were "
-                    : "No container element was found for selector " + containerSpec
-            });
+            fluid.fail((count > 1 ? "More than one (" + count + ") container elements were"
+                    : "No container element was") + " found for selector " + containerSpec);
         }
         if (!fluid.isDOMNode(container[0])) {
             fluid.fail("fluid.container was supplied a non-jQueryable element");  
@@ -8805,7 +11581,8 @@ var fluid = fluid || fluid_1_4;
         dokkument = dokkument && dokkument.nodeType === 9 ? dokkument : document;
         var el = dokkument.getElementById(id);
         if (el) {
-            if (el.getAttribute("id") !== id) {
+        // Use element id property here rather than attribute, to work around FLUID-3953
+            if (el.id !== id) {
                 fluid.fail("Problem in document structure - picked up element " +
                     fluid.dumpEl(el) + " for id " + id +
                     " without this id - most likely the element has a name which conflicts with this id");
@@ -8822,7 +11599,7 @@ var fluid = fluid || fluid_1_4;
      * @param {jQuery||Element} element the element to return the id attribute for
      */
     fluid.getId = function (element) {
-        return fluid.unwrap(element).getAttribute("id");
+        return fluid.unwrap(element).id;
     };
     
     /** 
@@ -8831,15 +11608,29 @@ var fluid = fluid || fluid_1_4;
      */
     
     fluid.allocateSimpleId = function (element) {
+        var simpleId = "fluid-id-" + fluid.allocateGuid();
+        if (!element) {
+            return simpleId;
+        }
         element = fluid.unwrap(element);
         if (!element.id) {
-            element.id = "fluid-id-" + fluid.allocateGuid(); 
+            element.id = simpleId;
         }
         return element.id;
     };
     
 
     // Message resolution and templating
+   
+   
+    /**
+    * Converts a string to a regexp with the specified flags given in parameters
+    * @param {String} a string that has to be turned into a regular expression
+    * @param {String} the flags to provide to the reg exp 
+    */
+    fluid.stringToRegExp = function (str, flags) {
+        return new RegExp(str.replace(/[\-\[\]{}()*+?.,\\\^$|#\s]/g, "\\$&"), flags);
+    };
     
     /**
      * Simple string template system. 
@@ -8853,8 +11644,8 @@ var fluid = fluid || fluid_1_4;
     fluid.stringTemplate = function (template, values) {
         var newString = template;
         for (var key in values) {
-            var searchStr = "%" + key;
-            newString = newString.replace(searchStr, values[key]);
+            var re = fluid.stringToRegExp("%" + key, "g");
+            newString = newString.replace(re, values[key]);
         }
         return newString;
     };
@@ -8924,6 +11715,7 @@ var fluid = fluid || fluid_1_4;
 Copyright 2007-2010 University of Cambridge
 Copyright 2007-2009 University of Toronto
 Copyright 2010 Lucendo Development Ltd.
+Copyright 2010-2011 OCAD University
 
 Licensed under the Educational Community License (ECL), Version 2.0 or the New
 BSD license. You may not use this file except in compliance with one these
@@ -9005,7 +11797,7 @@ var fluid_1_4 = fluid_1_4 || {};
                     fluid.setScopedData(this, ENABLEMENT_KEY, state);
                 }
                 else if (/select|textarea|input/i.test(this.nodeName)) {
-                    $(this).attr("disabled", !state);
+                    $(this).prop("disabled", !state);
                 }
             });
             fluid.setScopedData(target, ENABLEMENT_KEY, state);
@@ -9282,7 +12074,7 @@ fluid_1_4 = fluid_1_4 || {};
 Copyright 2007-2010 University of Cambridge
 Copyright 2007-2009 University of Toronto
 Copyright 2007-2009 University of California, Berkeley
-Copyright 2010 OCAD University
+Copyright 2010-2011 OCAD University
 Copyright 2010 Lucendo Development Ltd.
 
 Licensed under the Educational Community License (ECL), Version 2.0 or the New
@@ -9445,8 +12237,8 @@ var fluid = fluid || fluid_1_4;
         }
         element = $(element);
         togo = element.get(0).tagName;
-        if (element.attr("id")) {
-            togo += "#" + element.attr("id");
+        if (element.id) {
+            togo += "#" + element.id;
         }
         if (element.attr("class")) {
             togo += "." + element.attr("class");
@@ -9459,6 +12251,7 @@ var fluid = fluid || fluid_1_4;
 Copyright 2008-2010 University of Cambridge
 Copyright 2008-2009 University of Toronto
 Copyright 2010 Lucendo Development Ltd.
+Copyright 2010-2011 OCAD University
 
 Licensed under the Educational Community License (ECL), Version 2.0 or the New
 BSD license. You may not use this file except in compliance with one these
@@ -10079,6 +12872,7 @@ var fluid_1_4 = fluid_1_4 || {};
 Copyright 2008-2010 University of Cambridge
 Copyright 2008-2010 University of Toronto
 Copyright 2010 Lucendo Development Ltd.
+Copyright 2010-2011 OCAD University
 
 Licensed under the Educational Community License (ECL), Version 2.0 or the New
 BSD license. You may not use this file except in compliance with one these
@@ -10702,6 +13496,7 @@ var fluid = fluid || fluid_1_4;
   })(jQuery, fluid_1_4);
 /*
 Copyright 2010-2011 Lucendo Development Ltd.
+Copyright 2010-2011 OCAD University
 
 Licensed under the Educational Community License (ECL), Version 2.0 or the New
 BSD license. You may not use this file except in compliance with one these
@@ -10755,7 +13550,7 @@ var fluid_1_4 = fluid_1_4 || {};
     
     fluid.ariaLabeller.generateLiveElement = function (that) {
         var liveEl = $(that.options.liveRegionMarkup);
-        liveEl.attr("id", that.options.liveRegionId);
+        liveEl.prop("id", that.options.liveRegionId);
         $("body").append(liveEl);
         return liveEl;
     };
@@ -10823,7 +13618,8 @@ var fluid_1_4 = fluid_1_4 || {};
             fluid.each(exclusion, function (excludeEl) {
                 $(excludeEl).bind("focusin", that.canceller).
                     bind("fluid-focus", that.canceller).
-                    click(that.canceller);
+                    click(that.canceller).mousedown(that.canceller);
+    // Mousedown is added for FLUID-4212, as a result of Chrome bug 6759, 14204
             });
         });
         return that;
@@ -10836,8 +13632,7 @@ var fluid_1_4 = fluid_1_4 || {};
     
 })(jQuery, fluid_1_4);
 /*
-Copyright 2007-2010 University of Cambridge
-Copyright 2010 Lucendo Development Ltd.
+Copyright 2010-2011 OCAD University
 
 Licensed under the Educational Community License (ECL), Version 2.0 or the New
 BSD license. You may not use this file except in compliance with one these
@@ -10851,7 +13646,7 @@ https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
 /*global fluid_1_4:true, jQuery*/
 
 // JSLint options 
-/*jslint white: true, elsecatch: true, operator: true, jslintok: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
+/*jslint white: true, funcinvoke: true, continue: true, elsecatch: true, operator: true, jslintok:true, undef: true, newcap: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
 
 var fluid_1_4 = fluid_1_4 || {};
 
@@ -10868,6 +13663,7 @@ var fluid_1_4 = fluid_1_4 || {};
         return component.options && component.options["fluid.visitComponents.fireBreak"];
     };
     
+    // unsupported, non-API function
     fluid.visitComponentChildren = function(that, visitor, options, up, down) {
         options = options || {};
         for (var name in that) {
@@ -10946,16 +13742,63 @@ var fluid_1_4 = fluid_1_4 || {};
         };
     }
     
+    // unsupported, non-API function
     fluid.dumpThat = function(that, instantiator) {
         return "{ typeName: \"" + that.typeName + "\" id: " + that.id + "}";
     };
     
+        // unsupported, non-API function
     fluid.dumpThatStack = function(thatStack, instantiator) {
         var togo = fluid.transform(thatStack, function(that) {
             var path = instantiator.idToPath[that.id];
             return fluid.dumpThat(that) + (path? (" - path: " + path) : "");
         });
         return togo.join("\n");
+    };
+
+    // Return an array of objects describing the current activity
+    // unsupported, non-API function
+    fluid.describeActivity = function() {
+        return fluid.threadLocal().activityStack || [];
+    };
+    
+    // Execute the supplied function with the specified activity description pushed onto the stack
+    // unsupported, non-API function
+    fluid.pushActivity = function(func, message) {
+        if (!message) {
+            return func();
+        }
+        var root = fluid.threadLocal();
+        if (!root.activityStack) {
+            root.activityStack = [];
+        }
+        var frames = fluid.makeArray(message);
+        frames.push("\n");
+        frames.unshift("\n");
+        root.activityStack = frames.concat(root.activityStack);
+        return fluid.tryCatch(func, null, function() {
+            root.activityStack = root.activityStack.slice(frames.length);
+        });
+    };
+    
+    // Return a function wrapped by the activity of describing its activity
+    // unsupported, non-API function
+    fluid.wrapActivity = function(func, messageSpec) {
+        return function() {
+            var args = fluid.makeArray(arguments);
+            var message = fluid.transform(fluid.makeArray(messageSpec), function(specEl) {
+                if (specEl.indexOf("arguments.") === 0) {
+                    var el = specEl.substring("arguments.".length);
+                    return fluid.get(args, el);
+                }
+                else {
+                    return specEl;
+                }
+            });
+            return fluid.pushActivity(function() {
+                return func.apply(null, args);
+            }, message);
+        };
     };
 
     var localRecordExpected = /arguments|options|container/;
@@ -11000,7 +13843,6 @@ var fluid_1_4 = fluid_1_4 || {};
      
     function makeStackResolverOptions(instantiator, parentThat, localRecord, expandOptions) {
         return $.extend({}, fluid.defaults("fluid.resolveEnvironment"), {
-            noCopy: true,
             fetcher: makeStackFetcher(instantiator, parentThat, localRecord, expandOptions)
         }); 
     }
@@ -11125,8 +13967,8 @@ var fluid_1_4 = fluid_1_4 || {};
         mergeToMergeAll(demandspec);
         if (demandspec.mergeAllOptions) {
             if (demandspec.options) {
-                fluid.fail("demandspec " + JSON.stringify(demandspec) 
-                    + " is invalid - cannot specify literal options together with mergeOptions or mergeAllOptions"); 
+                fluid.fail("demandspec ", demandspec, 
+                    " is invalid - cannot specify literal options together with mergeOptions or mergeAllOptions"); 
             }
             demandspec.options = {
                 mergeAllOptions: demandspec.mergeAllOptions
@@ -11147,8 +13989,13 @@ var fluid_1_4 = fluid_1_4 || {};
         options = options || {};
         
         upgradeMergeOptions(demandspec);
+        var oldOptions = fluid.get(options, "componentRecord.options");
         options.componentRecord = $.extend(true, {}, options.componentRecord, 
-            fluid.censorKeys(demandspec, ["args", "funcName"]));
+            fluid.censorKeys(demandspec, ["args", "funcName", "registeredFrom"]));
+        var mergeAllZero = fluid.get(options, "componentRecord.options.mergeAllOptions.0");
+        if (mergeAllZero === "{options}") {
+            fluid.set(options, "componentRecord.options.mergeAllOptions.0", oldOptions);
+        }
         
         var demands = $.makeArray(demandspec.args);
         var upDefaults = fluid.defaults(demandspec.funcName); // I can SEE into TIME!!
@@ -11215,7 +14062,9 @@ var fluid_1_4 = fluid_1_4 || {};
                     if (arg && typeof(arg) === "object" && !arg.targetTypeName) {
                         arg.targetTypeName = demandspec.funcName;
                     }
-                    args[i] = {marker: fluid.EXPAND, value: arg, localRecord: upstreamLocalRecord};
+                    // ensure to copy the arg since it is an alias of the demand block material (FLUID-4223)
+                    // and will be destructively expanded
+                    args[i] = {marker: fluid.EXPAND, value: fluid.copy(arg), localRecord: upstreamLocalRecord};
                 }
                 if (args[i] && fluid.isMarker(args[i].marker, fluid.EXPAND_NOW)) {
                     args[i] = fluid.expander.expandLight(args[i].value, expandOptions);
@@ -11296,7 +14145,7 @@ outer:  for (var i = 0; i < exist.length; ++i) {
     fluid.locateAllDemands = function(instantiator, parentThat, demandingNames) {
         var demandLogging = fluid.isDemandLogging(demandingNames);
         if (demandLogging) {
-            fluid.log("Resolving demands for function names " + JSON.stringify(demandingNames) + " in context of " +
+            fluid.log("Resolving demands for function names ", demandingNames, " in context of " +
                 (parentThat? "component " + parentThat.typeName : "no component"));
         }
         
@@ -11335,8 +14184,13 @@ outer:  for (var i = 0; i < exist.length; ++i) {
         var matches = fluid.locateAllDemands(instantiator, parentThat, demandingNames);
         var demandspec = matches.length === 0 || matches[0].intersect === 0? null : matches[0].spec.spec;
         if (fluid.isDemandLogging(demandingNames)) {
-            fluid.log(demandspec? "Located " + matches.length + " potential match" + (matches.length === 1? "" : "es") + ", selected best match with " + matches[0].intersect 
-                + " matched context names: " + JSON.stringify(demandspec) : "No matches found for demands, using direct implementation");
+            if (demandspec) {
+                fluid.log("Located " + matches.length + " potential match" + (matches.length === 1? "" : "es") + ", selected best match with " + matches[0].intersect 
+                    + " matched context names: ", demandspec);
+            }
+            else {
+                fluid.log("No matches found for demands, using direct implementation");
+            }
         }  
         return demandspec;
     };
@@ -11362,7 +14216,7 @@ outer:  for (var i = 0; i < exist.length; ++i) {
             if (demandspec2) {
                 fluid.each(demandspec2, function(value, key) {
                     if (localRecordExpected.test(key)) {
-                        fluid.fail("Error in demands block " + JSON.stringify(demandspec2) + " - content with key \"" + key 
+                        fluid.fail("Error in demands block ", demandspec2, " - content with key \"" + key 
                             + "\" is not supported since this demands block was resolved via an alias from \"" + newFuncName + "\"");
                     }  
                 });
@@ -11392,6 +14246,8 @@ outer:  for (var i = 0; i < exist.length; ++i) {
         });
     };
     
+    fluid.invoke = fluid.wrapActivity(fluid.invoke, ["    while invoking function with name \"", "arguments.0", "\" from component", "arguments.2"]); 
+    
     /** Make a function which performs only "static redispatch" of the supplied function name - 
      * that is, taking only account of the contents of the "static environment". Since the static
      * environment is assumed to be constant, the dispatch of the call will be evaluated at the
@@ -11409,8 +14265,11 @@ outer:  for (var i = 0; i < exist.length; ++i) {
     fluid.makeInvoker = function(instantiator, that, demandspec, functionName, environment) {
         demandspec = demandspec || fluid.determineDemands(instantiator, that, functionName);
         return function() {
-            var invokeSpec = fluid.embodyDemands(instantiator, that, demandspec, arguments, {passArgs: true});
-            return fluid.invokeGlobalFunction(invokeSpec.funcName, invokeSpec.args, environment);
+            var args = arguments;
+            return fluid.pushActivity(function() {
+                var invokeSpec = fluid.embodyDemands(instantiator, that, demandspec, args, {passArgs: true});
+                return fluid.invokeGlobalFunction(invokeSpec.funcName, invokeSpec.args, environment);
+            }, ["    while invoking invoker with name " + functionName + " on component", that]);
         };
     };
     
@@ -11474,13 +14333,13 @@ outer:  for (var i = 0; i < exist.length; ++i) {
     // unsupported, non-API function
     fluid.expander.preserveFromExpansion = function(options) {
         var preserve = {};
-        var preserveList = ["mergePolicy", "mergeAllOptions", "components", "invokers", "events", "listeners"];
+        var preserveList = fluid.arrayToHash(["mergePolicy", "mergeAllOptions", "components", "invokers", "events", "listeners", "transformOptions"]);
         fluid.each(options.mergePolicy, function(value, key) {
             if (fluid.mergePolicyIs(value, "noexpand")) {
-                preserveList.push(key);
+                preserveList[key] = true;
             }
         });
-        fluid.each(preserveList, function(path) {
+        fluid.each(preserveList, function(xvalue, path) {
             var pen = fluid.model.getPenultimate(options, path);
             var value = pen.root[pen.last];
             delete pen.root[pen.last];
@@ -11488,7 +14347,7 @@ outer:  for (var i = 0; i < exist.length; ++i) {
         });
         return {
             restore: function(target) {
-                fluid.each(preserveList, function(path) {
+                fluid.each(preserveList, function(xvalue, path) {
                     var preserved = fluid.get(preserve, path);
                     if (preserved !== undefined) {
                         fluid.set(target, path, preserved);
@@ -11525,6 +14384,7 @@ outer:  for (var i = 0; i < exist.length; ++i) {
         });
     };
     
+    // unsupported, non-API function    
     fluid.locateTransformationRecord = function(that) {
         return fluid.withInstantiator(that, function(instantiator) {
             var matches = fluid.locateAllDemands(instantiator, that, ["fluid.transformOptions"]);
@@ -11534,8 +14394,38 @@ outer:  for (var i = 0; i < exist.length; ++i) {
         });
     };
     
+    // 
+    fluid.hashToArray = function(hash) {
+        var togo = [];
+        fluid.each(hash, function(value, key) {
+            togo.push(key);
+        });
+        return togo;
+    };
+    
+    // unsupported, non-API function    
+    fluid.localRecordExpected = ["type", "options", "arguments", "mergeOptions",
+        "mergeAllOptions", "createOnEvent", "priority"];
+    // unsupported, non-API function    
+    fluid.checkComponentRecord = function(defaults, localRecord) {
+        var expected = fluid.arrayToHash(fluid.localRecordExpected);
+        fluid.each(defaults.argumentMap, function(value, key) {
+            expected[key] = true;
+        });
+        fluid.each(localRecord, function(value, key) {
+            if (!expected[key]) {
+                fluid.fail("Probable error in subcomponent record - key \"" + key + 
+                    "\" found, where the only legal options are " + 
+                    fluid.hashToArray(expected).join(", "));
+            }  
+        });
+    };
+    
     // unsupported, non-API function
     fluid.expandComponentOptions = function(defaults, userOptions, that) {
+        if (userOptions && userOptions.localRecord) {
+            fluid.checkComponentRecord(defaults, userOptions.localRecord);
+        }
         defaults = fluid.expandOptions(fluid.copy(defaults), that);
         var localRecord = {};
         if (userOptions && userOptions.marker === fluid.EXPAND) {
@@ -11571,6 +14461,9 @@ outer:  for (var i = 0; i < exist.length; ++i) {
         return [defaults].concat(togo);
     };
     
+    fluid.expandComponentOptions = fluid.wrapActivity(fluid.expandComponentOptions, 
+        ["    while expanding component options ", "arguments.1.value", " with record ", "arguments.1", " for component ", "arguments.2"]);
+    
     // The case without the instantiator is from the ginger strategy - this logic is still a little ragged
     fluid.initDependent = function(that, name, userInstantiator, directArgs) {
         if (!that || that[name]) { return; }
@@ -11589,15 +14482,15 @@ outer:  for (var i = 0; i < exist.length; ++i) {
             }
         }
         
+        var component = that.options.components[name];
         fluid.withInstantiator(that, function(instantiator) {
-            var component = that.options.components[name];
             if (typeof(component) === "string") {
                 that[name] = fluid.expandOptions([component], that)[0]; // TODO: expose more sensible semantic for expandOptions 
             }
             else if (component.type) {
                 var invokeSpec = fluid.resolveDemands(instantiator, that, [component.type, name], directArgs, {componentRecord: component});
                 instantiator.pushUpcomingInstantiation(that, name);
-                try {
+                fluid.tryCatch(function() {
                     that[inCreationMarker] = true;
                     var instance = fluid.initSubcomponentImpl(that, {type: invokeSpec.funcName}, invokeSpec.args);
                     // The existing instantiator record will be provisional, adjust it to take account of the true return
@@ -11611,58 +14504,56 @@ outer:  for (var i = 0; i < exist.length; ++i) {
                         instantiator.recordKnownComponent(that, instance, name);
                     }
                     that[name] = instance;
-                }
-                finally {
+                }, null, function() {
                     delete that[inCreationMarker];
                     instantiator.pushUpcomingInstantiation();
-                }
+                });
             }
             else { 
                 that[name] = component;
             }
-        });
+        }, ["    while instantiating dependent component with name \"" + name + "\" with record ", component, " as child of ", that]);
         fluid.log("Finished instantiation of component with name \"" + name + "\" as child of " + fluid.dumpThat(that));
     };
     
     // NON-API function
     // This function is stateful and MUST NOT be called by client code
-    fluid.withInstantiator = function(that, func) {
+    fluid.withInstantiator = function(that, func, message) {
         var root = fluid.threadLocal();
         var instantiator = root["fluid.instantiator"];
         if (!instantiator) {
             instantiator = root["fluid.instantiator"] = fluid.instantiator();
             //fluid.log("Created new instantiator with id " + instantiator.id + " in order to operate on component " + typeName);
         }
-        try {
-            if (that) {
-                instantiator.recordComponent(that);
-            }
-            instantiator.stack(1);
-            //fluid.log("Instantiator stack +1 to " + instantiator.stackCount + " for " + typeName);
-            return func(instantiator);
-        }
-        finally {
-            var count = instantiator.stack(-1);
-            //fluid.log("Instantiator stack -1 to " + instantiator.stackCount + " for " + typeName);
-            if (count === 0) {
-                //fluid.log("Clearing instantiator with id " + instantiator.id + " from threadLocal for end of " + typeName);
-                delete root["fluid.instantiator"];
-            }
-        }              
+        return fluid.pushActivity(function() {
+            return fluid.tryCatch(function() {
+                if (that) {
+                    instantiator.recordComponent(that);
+                }
+                instantiator.stack(1);
+                //fluid.log("Instantiator stack +1 to " + instantiator.stackCount + " for " + typeName);
+                return func(instantiator);
+            }, null, function() {
+                var count = instantiator.stack(-1);
+                //fluid.log("Instantiator stack -1 to " + instantiator.stackCount + " for " + typeName);
+                if (count === 0) {
+                    //fluid.log("Clearing instantiator with id " + instantiator.id + " from threadLocal for end of " + typeName);
+                    delete root["fluid.instantiator"];
+                }
+            });
+        }, message);
     };
     
     // unsupported, non-API function
-    fluid.bindDeferredComponent = function(that, componentName, component) {
-        fluid.withInstantiator(that, function(instantiator) {
-            var events = fluid.makeArray(component.createOnEvent);
-            fluid.each(events, function(eventName) {
-                that.events[eventName].addListener(function() {
-                    if (that[componentName]) {
-                        instantiator.clearComponent(that, componentName);
-                    }
-                    fluid.initDependent(that, componentName, instantiator);
-                }, null, null, component.priority);
-            });
+    fluid.bindDeferredComponent = function(that, componentName, component, instantiator) {
+        var events = fluid.makeArray(component.createOnEvent);
+        fluid.each(events, function(eventName) {
+            that.events[eventName].addListener(function() {
+                if (that[componentName]) {
+                    instantiator.clearComponent(that, componentName);
+                }
+                fluid.initDependent(that, componentName, instantiator);
+            }, null, null, component.priority);
         });
     };
     
@@ -11677,17 +14568,17 @@ outer:  for (var i = 0; i < exist.length; ++i) {
         var options = that.options;
         var components = options.components || {};
         var componentSort = {};
-        fluid.each(components, function(component, name) {
-            if (!component.createOnEvent) {
-                var priority = fluid.priorityForComponent(component);
-                componentSort[name] = {key: name, priority: fluid.event.mapPriority(priority)};
-            }
-            else {
-                fluid.bindDeferredComponent(that, name, component);
-            }
-        });
-        var componentList = fluid.event.sortListeners(componentSort);
         fluid.withInstantiator(that, function(instantiator) {
+            fluid.each(components, function(component, name) {
+                if (!component.createOnEvent) {
+                    var priority = fluid.priorityForComponent(component);
+                    componentSort[name] = {key: name, priority: fluid.event.mapPriority(priority, 0)};
+                }
+                else {
+                    fluid.bindDeferredComponent(that, name, component, instantiator);
+                }
+            });
+            var componentList = fluid.event.sortListeners(componentSort);
             fluid.each(componentList, function(entry) {
                 fluid.initDependent(that, entry.key);  
             });
@@ -11696,9 +14587,9 @@ outer:  for (var i = 0; i < exist.length; ++i) {
                 var invokerec = invokers[name];
                 var funcName = typeof(invokerec) === "string"? invokerec : null;
                 that[name] = fluid.withInstantiator(that, function(instantiator) {
-                    fluid.log("Beginning instantiation of invoker with name \"" + name + "\" as child of " + fluid.dumpThat(that)); 
+                    fluid.log("Beginning instantiation of invoker with name \"" + name + "\" as child of " + fluid.dumpThat(that));
                     return fluid.makeInvoker(instantiator, that, funcName? null : invokerec, funcName);
-                }); // jslint:ok
+                }, ["    while instantiating invoker with name \"" + name + "\" with record ", invokerec, " as child of ", that]); // jslint:ok
                 fluid.log("Finished instantiation of invoker with name \"" + name + "\" as child of " + fluid.dumpThat(that)); 
             }
         });
@@ -11738,20 +14629,19 @@ outer:  for (var i = 0; i < exist.length; ++i) {
         prefix = prefix || "";
         var root = fluid.threadLocal();
         var applier = fluid.makeChangeApplier(root, {thin: true});
-        try {
+        return fluid.tryCatch(function() {
             for (var key in envAdd) {
                 applyLocalChange(applier, "ADD", fluid.model.composePath(prefix, key), envAdd[key]);
             }
             $.extend(root, envAdd);
             return func();
-        }
-        finally {
-            for (var key in envAdd) {
+        }, null, function() {
+            for (var key in envAdd) { // jslint:ok duplicate "value"
               // TODO: This could be much better through i) refactoring the ChangeApplier so we could naturally use "rollback" semantics 
               // and/or implementing this material using some form of "prototype chain"
                 applyLocalChange(applier, "DELETE", fluid.model.composePath(prefix, key));
             }
-        }
+        });
     };
     
     // unsupported, non-API function  
@@ -11855,6 +14745,9 @@ outer:  for (var i = 0; i < exist.length; ++i) {
         return string;
     };
     
+    fluid.resolveContextValue = fluid.wrapActivity(fluid.resolveContextValue, 
+        ["    while resolving context value ", "arguments.0"]);
+    
     function resolveEnvironmentImpl(obj, options) {
         fluid.guardCircularity(options.seenIds, obj, "expansion", 
              " - please ensure options are not circularly connected, or protect from expansion using the \"noexpand\" policy or expander");
@@ -11879,13 +14772,14 @@ outer:  for (var i = 0; i < exist.length; ++i) {
     
     fluid.defaults("fluid.resolveEnvironment", {
         ELstyle:     "${}",
+        seenIds:     {},
         bareContextRefs: true
     });
     
     fluid.resolveEnvironment = function(obj, options) {
-        var options = fluid.merge(null, fluid.defaults("fluid.resolveEnvironment"), options);
-        options.seenIds = {};
-        
+        // Don't create a component here since this function is itself used in the 
+        // component expansion pathway - avoid all expansion in any case to head off FLUID-4301
+        options = $.extend(true, {}, fluid.rawDefaults("fluid.resolveEnvironment"), options);
         return resolveEnvironmentImpl(obj, options);
     };
 
@@ -11949,8 +14843,7 @@ outer:  for (var i = 0; i < exist.length; ++i) {
           
 })(jQuery, fluid_1_4);
 /*
-Copyright 2007-2010 University of Cambridge
-Copyright 2007-2009 University of Toronto
+Copyright 2010-2011 OCAD University
 
 Licensed under the Educational Community License (ECL), Version 2.0 or the New
 BSD license. You may not use this file except in compliance with one these
@@ -12179,7 +15072,8 @@ var fluid_1_4 = fluid_1_4 || {};
         var options = {  
              url:     resourceSpec.href,
              success: thisCallback.success, 
-             error:   thisCallback.error};
+             error:   thisCallback.error,
+             dataType: "text"};
         fluid.fetchResources.timeSuccessCallback(resourceSpec);
         fluid.merge(fluid.defaults("fluid.fetchResources.issueRequest").mergePolicy,
                       options, resourceSpec.options);
@@ -12788,7 +15682,7 @@ https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
 /*global fluid_1_4:true, jQuery*/
 
 // JSLint options 
-/*jslint white: true, undef: true, newcap: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
+/*jslint white: true, funcinvoke: true, continue: true, elsecatch: true, operator: true, jslintok:true, undef: true, newcap: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
 
 fluid_1_4 = fluid_1_4 || {};
 
@@ -13319,7 +16213,7 @@ https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
 /*global fluid_1_4:true, jQuery*/
 
 // JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
+/*jslint white: true, funcinvoke: true, continue: true, elsecatch: true, operator: true, jslintok:true, undef: true, newcap: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
 
 fluid_1_4 = fluid_1_4 || {};
 
@@ -13329,14 +16223,6 @@ fluid_1_4 = fluid_1_4 || {};
         return "as child of " + (component.parent.fullID ? "component with full ID " + component.parent.fullID : "root");
     }
      
-    fluid.arrayToHash = function (array) {
-        var togo = {};
-        fluid.each(array, function (el) {
-            togo[el] = true;
-        });
-        return togo;
-    };
-  
     function computeFullID(component) {
         var togo = "";
         var move = component;
@@ -13583,11 +16469,11 @@ fluid_1_4 = fluid_1_4 || {};
             var name = renderer.IDtoComponentName(ID, num);
             // TODO: The best we can do here without GRADES is to wildly guess 
             // that it is a view component with options in the 2nd place and container in first place
-            fluid.set(parent, fluid.path("options", "components", name), {type: func, options: args[1]});
+            fluid.set(parent, fluid.path("options", "components", name), {type: func});
             // This MIGHT really be a variant of fluid.invoke... only we often probably DO want the component
             // itself to be inserted into the that stack. This *ALSO* requires GRADES to resolve. A 
             // "function" is that which has no grade. The gradeless grade.
-            that = fluid.initDependent(options.parentComponent, name, options.instantiator, [args[0]]);
+            that = fluid.initDependent(options.parentComponent, name, options.instantiator, args);
         }
         else {
             that = fluid.invokeGlobalFunction(func, args);
@@ -14659,7 +17545,7 @@ fluid_1_4 = fluid_1_4 || {};
         function processDecoratorQueue() {
             for (var i = 0; i < decoratorQueue.length; ++i) {
                 var decorator = decoratorQueue[i];
-                for (var j = 0; j < decorator.ids.length; ++ j) {
+                for (var j = 0; j < decorator.ids.length; ++j) {
                     var id = decorator.ids[j];
                     var node = fluid.byId(id, renderOptions.document);
                     if (!node) {
@@ -14896,7 +17782,7 @@ https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
 /*global fluid_1_4:true, jQuery*/
 
 // JSLint options 
-/*jslint white: true, funcinvoke: true, elsecatch: true, operator: true, jslintok:true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
+/*jslint white: true, funcinvoke: true, continue: true, elsecatch: true, operator: true, jslintok:true, undef: true, newcap: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
 
 fluid_1_4 = fluid_1_4 || {};
 
@@ -15047,10 +17933,9 @@ fluid_1_4 = fluid_1_4 || {};
             };
         }
         var produceTree = that.events.produceTree;
-        produceTree.addListener( function() {
+        produceTree.addListener(function() {
             return that.options.protoTree;
-            }
-        );
+        });
         
         if (that.options.produceTree) {
             produceTree.addListener(that.options.produceTree);
@@ -15088,6 +17973,10 @@ fluid_1_4 = fluid_1_4 || {};
             that.renderer.render(tree);
             that.events.afterRender.fire(that);
         };
+        
+        if (that.options.renderOnInit) {
+            that.refreshView();
+        }
         
         return that;
     };
@@ -15306,7 +18195,7 @@ fluid_1_4 = fluid_1_4 || {};
             var EL = typeof (value) === "string" ? fetchEL(value) : null;
             if (EL) {
                 proto.valuebinding = EL;
-            } else {
+            } else if (value !== undefined) {
                 proto.value = value;
             }
             if (options.model && proto.valuebinding && proto.value === undefined) {
@@ -15462,13433 +18351,4 @@ fluid_1_4 = fluid_1_4 || {};
     };
     
 })(jQuery, fluid_1_4);
-    /*
-Copyright 2008-2009 University of Toronto
-Copyright 2010-2011 OCAD University
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global window, fluid_1_4:true, jQuery, swfobject*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {
-    fluid.registerNamespace("fluid.browser");
     
-    fluid.browser.binaryXHR = function () {
-        var canSendBinary = window.FormData || 
-            (window.XMLHttpRequest && 
-                window.XMLHttpRequest.prototype &&
-                window.XMLHttpRequest.prototype.sendAsBinary);
-        return canSendBinary ? fluid.typeTag("fluid.browser.supportsBinaryXHR") : undefined;
-    };
-    
-    fluid.browser.formData  = function () {
-        return window.FormData ? fluid.typeTag("fluid.browser.supportsFormData") : undefined;
-    };
-    
-    fluid.browser.flash = function () {
-        var hasModernFlash = (typeof(swfobject) !== "undefined") && (swfobject.getFlashPlayerVersion().major > 8);
-        return hasModernFlash ? fluid.typeTag("fluid.browser.supportsFlash") : undefined;
-    };
-    
-    fluid.progressiveChecker = function (options) {
-        var that = fluid.initLittleComponent("fluid.progressiveChecker", options);
-        return fluid.typeTag(fluid.find(that.options.checks, function(check) {
-            if (check.feature) {
-                return check.contextName;
-            }}, that.options.defaultContextName
-        ));
-    };
-    
-    fluid.defaults("fluid.progressiveChecker", {
-        gradeNames: "fluid.typeFount",
-        checks: [], // [{"feature": "{IoC Expression}", "contextName": "context.name"}]
-        defaultContextName: undefined
-    });
-    
-    fluid.progressiveCheckerForComponent = function (options) {
-        var that = fluid.initLittleComponent("fluid.progressiveCheckerForComponent", options);
-        var defaults = fluid.defaults(that.options.componentName);
-        return fluid.progressiveChecker(fluid.expandOptions(defaults.progressiveCheckerOptions, that));  
-    };
-
-    fluid.defaults("fluid.progressiveCheckerForComponent", {
-        gradeNames: "fluid.typeFount"
-    });
-    
-    /**********************************************************
-     * This code runs immediately upon inclusion of this file *
-     **********************************************************/
-    
-    // Use JavaScript to hide any markup that is specifically in place for cases when JavaScript is off.
-    // Note: the use of fl-ProgEnhance-basic is deprecated, and replaced by fl-progEnhance-basic.
-    // It is included here for backward compatibility only.
-    $("head").append("<style type='text/css'>.fl-progEnhance-basic, .fl-ProgEnhance-basic { display: none; } .fl-progEnhance-enhanced, .fl-ProgEnhance-enhanced { display: block; }</style>");
-    
-    // Browser feature detection--adds corresponding type tags to the static environment,
-    // which can be used to define appropriate demands blocks for components using the IoC system.
-    var features = {
-        supportsBinaryXHR: fluid.browser.binaryXHR(),
-        supportsFormData: fluid.browser.formData(),
-        supportsFlash: fluid.browser.flash()
-    };
-    fluid.merge(null, fluid.staticEnvironment, features);
-    
-})(jQuery, fluid_1_4);
-/*
- * jQuery UI Tooltip @VERSION
- *
- * Copyright 2010, AUTHORS.txt
- * Dual licensed under the MIT or GPL Version 2 licenses.
- * http://jquery.org/license
- *
- * http://docs.jquery.com/UI/Tooltip
- *
- * Depends:
- *	jquery.ui.core.js
- *	jquery.ui.widget.js
- *	jquery.ui.position.js
- */
-(function($) {
-
-var increments = 0;
-
-$.widget("ui.tooltip", {
-	options: {
-		items: "[title]",
-		content: function() {
-			return $(this).attr("title");
-		},
-		position: {
-			my: "left center",
-			at: "right center",
-			offset: "15 0"
-		}
-	},
-	_create: function() {
-		var self = this;
-		this.tooltip = $("<div></div>")
-			.attr("id", "ui-tooltip-" + increments++)
-			.attr("role", "tooltip")
-			.attr("aria-hidden", "true")
-			.addClass("ui-tooltip ui-widget ui-corner-all ui-widget-content")
-			.appendTo(document.body)
-			.hide();
-		this.tooltipContent = $("<div></div>")
-			.addClass("ui-tooltip-content")
-			.appendTo(this.tooltip);
-		this.opacity = this.tooltip.css("opacity");
-		this.element
-			.bind("focus.tooltip mouseover.tooltip", function(event) {
-				self.open( event );
-			})
-			.bind("blur.tooltip mouseout.tooltip", function(event) {
-				self.close( event );
-			});
-	},
-	
-	enable: function() {
-		this.options.disabled = false;
-	},
-	
-	disable: function() {
-		this.options.disabled = true;
-	},
-	
-	destroy: function() {
-		this.tooltip.remove();
-		$.Widget.prototype.destroy.apply(this, arguments);
-	},
-	
-	widget: function() {
-		return this.element.pushStack(this.tooltip.get());
-	},
-	
-	open: function(event) {
-		var target = $(event && event.target || this.element).closest(this.options.items);
-		// already visible? possible when both focus and mouseover events occur
-		if (this.current && this.current[0] == target[0])
-			return;
-		var self = this;
-		this.current = target;
-		this.currentTitle = target.attr("title");
-		var content = this.options.content.call(target[0], function(response) {
-			// IE may instantly serve a cached response, need to give it a chance to finish with _show before that
-			setTimeout(function() {
-				// ignore async responses that come in after the tooltip is already hidden
-				if (self.current == target)
-					self._show(event, target, response);
-			}, 13);
-		});
-		if (content) {
-			self._show(event, target, content);
-		}
-	},
-	
-	_show: function(event, target, content) {
-		if (!content)
-			return;
-		
-		target.attr("title", "");
-		
-		if (this.options.disabled)
-			return;
-			
-		this.tooltipContent.html(content);
-		this.tooltip.css({
-			top: 0,
-			left: 0
-		}).show().position( $.extend({
-			of: target
-		}, this.options.position )).hide();
-		
-		this.tooltip.attr("aria-hidden", "false");
-		target.attr("aria-describedby", this.tooltip.attr("id"));
-
-		this.tooltip.stop(false, true).fadeIn();
-
-		this._trigger( "open", event );
-	},
-	
-	close: function(event) {
-		if (!this.current)
-			return;
-		
-		var current = this.current.attr("title", this.currentTitle);
-		this.current = null;
-		
-		if (this.options.disabled)
-			return;
-		
-		current.removeAttr("aria-describedby");
-		this.tooltip.attr("aria-hidden", "true");
-		
-		this.tooltip.stop(false, true).fadeOut();
-		
-		this._trigger( "close", event );
-	}
-	
-});
-
-})(jQuery);/*
-Copyright 2008-2009 University of Cambridge
-Copyright 2008-2010 University of Toronto
-Copyright 2010 Lucendo Development Ltd.
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global fluid_1_4:true, jQuery*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {
-    
-  // The three states of the undo component
-    var STATE_INITIAL = "state_initial", 
-        STATE_CHANGED = "state_changed",
-        STATE_REVERTED = "state_reverted";
-  
-    function defaultRenderer(that, targetContainer) {
-        var str = that.options.strings;
-        var markup = "<span class='flc-undo'>" + 
-            "<a href='#' class='flc-undo-undoControl'>" + str.undo + "</a>" + 
-            "<a href='#' class='flc-undo-redoControl'>" + str.redo + "</a>" + 
-            "</span>";
-        var markupNode = $(markup).attr({
-            "role": "region",  
-            "aria-live": "polite", 
-            "aria-relevant": "all"
-        });
-        targetContainer.append(markupNode);
-        return markupNode;
-    }
-    
-    function refreshView(that) {
-        if (that.state === STATE_INITIAL) {
-            that.locate("undoContainer").hide();
-            that.locate("redoContainer").hide();
-        }
-        else if (that.state === STATE_CHANGED) {
-            that.locate("undoContainer").show();
-            that.locate("redoContainer").hide();
-        }
-        else if (that.state === STATE_REVERTED) {
-            that.locate("undoContainer").hide();
-            that.locate("redoContainer").show();          
-        }
-    }
-   
-    
-    var bindHandlers = function (that) { 
-        that.locate("undoControl").click( 
-            function () {
-                if (that.state !== STATE_REVERTED) {
-                    fluid.model.copyModel(that.extremalModel, that.component.model);
-                    that.component.updateModel(that.initialModel, that);
-                    that.state = STATE_REVERTED;
-                    refreshView(that);
-                    that.locate("redoControl").focus();
-                }
-                return false;
-            }
-        );
-        that.locate("redoControl").click( 
-            function () {
-                if (that.state !== STATE_CHANGED) {
-                    that.component.updateModel(that.extremalModel, that);
-                    that.state = STATE_CHANGED;
-                    refreshView(that);
-                    that.locate("undoControl").focus();
-                }
-                return false;
-            }
-        );
-        return {
-            modelChanged: function (newModel, oldModel, source) {
-                if (source !== that) {
-                    that.state = STATE_CHANGED;
-                
-                    fluid.model.copyModel(that.initialModel, oldModel);
-                
-                    refreshView(that);
-                }
-            }
-        };
-    };
-    
-    /**
-     * Decorates a target component with the function of "undoability"
-     * 
-     * @param {Object} component a "model-bearing" standard Fluid component to receive the "undo" functionality
-     * @param {Object} options a collection of options settings
-     */
-    fluid.undoDecorator = function (component, userOptions) {
-        var that = fluid.initLittleComponent("undo", userOptions);
-        that.container = that.options.renderer(that, component.container);
-        fluid.initDomBinder(that);
-        fluid.tabindex(that.locate("undoControl"), 0);
-        fluid.tabindex(that.locate("redoControl"), 0);
-        
-        that.component = component;
-        that.initialModel = {};
-        that.extremalModel = {};
-        fluid.model.copyModel(that.initialModel, component.model);
-        fluid.model.copyModel(that.extremalModel, component.model);
-        
-        that.state = STATE_INITIAL;
-        refreshView(that);
-        var listeners = bindHandlers(that);
-        
-        that.returnedOptions = {
-            listeners: listeners
-        };
-        return that;
-    };
-  
-    fluid.defaults("undo", {  
-        selectors: {
-            undoContainer: ".flc-undo-undoControl",
-            undoControl: ".flc-undo-undoControl",
-            redoContainer: ".flc-undo-redoControl",
-            redoControl: ".flc-undo-redoControl"
-        },
-        
-        strings: {
-            undo: "undo edit",
-            redo: "redo edit"
-        },
-                    
-        renderer: defaultRenderer
-    });
-        
-})(jQuery, fluid_1_4);
-/*
-Copyright 2010 OCAD University
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global fluid_1_4:true, jQuery*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {
-    
-    var createContentFunc = function (content) {
-        return typeof content === "function" ? content : function () {
-            return content;
-        };
-    };
-
-    var setup = function (that) {
-        that.container.tooltip({
-            content: createContentFunc(that.options.content),
-            position: that.options.position,
-            items: that.options.items,
-            open: function (event) {
-                var tt = $(event.target).tooltip("widget");
-                tt.stop(false, true);
-                tt.hide();
-                if (that.options.delay) {
-                    tt.delay(that.options.delay).fadeIn("default", that.events.afterOpen.fire());
-                } else {
-                    tt.show();
-                    that.events.afterOpen.fire();
-                }
-            },
-            close: function (event) {
-                var tt = $(event.target).tooltip("widget");
-                tt.stop(false, true);
-                tt.hide();
-                tt.clearQueue();
-                that.events.afterClose.fire();
-            } 
-        });
-        
-        that.elm = that.container.tooltip("widget");
-        
-        that.elm.addClass(that.options.styles.tooltip);
-    };
-
-    fluid.tooltip = function (container, options) {
-        var that = fluid.initView("fluid.tooltip", container, options);
-        
-        /**
-         * Updates the contents displayed in the tooltip
-         * 
-         * @param {Object} content, the content to be displayed in the tooltip
-         */
-        that.updateContent = function (content) {
-            that.container.tooltip("option", "content", createContentFunc(content));
-        };
-        
-        /**
-         * Destroys the underlying jquery ui tooltip
-         */
-        that.destroy = function () {
-            that.container.tooltip("destroy");
-        };
-        
-        /**
-         * Manually displays the tooltip
-         */
-        that.open = function () {
-            that.container.tooltip("open");
-        };
-        
-        /**
-         * Manually hides the tooltip
-         */
-        that.close = function () {
-            that.container.tooltip("close");
-        };
-        
-        setup(that);
-        
-        return that;
-    };
-    
-    fluid.defaults("fluid.tooltip", {
-        styles: {
-            tooltip: ""
-        },
-        
-        events: {
-            afterOpen: null,
-            afterClose: null  
-        },
-        
-        content: "",
-        
-        position: {
-            my: "left top",
-            at: "left bottom",
-            offset: "0 5"
-        },
-        
-        items: "*",
-        
-        delay: 300
-    });
-
-})(jQuery, fluid_1_4);
-/*
-Copyright 2008-2009 University of Cambridge
-Copyright 2008-2010 University of Toronto
-Copyright 2008-2009 University of California, Berkeley
-Copyright 2010 OCAD University
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global fluid_1_4:true, jQuery*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {
-    
-    function sendKey(control, event, virtualCode, charCode) {
-        var kE = document.createEvent("KeyEvents");
-        kE.initKeyEvent(event, 1, 1, null, 0, 0, 0, 0, virtualCode, charCode);
-        control.dispatchEvent(kE);
-    }
-    
-    /** Set the caret position to the end of a text field's value, also taking care
-     * to scroll the field so that this position is visible.
-     * @param {DOM node} control The control to be scrolled (input, or possibly textarea)
-     * @param value The current value of the control
-     */
-    fluid.setCaretToEnd = function (control, value) {
-        var pos = value ? value.length : 0;
-
-        try {
-            control.focus();
-        // see http://www.quirksmode.org/dom/range_intro.html - in Opera, must detect setSelectionRange first, 
-        // since its support for Microsoft TextRange is buggy
-            if (control.setSelectionRange) {
-
-                control.setSelectionRange(pos, pos);
-                if ($.browser.mozilla && pos > 0) {
-                  // ludicrous fix for Firefox failure to scroll to selection position, inspired by
-                  // http://bytes.com/forum/thread496726.html
-                    sendKey(control, "keypress", 92, 92); // type in a junk character
-                    sendKey(control, "keydown", 8, 0); // delete key must be dispatched exactly like this
-                    sendKey(control, "keypress", 8, 0);
-                }
-            }
-
-            else if (control.createTextRange) {
-                var range = control.createTextRange();
-                range.move("character", pos);
-                range.select();
-            }
-        }
-        catch (e) {} 
-    };
-
-    var switchToViewMode = function (that) {
-        that.editContainer.hide();
-        that.displayModeRenderer.show();
-    };
-    
-    var cancel = function (that) {
-        if (that.isEditing()) {
-            // Roll the edit field back to its old value and close it up.
-            // This setTimeout is necessary on Firefox, since any attempt to modify the 
-            // input control value during the stack processing the ESCAPE key will be ignored.
-            setTimeout(function () {
-                that.editView.value(that.model.value);
-            }, 1);
-            switchToViewMode(that);
-            that.events.afterFinishEdit.fire(that.model.value, that.model.value, 
-                that.editField[0], that.viewEl[0]);
-        }
-    };
-    
-    var finish = function (that) {
-        var newValue = that.editView.value();
-        var oldValue = that.model.value;
-
-        var viewNode = that.viewEl[0];
-        var editNode = that.editField[0];
-        var ret = that.events.onFinishEdit.fire(newValue, oldValue, editNode, viewNode);
-        if (ret === false) {
-            return;
-        }
-        
-        that.updateModelValue(newValue);
-        that.events.afterFinishEdit.fire(newValue, oldValue, editNode, viewNode);
-        
-        switchToViewMode(that);
-    };
-    
-    /** 
-     * Do not allow the textEditButton to regain focus upon completion unless
-     * the keypress is enter or esc.
-     */  
-    var bindEditFinish = function (that) {
-        if (that.options.submitOnEnter === undefined) {
-            that.options.submitOnEnter = "textarea" !== fluid.unwrap(that.editField).nodeName.toLowerCase();
-        }
-        function keyCode(evt) {
-            // Fix for handling arrow key presses. See FLUID-760.
-            return evt.keyCode ? evt.keyCode : (evt.which ? evt.which : 0);          
-        }
-        var escHandler = function (evt) {
-            var code = keyCode(evt);
-            if (code === $.ui.keyCode.ESCAPE) {
-                that.textEditButton.focus(0);
-                cancel(that);
-                return false;
-            }
-        };
-        var finishHandler = function (evt) {
-            var code = keyCode(evt);
-            
-            if (code !== $.ui.keyCode.ENTER) {
-                that.textEditButton.blur();
-                return true;
-            }
-            else {
-                finish(that);
-                that.textEditButton.focus(0);
-            }
-            
-            return false;
-        };
-        if (that.options.submitOnEnter) {
-            that.editContainer.keypress(finishHandler);
-        }
-        that.editContainer.keydown(escHandler);
-    };
-
-    var bindBlurHandler = function (that) {
-        if (that.options.blurHandlerBinder) {
-            that.options.blurHandlerBinder(that);
-        }
-        else {
-            var blurHandler = function (evt) {
-                if (that.isEditing()) {
-                    finish(that);
-                }
-                return false;
-            };
-            that.editField.blur(blurHandler);
-        }
-    };
-
-    var initializeEditView = function (that, initial) {
-        if (!that.editInitialized) { 
-            fluid.inlineEdit.renderEditContainer(that, !that.options.lazyEditView || !initial);
-            
-            if (!that.options.lazyEditView || !initial) {
-                that.editView = fluid.initSubcomponent(that, "editView", that.editField);
-                
-                $.extend(true, that.editView, fluid.initSubcomponent(that, "editAccessor", that.editField));
-        
-                bindEditFinish(that);
-                bindBlurHandler(that);
-                that.editView.refreshView(that);
-                that.editInitialized = true;
-            }
-        }
-    };
-    
-    var edit = function (that) {
-        initializeEditView(that, false);
-      
-        var viewEl = that.viewEl;
-        var displayText = that.displayView.value();
-        that.updateModelValue(that.model.value === "" ? "" : displayText);
-        if (that.options.applyEditPadding) {
-            that.editField.width(Math.max(viewEl.width() + that.options.paddings.edit, that.options.paddings.minimumEdit));
-        }
-
-        that.displayModeRenderer.hide();
-        that.editContainer.show();                  
-
-        // Work around for FLUID-726
-        // Without 'setTimeout' the finish handler gets called with the event and the edit field is inactivated.       
-        setTimeout(function () {
-            fluid.setCaretToEnd(that.editField[0], that.editView.value());
-            if (that.options.selectOnEdit) {
-                that.editField[0].select();
-            }
-        }, 0);
-        that.events.afterBeginEdit.fire();
-    };
-
-    var clearEmptyViewStyles = function (textEl, styles, originalViewPadding) {
-        textEl.removeClass(styles.defaultViewStyle);
-        textEl.css('padding-right', originalViewPadding);
-        textEl.removeClass(styles.emptyDefaultViewText);
-    };
-    
-    var showDefaultViewText = function (that) {
-        that.displayView.value(that.options.defaultViewText);
-        that.viewEl.css('padding-right', that.existingPadding);
-        that.viewEl.addClass(that.options.styles.defaultViewStyle);
-    };
-
-    var showNothing = function (that) {
-        that.displayView.value("");
-        
-        // workaround for FLUID-938:
-        // IE can not style an empty inline element, so force element to be display: inline-block
-        if ($.browser.msie) {
-            if (that.viewEl.css('display') === 'inline') {
-                that.viewEl.css('display', "inline-block");
-            }
-        }
-    };
-
-    var showEditedText = function (that) {
-        that.displayView.value(that.model.value);
-        clearEmptyViewStyles(that.viewEl, that.options.styles, that.existingPadding);
-    };
-    
-    var refreshView = function (that, source) {
-        that.displayView.refreshView(that, source);
-        if (that.editView) {
-            that.editView.refreshView(that, source);
-        }
-    };
-    
-    var initModel = function (that, value) {
-        that.model.value = value;
-        that.refreshView();
-    };
-    
-    var updateModelValue = function (that, newValue, source) {
-        var comparator = that.options.modelComparator;
-        var unchanged = comparator ? comparator(that.model.value, newValue) : 
-            that.model.value === newValue;
-        if (!unchanged) {
-            var oldModel = $.extend(true, {}, that.model);
-            that.model.value = newValue;
-            that.events.modelChanged.fire(that.model, oldModel, source);
-            that.refreshView(source);
-        }
-    };
-        
-    var makeIsEditing = function (that) {
-        var isEditing = false;
-
-        that.events.onBeginEdit.addListener(function () {
-            isEditing = true;
-        });
-        that.events.afterFinishEdit.addListener(function () {
-            isEditing = false; 
-        });
-        return function () {
-            return isEditing;
-        };
-    };
-    
-    var makeEditHandler = function (that) {
-        return function () {
-            var prevent = that.events.onBeginEdit.fire();
-            if (prevent === false) {
-                return false;
-            }
-            edit(that);
-            
-            return true;
-        }; 
-    };    
-    
-    // Initialize the tooltip once the document is ready.
-    // For more details, see http://issues.fluidproject.org/browse/FLUID-1030
-    var initTooltips = function (that) {
-        var tooltipOptions = {
-            content: that.options.tooltipText,
-            position: {
-                my: "left top",
-                at: "left bottom",
-                offset: "0 5"
-            },
-            target: "*",
-            delay: that.options.tooltipDelay,
-            styles: {
-                tooltip: that.options.styles.tooltip
-            }     
-        };
-        
-        fluid.tooltip(that.viewEl, tooltipOptions);
-        
-        if (that.textEditButton) {
-            fluid.tooltip(that.textEditButton, tooltipOptions);
-        }
-    };
-    
-    var calculateInitialPadding = function (viewEl) {
-        var padding = viewEl.css("padding-right");
-        return padding ? parseFloat(padding) : 0;
-    };
-    
-    var setupInlineEdit = function (componentContainer, that) {
-        // Hide the edit container to start
-        if (that.editContainer) {
-            that.editContainer.hide();
-        }
-        
-        // Add tooltip handler if required and available
-        if (that.tooltipEnabled()) {
-            initTooltips(that);
-        }
-        
-        // Setup any registered decorators for the component.
-        that.decorators = fluid.initSubcomponents(that, "componentDecorators", 
-            [that, fluid.COMPONENT_OPTIONS]);
-    };
-    
-    /**
-     * Creates a whole list of inline editors.
-     */
-    var setupInlineEdits = function (editables, options) {
-        var editors = [];
-        editables.each(function (idx, editable) {
-            editors.push(fluid.inlineEdit($(editable), options));
-        });
-        
-        return editors;
-    };
-    
-    /**
-     * Instantiates a new Inline Edit component
-     * 
-     * @param {Object} componentContainer a selector, jquery, or a dom element representing the component's container
-     * @param {Object} options a collection of options settings
-     */
-    fluid.inlineEdit = function (componentContainer, userOptions) {   
-        var that = fluid.initView("inlineEdit", componentContainer, userOptions);
-        
-        that.viewEl = fluid.inlineEdit.setupDisplayText(that);
-        
-        that.displayView = fluid.initSubcomponent(that, "displayView", that.viewEl);
-        $.extend(true, that.displayView, fluid.initSubcomponent(that, "displayAccessor", that.viewEl));
-
-        /**
-         * The current value of the inline editable text. The "model" in MVC terms.
-         */
-        that.model = {value: ""};
-       
-        /**
-         * Switches to edit mode.
-         */
-        that.edit = makeEditHandler(that);
-        
-        /**
-         * Determines if the component is currently in edit mode.
-         * 
-         * @return true if edit mode shown, false if view mode is shown
-         */
-        that.isEditing = makeIsEditing(that);
-        
-        /**
-         * Finishes editing, switching back to view mode.
-         */
-        that.finish = function () {
-            finish(that);
-        };
-
-        /**
-         * Cancels the in-progress edit and switches back to view mode.
-         */
-        that.cancel = function () {
-            cancel(that);
-        };
-
-        /**
-         * Determines if the tooltip feature is enabled.
-         * 
-         * @return true if the tooltip feature is turned on, false if not
-         */
-        that.tooltipEnabled = function () {
-            return that.options.useTooltip && $.fn.tooltip;
-        };
-        
-        /**
-         * Updates the state of the inline editor in the DOM, based on changes that may have
-         * happened to the model.
-         * 
-         * @param {Object} source
-         */
-        that.refreshView = function (source) {
-            refreshView(that, source);
-        };
-        
-        /**
-         * Pushes external changes to the model into the inline editor, refreshing its
-         * rendering in the DOM. The modelChanged event will fire.
-         * 
-         * @param {String} newValue The bare value of the model, that is, the string being edited
-         * @param {Object} source An optional "source" (perhaps a DOM element) which triggered this event
-         */
-        that.updateModelValue = function (newValue, source) {
-            updateModelValue(that, newValue, source);
-        };
-        
-        /**
-         * Pushes external changes to the model into the inline editor, refreshing its
-         * rendering in the DOM. The modelChanged event will fire.
-         * 
-         * @param {Object} newValue The full value of the new model, that is, a model object which contains the editable value as the element named "value"
-         * @param {Object} source An optional "source" (perhaps a DOM element) which triggered this event
-         */
-        that.updateModel = function (newModel, source) {
-            updateModelValue(that, newModel.value, source);
-        };
-        
-        that.existingPadding = calculateInitialPadding(that.viewEl);
-        
-        initModel(that, that.displayView.value());
-        
-        that.displayModeRenderer = that.options.displayModeRenderer(that);  
-        initializeEditView(that, true);
-        setupInlineEdit(componentContainer, that);
-        
-        return that;
-    };
-    
-    /**
-     * Set up and style the edit field.  If an edit field is not provided,
-     * default markup is created for the edit field 
-     * 
-     * @param {string} editStyle The default styling for the edit field
-     * @param {Object} editField The edit field markup provided by the integrator
-     * 
-     * @return eField The styled edit field   
-     */
-    fluid.inlineEdit.setupEditField = function (editStyle, editField) {
-        var eField = $(editField);
-        eField = eField.length ? eField : $("<input type='text' class='flc-inlineEdit-edit'/>");
-        eField.addClass(editStyle);
-        return eField;
-    };
-
-    /**
-     * Set up the edit container and append the edit field to the container.  If an edit container
-     * is not provided, default markup is created.
-     * 
-     * @param {Object} displayContainer The display mode container 
-     * @param {Object} editField The edit field that is to be appended to the edit container 
-     * @param {Object} editContainer The edit container markup provided by the integrator   
-     * 
-     * @return eContainer The edit container containing the edit field   
-     */
-    fluid.inlineEdit.setupEditContainer = function (displayContainer, editField, editContainer) {
-        var eContainer = $(editContainer);
-        eContainer = eContainer.length ? eContainer : $("<span></span>");
-        displayContainer.after(eContainer);
-        eContainer.append(editField);
-        
-        return eContainer;
-    };
-    
-    /**
-     * Default renderer for the edit mode view.
-     * 
-     * @return {Object} container The edit container containing the edit field
-     *                  field The styled edit field  
-     */
-    fluid.inlineEdit.defaultEditModeRenderer = function (that) {
-        var editField = fluid.inlineEdit.setupEditField(that.options.styles.edit, that.editField);
-        var editContainer = fluid.inlineEdit.setupEditContainer(that.displayModeRenderer, editField, that.editContainer);
-        var editModeInstruction = fluid.inlineEdit.setupEditModeInstruction(that.options.styles.editModeInstruction, that.options.strings.editModeInstruction);
-        
-        var id = fluid.allocateSimpleId(editModeInstruction);
-        editField.attr("aria-describedby", id);
-
-        fluid.inlineEdit.positionEditModeInstruction(editModeInstruction, editContainer, editField);
-              
-        // Package up the container and field for the component.
-        return {
-            container: editContainer,
-            field: editField 
-        };
-    };
-    
-    /**
-     * Configures the edit container and view, and uses the component's editModeRenderer to render
-     * the edit container.
-     *  
-     * @param {boolean} lazyEditView If true, will delay rendering of the edit container;
-     *                                            Default is false 
-     */
-    fluid.inlineEdit.renderEditContainer = function (that, lazyEditView) {
-        that.editContainer = that.locate("editContainer");
-        that.editField = that.locate("edit");
-        if (that.editContainer.length !== 1) {
-            if (that.editContainer.length > 1) {
-                fluid.fail("InlineEdit did not find a unique container for selector " + that.options.selectors.editContainer +
-                   ": " + fluid.dumpEl(that.editContainer));
-            }
-        }
-        
-        if (!lazyEditView) {
-            return; 
-        } // do not invoke the renderer, unless this is the "final" effective time
-        
-        var editElms = that.options.editModeRenderer(that);
-        if (editElms) {
-            that.editContainer = editElms.container;
-            that.editField = editElms.field;
-        }
-    };
-
-    /**
-     * Set up the edit mode instruction with aria in edit mode
-     * 
-     * @param {String} editModeInstructionStyle The default styling for the instruction
-     * @param {String} editModeInstructionText The default instruction text
-     * 
-     * @return {jQuery} The displayed instruction in edit mode
-     */
-    fluid.inlineEdit.setupEditModeInstruction = function (editModeInstructionStyle, editModeInstructionText) {
-        var editModeInstruction = $("<p></p>");
-        editModeInstruction.addClass(editModeInstructionStyle);
-        editModeInstruction.text(editModeInstructionText);
-
-        return editModeInstruction;
-    };
-
-    /**
-     * Positions the edit mode instruction directly beneath the edit container
-     * 
-     * @param {Object} editModeInstruction The displayed instruction in edit mode
-     * @param {Object} editContainer The edit container in edit mode
-     * @param {Object} editField The edit field in edit mode
-     */    
-    fluid.inlineEdit.positionEditModeInstruction = function (editModeInstruction, editContainer, editField) {
-        editContainer.append(editModeInstruction);
-        
-        editField.focus(function () {
-            editModeInstruction.show();
-
-            var editFieldPosition = editField.offset();
-            editModeInstruction.css({left: editFieldPosition.left});
-            editModeInstruction.css({top: editFieldPosition.top + editField.height() + 5});
-        });
-    };  
-    
-    /**
-     * Set up and style the display mode container for the viewEl and the textEditButton 
-     * 
-     * @param {Object} styles The default styling for the display mode container
-     * @param {Object} displayModeWrapper The markup used to generate the display mode container
-     * 
-     * @return {jQuery} The styled display mode container
-     */
-    fluid.inlineEdit.setupDisplayModeContainer = function (styles, displayModeWrapper) {
-        var displayModeContainer = $(displayModeWrapper);  
-        displayModeContainer = displayModeContainer.length ? displayModeContainer : $("<span></span>");  
-        displayModeContainer.addClass(styles.displayView);
-        
-        return displayModeContainer;
-    };
-    
-    /**
-     * Retrieve the display text from the DOM.  
-     * 
-     * @return {jQuery} The display text
-     */
-    fluid.inlineEdit.setupDisplayText = function (that) {
-        var viewEl = that.locate("text");
-
-        /*
-         *  Remove the display from the tab order to prevent users to think they
-         *  are able to access the inline edit field, but they cannot since the 
-         *  keyboard event binding is only on the button.
-         */
-        viewEl.attr("tabindex", "-1");
-        viewEl.addClass(that.options.styles.text);
-        
-        return viewEl;
-    };
-    
-    /**
-     * Set up the textEditButton.  Append a background image with appropriate
-     * descriptive text to the button.
-     * 
-     * @return {jQuery} The accessible button located after the display text
-     */
-    fluid.inlineEdit.setupTextEditButton = function (that) {
-        var opts = that.options;
-        var textEditButton = that.locate("textEditButton");
-        
-        if  (textEditButton.length === 0) {
-            var markup = $("<a href='#_' class='flc-inlineEdit-textEditButton'></a>");
-            markup.addClass(opts.styles.textEditButton);
-            markup.text(opts.tooltipText);            
-            
-            /**
-             * Set text for the button and listen
-             * for modelChanged to keep it updated
-             */ 
-            fluid.inlineEdit.updateTextEditButton(markup, that.model.value || opts.defaultViewText, opts.strings.textEditButton);
-            that.events.modelChanged.addListener(function () {
-                fluid.inlineEdit.updateTextEditButton(markup, that.model.value || opts.defaultViewText, opts.strings.textEditButton);
-            });        
-            
-            that.locate("text").after(markup);
-            
-            // Refresh the textEditButton with the newly appended options
-            textEditButton = that.locate("textEditButton");
-        } 
-        return textEditButton;
-    };    
-
-    /**
-     * Update the textEditButton text with the current value of the field.
-     * 
-     * @param {Object} textEditButton the textEditButton
-     * @param {String} model The current value of the inline editable text
-     * @param {Object} strings Text option for the textEditButton
-     */
-    fluid.inlineEdit.updateTextEditButton = function (textEditButton, value, stringTemplate) {
-        var buttonText = fluid.stringTemplate(stringTemplate, {
-            text: value
-        });
-        textEditButton.text(buttonText);
-    };
-    
-    /**
-     * Bind mouse hover event handler to the display mode container.  
-     * 
-     * @param {Object} displayModeRenderer The display mode container
-     * @param {String} invitationStyle The default styling for the display mode container on mouse hover
-     */
-    fluid.inlineEdit.bindHoverHandlers = function (displayModeRenderer, invitationStyle) {
-        var over = function (evt) {
-            displayModeRenderer.addClass(invitationStyle);
-        };     
-        var out = function (evt) {
-            displayModeRenderer.removeClass(invitationStyle);
-        };
-        displayModeRenderer.hover(over, out);
-    };    
-    
-    /**
-     * Bind keyboard focus and blur event handlers to an element
-     * 
-     * @param {Object} element The element to which the event handlers are bound
-     * @param {Object} displayModeRenderer The display mode container
-     * @param {Ojbect} styles The default styling for the display mode container on mouse hover
-     */    
-    fluid.inlineEdit.bindHighlightHandler = function (element, displayModeRenderer, styles) {
-        element = $(element);
-        
-        var focusOn = function () {
-            displayModeRenderer.addClass(styles.focus);
-            displayModeRenderer.addClass(styles.invitation);
-        };
-        var focusOff = function () {
-            displayModeRenderer.removeClass(styles.focus);
-            displayModeRenderer.removeClass(styles.invitation);
-        };
-        
-        element.focus(focusOn);
-        element.blur(focusOff);
-    };        
-    
-    /**
-     * Bind mouse click handler to an element
-     * 
-     * @param {Object} element The element to which the event handler is bound
-     * @param {Object} edit Function to invoke the edit mode
-     * 
-     * @return {boolean} Returns false if entering edit mode
-     */
-    fluid.inlineEdit.bindMouseHandlers = function (element, edit) {
-        element = $(element);
-        
-        var triggerGuard = fluid.inlineEdit.makeEditTriggerGuard(element, edit);
-        element.click(function (e) {
-            triggerGuard(e);
-            return false;
-        });
-    };
-
-    /**
-     * Bind keyboard press handler to an element
-     * 
-     * @param {Object} element The element to which the event handler is bound
-     * @param {Object} edit Function to invoke the edit mode
-     * 
-     * @return {boolean} Returns false if entering edit mode
-     */    
-    fluid.inlineEdit.bindKeyboardHandlers = function (element, edit) {
-        element = $(element);
-        element.attr("role", "button");
-        
-        var guard = fluid.inlineEdit.makeEditTriggerGuard(element, edit);
-        fluid.activatable(element, function (event) {
-            return guard(event);
-        });
-    };
-    
-    /**
-     * Creates an event handler that will trigger the edit mode if caused by something other
-     * than standard HTML controls. The event handler will return false if entering edit mode.
-     * 
-     * @param {Object} element The element to trigger the edit mode
-     * @param {Object} edit Function to invoke the edit mode
-     * 
-     * @return {function} The event handler function
-     */    
-    fluid.inlineEdit.makeEditTriggerGuard = function (element, edit) {
-        var selector = fluid.unwrap(element);
-        return function (event) {
-            // FLUID-2017 - avoid triggering edit mode when operating standard HTML controls. Ultimately this
-            // might need to be extensible, in more complex authouring scenarios.
-            var outer = fluid.findAncestor(event.target, function (elem) {
-                if (/input|select|textarea|button|a/i.test(elem.nodeName) || elem === selector) {
-                    return true; 
-                }
-            });
-            if (outer === selector) {
-                edit();
-                return false;
-            }
-        };
-    };
-    
-    /**
-     * Render the display mode view.  
-     * 
-     * @return {jQuery} The display container containing the display text and 
-     *                             textEditbutton for display mode view
-     */
-    fluid.inlineEdit.defaultDisplayModeRenderer = function (that) {
-        var styles = that.options.styles;
-        
-        var displayModeWrapper = fluid.inlineEdit.setupDisplayModeContainer(styles);
-        var displayModeRenderer = that.viewEl.wrap(displayModeWrapper).parent();
-        
-        that.textEditButton = fluid.inlineEdit.setupTextEditButton(that);
-        displayModeRenderer.append(that.textEditButton);
-        
-        // Add event handlers.
-        fluid.inlineEdit.bindHoverHandlers(displayModeRenderer, styles.invitation);
-        fluid.inlineEdit.bindMouseHandlers(that.viewEl, that.edit);
-        fluid.inlineEdit.bindMouseHandlers(that.textEditButton, that.edit);
-        fluid.inlineEdit.bindKeyboardHandlers(that.textEditButton, that.edit);
-        fluid.inlineEdit.bindHighlightHandler(that.viewEl, displayModeRenderer, styles);
-        fluid.inlineEdit.bindHighlightHandler(that.textEditButton, displayModeRenderer, styles);
-        
-        return displayModeRenderer;
-    };    
-    
-    fluid.inlineEdit.standardAccessor = function (element) {
-        var nodeName = element.nodeName.toLowerCase();
-        var func = "input" === nodeName || "textarea" === nodeName ? "val" : "text";
-        return {
-            value: function (newValue) {
-                return $(element)[func](newValue);
-            }
-        };
-    };
-    
-    fluid.inlineEdit.standardDisplayView = function (viewEl) {
-        var that = {
-            refreshView: function (componentThat, source) {
-                if (componentThat.model.value) {
-                    showEditedText(componentThat);
-                } else if (componentThat.options.defaultViewText) {
-                    showDefaultViewText(componentThat);
-                } else {
-                    showNothing(componentThat);
-                }
-                // If necessary, pad the view element enough that it will be evident to the user.
-                if ($.trim(componentThat.viewEl.text()).length === 0) {
-                    componentThat.viewEl.addClass(componentThat.options.styles.emptyDefaultViewText);
-                    
-                    if (componentThat.existingPadding < componentThat.options.paddings.minimumView) {
-                        componentThat.viewEl.css('padding-right', componentThat.options.paddings.minimumView);
-                    }
-                }
-            }
-        };
-        return that;
-    };
-    
-    fluid.inlineEdit.standardEditView = function (editField) {
-        var that = {
-            refreshView: function (componentThat, source) {
-                if (!source || componentThat.editField && componentThat.editField.index(source) === -1) {
-                    componentThat.editView.value(componentThat.model.value);
-                }
-            }
-        };
-        $.extend(true, that, fluid.inlineEdit.standardAccessor(editField));
-        return that;
-    };
-    
-    /**
-     * Instantiates a list of InlineEdit components.
-     * 
-     * @param {Object} componentContainer the element containing the inline editors
-     * @param {Object} options configuration options for the components
-     */
-    fluid.inlineEdits = function (componentContainer, options) {
-        options = options || {};
-        var selectors = $.extend({}, fluid.defaults("inlineEdits").selectors, options.selectors);
-        
-        // Bind to the DOM.
-        var container = fluid.container(componentContainer);
-        var editables = $(selectors.editables, container);
-        
-        return setupInlineEdits(editables, options);
-    };
-    
-    fluid.defaults("inlineEdit", {  
-        selectors: {
-            text: ".flc-inlineEdit-text",
-            editContainer: ".flc-inlineEdit-editContainer",
-            edit: ".flc-inlineEdit-edit",
-            textEditButton: ".flc-inlineEdit-textEditButton"
-        },
-        
-        styles: {
-            text: "fl-inlineEdit-text",
-            edit: "fl-inlineEdit-edit",
-            invitation: "fl-inlineEdit-invitation",
-            defaultViewStyle: "fl-inlineEdit-emptyText-invitation",
-            emptyDefaultViewText: "fl-inlineEdit-emptyDefaultViewText",
-            focus: "fl-inlineEdit-focus",
-            tooltip: "fl-inlineEdit-tooltip",
-            editModeInstruction: "fl-inlineEdit-editModeInstruction",
-            displayView: "fl-inlineEdit-simple-editableText fl-inlineEdit-textContainer",
-            textEditButton: "fl-offScreen-hidden"
-        },
-        
-        events: {
-            modelChanged: null,
-            onBeginEdit: "preventable",
-            afterBeginEdit: null,
-            onFinishEdit: "preventable",
-            afterFinishEdit: null,
-            afterInitEdit: null
-        },
-
-        strings: {
-            textEditButton: "Edit text %text",
-            editModeInstruction: "Escape to cancel, Enter or Tab when finished"
-        },
-        
-        paddings: {
-            edit: 10,
-            minimumEdit: 80,
-            minimumView: 60
-        },
-        
-        applyEditPadding: true,
-        
-        blurHandlerBinder: null,
-        
-        // set this to true or false to cause unconditional submission, otherwise it will
-        // be inferred from the edit element tag type.
-        submitOnEnter: undefined,
-        
-        modelComparator: null,
-        
-        displayAccessor: {
-            type: "fluid.inlineEdit.standardAccessor"
-        },
-        
-        displayView: {
-            type: "fluid.inlineEdit.standardDisplayView"
-        },
-        
-        editAccessor: {
-            type: "fluid.inlineEdit.standardAccessor"
-        },
-        
-        editView: {
-            type: "fluid.inlineEdit.standardEditView"
-        },
-        
-        displayModeRenderer: fluid.inlineEdit.defaultDisplayModeRenderer,
-            
-        editModeRenderer: fluid.inlineEdit.defaultEditModeRenderer,
-        
-        lazyEditView: false,
-        
-        // this is here for backwards API compatibility, but should be in the strings block
-        defaultViewText: "Click here to edit",
-
-        /** View Mode Tooltip Settings **/
-        useTooltip: true,
-        
-        // this is here for backwards API compatibility, but should be in the strings block
-        tooltipText: "Select or press Enter to edit",
-        
-        tooltipDelay: 1000,
-
-        selectOnEdit: false        
-    });
-    
-    fluid.defaults("inlineEdits", {
-        selectors: {
-            editables: ".flc-inlineEditable"
-        }
-    });
-})(jQuery, fluid_1_4);
-/*
-Copyright 2008-2009 University of Cambridge
-Copyright 2008-2010 University of Toronto
-Copyright 2010 OCAD University
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global fluid, fluid_1_4:true, CKEDITOR, jQuery, FCKeditor, FCKeditorAPI, FCKeditor_OnComplete, tinyMCE*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {
-
-    /*************************************
-     * Shared Rich Text Editor functions *
-     *************************************/
-     
-    fluid.inlineEdit.makeViewAccessor = function (editorGetFn, setValueFn, getValueFn) {
-        return function (editField) {
-            return {
-                value: function (newValue) {
-                    var editor = editorGetFn(editField);
-                    if (!editor) {
-                        if (newValue) {
-                            $(editField).val(newValue);
-                        }
-                        return "";
-                    }
-                    if (newValue) {
-                        setValueFn(editField, editor, newValue);
-                    }
-                    else {
-                        return getValueFn(editor);
-                    }
-                }
-            };
-        };
-    };
-    
-    fluid.inlineEdit.richTextViewAccessor = function (element) {
-        return {
-            value: function (newValue) {
-                return $(element).html(newValue);
-            }
-        };
-    };        
-    
-    var configureInlineEdit = function (configurationName, container, options) {
-        var defaults = fluid.defaults(configurationName); 
-        var assembleOptions = fluid.merge(defaults ? defaults.mergePolicy: null, {}, defaults, options);
-        return fluid.inlineEdit(container, assembleOptions);
-    };
-
-    fluid.inlineEdit.normalizeHTML = function (value) {
-        var togo = $.trim(value.replace(/\s+/g, " "));
-        togo = togo.replace(/\s+<\//g, "</");
-        togo = togo.replace(/\<(\S+)[^\>\s]*\>/g, function (match) {
-            return match.toLowerCase();
-        });
-        return togo;
-    };
-    
-    fluid.inlineEdit.htmlComparator = function (el1, el2) {
-        return fluid.inlineEdit.normalizeHTML(el1) ===
-           fluid.inlineEdit.normalizeHTML(el2);
-    };
-    
-    fluid.inlineEdit.bindRichTextHighlightHandler = function (element, displayModeRenderer, invitationStyle) {
-        element = $(element);
-        
-        var focusOn = function () {
-            displayModeRenderer.addClass(invitationStyle);
-        };
-        var focusOff = function () {
-            displayModeRenderer.removeClass(invitationStyle);
-        };
-        
-        element.focus(focusOn);
-        element.blur(focusOff);
-    };        
-    
-    fluid.inlineEdit.setupRichTextEditButton = function (that) {
-        var opts = that.options;
-        var textEditButton = that.locate("textEditButton");
-        
-        if  (textEditButton.length === 0) {
-            var markup = $("<a href='#_' class='flc-inlineEdit-textEditButton'></a>");
-            markup.text(opts.strings.textEditButton);
-            
-            that.locate("text").after(markup);
-            
-            // Refresh the textEditButton with the newly appended options
-            textEditButton = that.locate("textEditButton");
-        } 
-        return textEditButton;
-    };    
-    
-    /**
-     * Wrap the display text and the textEditButton with the display mode container  
-     * for better style control.
-     */
-    fluid.inlineEdit.richTextDisplayModeRenderer = function (that) {
-        var styles = that.options.styles;
-        
-        var displayModeWrapper = fluid.inlineEdit.setupDisplayModeContainer(styles);
-        var displayModeRenderer = that.viewEl.wrap(displayModeWrapper).parent();
-        
-        that.textEditButton = fluid.inlineEdit.setupRichTextEditButton(that);
-        displayModeRenderer.append(that.textEditButton);
-        displayModeRenderer.addClass(styles.focus);
-        
-        // Add event handlers.
-        fluid.inlineEdit.bindHoverHandlers(displayModeRenderer, styles.invitation);
-        fluid.inlineEdit.bindMouseHandlers(that.textEditButton, that.edit);
-        fluid.inlineEdit.bindKeyboardHandlers(that.textEditButton, that.edit);
-        fluid.inlineEdit.bindRichTextHighlightHandler(that.viewEl, displayModeRenderer, styles.invitation);
-        fluid.inlineEdit.bindRichTextHighlightHandler(that.textEditButton, displayModeRenderer, styles.invitation);
-        
-        return displayModeRenderer;
-    };        
-
-   
-    /************************
-     * Tiny MCE Integration *
-     ************************/
-    
-    /**
-     * Instantiate a rich-text InlineEdit component that uses an instance of TinyMCE.
-     * 
-     * @param {Object} componentContainer the element containing the inline editors
-     * @param {Object} options configuration options for the components
-     */
-    fluid.inlineEdit.tinyMCE = function (container, options) {
-        var inlineEditor = configureInlineEdit("fluid.inlineEdit.tinyMCE", container, options);
-        tinyMCE.init(inlineEditor.options.tinyMCE);
-        return inlineEditor;
-    };
-        
-    fluid.inlineEdit.tinyMCE.getEditor = function (editField) {
-        return tinyMCE.get(editField.id);
-    };
-    
-    fluid.inlineEdit.tinyMCE.setValue = function (editField, editor, value) {
-        // without this, there is an intermittent race condition if the editor has been created on this event.
-        $(editField).val(value); 
-        editor.setContent(value, {format : 'raw'});
-    };
-    
-    fluid.inlineEdit.tinyMCE.getValue = function (editor) {
-        return editor.getContent();
-    };
-    
-    var flTinyMCE = fluid.inlineEdit.tinyMCE; // Shorter alias for awfully long fully-qualified names.
-    flTinyMCE.viewAccessor = fluid.inlineEdit.makeViewAccessor(flTinyMCE.getEditor, 
-                                                               flTinyMCE.setValue,
-                                                               flTinyMCE.getValue);
-   
-    fluid.inlineEdit.tinyMCE.blurHandlerBinder = function (that) {
-        function focusEditor(editor) {
-            setTimeout(function () {
-                tinyMCE.execCommand('mceFocus', false, that.editField[0].id);
-                if ($.browser.mozilla && $.browser.version.substring(0, 3) === "1.8") {
-                    // Have not yet found any way to make this work on FF2.x - best to do nothing,
-                    // for FLUID-2206
-                    //var body = editor.getBody();
-                    //fluid.setCaretToEnd(body.firstChild, "");
-                    return;
-                }
-                editor.selection.select(editor.getBody(), 1);
-                editor.selection.collapse(0);
-            }, 10);
-        }
-        
-        that.events.afterInitEdit.addListener(function (editor) {
-            focusEditor(editor);
-            var editorBody = editor.getBody();
-
-            // NB - this section has no effect - on most browsers no focus events
-            // are delivered to the actual body
-            fluid.deadMansBlur(that.editField, 
-                {exclusions: {body: $(editorBody)}, 
-                    handler: function () {
-                        that.cancel();
-                    }
-                });
-        });
-            
-        that.events.afterBeginEdit.addListener(function () {
-            var editor = tinyMCE.get(that.editField[0].id);
-            if (editor) {
-                focusEditor(editor);
-            } 
-        });
-    };
-   
-    fluid.inlineEdit.tinyMCE.editModeRenderer = function (that) {
-        var options = that.options.tinyMCE;
-        options.elements = fluid.allocateSimpleId(that.editField);
-        var oldinit = options.init_instance_callback;
-        
-        options.init_instance_callback = function (instance) {
-            that.events.afterInitEdit.fire(instance);
-            if (oldinit) {
-                oldinit();
-            }
-        };
-        
-        tinyMCE.init(options);
-    };
-    
-    fluid.defaults("fluid.inlineEdit.tinyMCE", {
-        tinyMCE : {
-            mode: "exact", 
-            theme: "simple"
-        },
-        useTooltip: true,
-        selectors: {
-            edit: "textarea" 
-        },
-        styles: {
-            invitation: "fl-inlineEdit-richText-invitation",
-            displayView: "fl-inlineEdit-textContainer",
-            text: ""
-                
-        },
-        strings: {
-            textEditButton: "Edit"
-        },
-        displayAccessor: {
-            type: "fluid.inlineEdit.richTextViewAccessor"
-        },
-        editAccessor: {
-            type: "fluid.inlineEdit.tinyMCE.viewAccessor"
-        },
-        lazyEditView: true,
-        defaultViewText: "Click Edit",
-        modelComparator: fluid.inlineEdit.htmlComparator,
-        blurHandlerBinder: fluid.inlineEdit.tinyMCE.blurHandlerBinder,
-        displayModeRenderer: fluid.inlineEdit.richTextDisplayModeRenderer,
-        editModeRenderer: fluid.inlineEdit.tinyMCE.editModeRenderer
-    });
-    
-    
-    /*****************************
-     * FCKEditor 2.x Integration *
-     *****************************/
-         
-    /**
-     * Instantiate a rich-text InlineEdit component that uses an instance of FCKeditor.
-     * Support for FCKEditor 2.x is now deprecated. We recommend the use of the simpler and more
-     * accessible CKEditor 3 instead.
-     * 
-     * @param {Object} componentContainer the element containing the inline editors
-     * @param {Object} options configuration options for the components
-     */
-    fluid.inlineEdit.FCKEditor = function (container, options) {
-        return configureInlineEdit("fluid.inlineEdit.FCKEditor", container, options);
-    };
-    
-    fluid.inlineEdit.FCKEditor.getEditor = function (editField) {
-        var editor = typeof(FCKeditorAPI) === "undefined" ? null: FCKeditorAPI.GetInstance(editField.id);
-        return editor;
-    };
-    
-    fluid.inlineEdit.FCKEditor.complete = fluid.event.getEventFirer();
-    
-    fluid.inlineEdit.FCKEditor.complete.addListener(function (editor) {
-        var editField = editor.LinkedField;
-        var that = $.data(editField, "fluid.inlineEdit.FCKEditor");
-        if (that && that.events) {
-            that.events.afterInitEdit.fire(editor);
-        }
-    });
-    
-    fluid.inlineEdit.FCKEditor.blurHandlerBinder = function (that) {
-        function focusEditor(editor) {
-            editor.Focus(); 
-        }
-        
-        that.events.afterInitEdit.addListener(
-            function (editor) {
-                focusEditor(editor);
-            }
-        );
-        that.events.afterBeginEdit.addListener(function () {
-            var editor = fluid.inlineEdit.FCKEditor.getEditor(that.editField[0]);
-            if (editor) {
-                focusEditor(editor);
-            } 
-        });
-
-    };
-    
-    fluid.inlineEdit.FCKEditor.editModeRenderer = function (that) {
-        var id = fluid.allocateSimpleId(that.editField);
-        $.data(fluid.unwrap(that.editField), "fluid.inlineEdit.FCKEditor", that);
-        var oFCKeditor = new FCKeditor(id);
-        // The Config object and the FCKEditor object itself expose different configuration sets,
-        // which possess a member "BasePath" with different meanings. Solve FLUID-2452, FLUID-2438
-        // by auto-inferring the inner path for Config (method from http://drupal.org/node/344230 )
-        var opcopy = fluid.copy(that.options.FCKEditor);
-        opcopy.BasePath = opcopy.BasePath + "editor/";
-        $.extend(true, oFCKeditor.Config, opcopy);
-        // somehow, some properties like Width and Height are set on the object itself
-
-        $.extend(true, oFCKeditor, that.options.FCKEditor);
-        oFCKeditor.Config.fluidInstance = that;
-        oFCKeditor.ReplaceTextarea();
-    };
-
-    fluid.inlineEdit.FCKEditor.setValue = function (editField, editor, value) {
-        editor.SetHTML(value);
-    };
-    
-    fluid.inlineEdit.FCKEditor.getValue = function (editor) {
-        return editor.GetHTML();
-    };
-    
-    var flFCKEditor = fluid.inlineEdit.FCKEditor;
-    
-    flFCKEditor.viewAccessor = fluid.inlineEdit.makeViewAccessor(flFCKEditor.getEditor,
-                                                                 flFCKEditor.setValue,
-                                                                 flFCKEditor.getValue);
-    
-    fluid.defaults("fluid.inlineEdit.FCKEditor", {
-        selectors: {
-            edit: "textarea" 
-        },
-        styles: {
-            invitation: "fl-inlineEdit-richText-invitation",
-            displayView: "fl-inlineEdit-textContainer",
-            text: ""
-        },
-        strings: {
-            textEditButton: "Edit"
-        },        
-        displayAccessor: {
-            type: "fluid.inlineEdit.richTextViewAccessor"
-        },
-        editAccessor: {
-            type: "fluid.inlineEdit.FCKEditor.viewAccessor"
-        },
-        lazyEditView: true,
-        defaultViewText: "Click Edit",
-        modelComparator: fluid.inlineEdit.htmlComparator,
-        blurHandlerBinder: fluid.inlineEdit.FCKEditor.blurHandlerBinder,
-        displayModeRenderer: fluid.inlineEdit.richTextDisplayModeRenderer,
-        editModeRenderer: fluid.inlineEdit.FCKEditor.editModeRenderer,
-        FCKEditor: {
-            BasePath: "fckeditor/"    
-        }
-    });
-    
-    
-    /****************************
-     * CKEditor 3.x Integration *
-     ****************************/
-    
-    fluid.inlineEdit.CKEditor = function (container, options) {
-        return configureInlineEdit("fluid.inlineEdit.CKEditor", container, options);
-    };
-    
-    fluid.inlineEdit.CKEditor.getEditor = function (editField) {
-        return CKEDITOR.instances[editField.id];
-    };
-    
-    fluid.inlineEdit.CKEditor.setValue = function (editField, editor, value) {
-        editor.setData(value);
-    };
-    
-    fluid.inlineEdit.CKEditor.getValue = function (editor) {
-        return editor.getData();
-    };
-    
-    var flCKEditor = fluid.inlineEdit.CKEditor;
-    flCKEditor.viewAccessor = fluid.inlineEdit.makeViewAccessor(flCKEditor.getEditor,
-                                                                flCKEditor.setValue,
-                                                                flCKEditor.getValue);
-                             
-    fluid.inlineEdit.CKEditor.focus = function (editor) {
-        setTimeout(function () {
-            // CKEditor won't focus itself except in a timeout.
-            editor.focus();
-        }, 0);
-    };
-    
-    // Special hacked HTML normalisation for CKEditor which spuriously inserts whitespace
-    // just after the first opening tag
-    fluid.inlineEdit.CKEditor.normalizeHTML = function (value) {
-        var togo = fluid.inlineEdit.normalizeHTML(value);
-        var angpos = togo.indexOf(">");
-        if (angpos !== -1 && angpos < togo.length - 1) {
-            if (togo.charAt(angpos + 1) !== " ") {
-                togo = togo.substring(0, angpos + 1) + " " + togo.substring(angpos + 1);
-            }
-        }
-        return togo;
-    };
-    
-    fluid.inlineEdit.CKEditor.htmlComparator = function (el1, el2) {
-        return fluid.inlineEdit.CKEditor.normalizeHTML(el1) ===
-           fluid.inlineEdit.CKEditor.normalizeHTML(el2);
-    };
-                                    
-    fluid.inlineEdit.CKEditor.blurHandlerBinder = function (that) {
-        that.events.afterInitEdit.addListener(fluid.inlineEdit.CKEditor.focus);
-        that.events.afterBeginEdit.addListener(function () {
-            var editor = fluid.inlineEdit.CKEditor.getEditor(that.editField[0]);
-            if (editor) {
-                fluid.inlineEdit.CKEditor.focus(editor);
-            }
-        });
-    };
-    
-    fluid.inlineEdit.CKEditor.editModeRenderer = function (that) {
-        var id = fluid.allocateSimpleId(that.editField);
-        $.data(fluid.unwrap(that.editField), "fluid.inlineEdit.CKEditor", that);
-        var editor = CKEDITOR.replace(id, that.options.CKEditor);
-        editor.on("instanceReady", function (e) {
-            fluid.inlineEdit.CKEditor.focus(e.editor);
-            that.events.afterInitEdit.fire(e.editor);
-        });
-    };                                                     
-    
-    fluid.defaults("fluid.inlineEdit.CKEditor", {
-        selectors: {
-            edit: "textarea" 
-        },
-        styles: {
-            invitation: "fl-inlineEdit-richText-invitation",
-            displayView: "fl-inlineEdit-textContainer",
-            text: ""
-        },
-        strings: {
-            textEditButton: "Edit"
-        },        
-        displayAccessor: {
-            type: "fluid.inlineEdit.richTextViewAccessor"
-        },
-        editAccessor: {
-            type: "fluid.inlineEdit.CKEditor.viewAccessor"
-        },
-        lazyEditView: true,
-        defaultViewText: "Click Edit",
-        modelComparator: fluid.inlineEdit.CKEditor.htmlComparator,
-        blurHandlerBinder: fluid.inlineEdit.CKEditor.blurHandlerBinder,
-        displayModeRenderer: fluid.inlineEdit.richTextDisplayModeRenderer,
-        editModeRenderer: fluid.inlineEdit.CKEditor.editModeRenderer,
-        CKEditor: {
-            // CKEditor-specific configuration goes here.
-        }
-    });
- 
-    
-    /************************
-     * Dropdown Integration *
-     ************************/    
-    /**
-     * Instantiate a drop-down InlineEdit component
-     * 
-     * @param {Object} container
-     * @param {Object} options
-     */
-    fluid.inlineEdit.dropdown = function (container, options) {
-        return configureInlineEdit("fluid.inlineEdit.dropdown", container, options);
-    };
-
-    fluid.inlineEdit.dropdown.editModeRenderer = function (that) {
-        var id = fluid.allocateSimpleId(that.editField);
-        that.editField.selectbox({
-            finishHandler: function () {
-                that.finish();
-            }
-        });
-        return {
-            container: that.editContainer,
-            field: $("input.selectbox", that.editContainer) 
-        };
-    };
-   
-    fluid.inlineEdit.dropdown.blurHandlerBinder = function (that) {
-        fluid.deadMansBlur(that.editField, {
-            exclusions: {selectBox: $("div.selectbox-wrapper", that.editContainer)},
-            handler: function () {
-                that.cancel();
-            }
-        });
-    };
-    
-    fluid.defaults("fluid.inlineEdit.dropdown", {
-        applyEditPadding: false,
-        blurHandlerBinder: fluid.inlineEdit.dropdown.blurHandlerBinder,
-        editModeRenderer: fluid.inlineEdit.dropdown.editModeRenderer
-    });
-})(jQuery, fluid_1_4);
-
-
-// This must be written outside any scope as a result of the FCKEditor event model.
-// Do not overwrite this function, if you wish to add your own listener to FCK completion,
-// register it with the standard fluid event firer at fluid.inlineEdit.FCKEditor.complete
-function FCKeditor_OnComplete(editorInstance) {
-    fluid.inlineEdit.FCKEditor.complete.fire(editorInstance);
-}
-/* Copyright (c) 2006 Brandon Aaron (http://brandonaaron.net)
- * Dual licensed under the MIT (http://www.opensource.org/licenses/mit-license.php) 
- * and GPL (http://www.opensource.org/licenses/gpl-license.php) licenses.
- *
- * $LastChangedDate$
- * $Rev$
- *
- * Version 2.1
- */
-
-(function($){
-
-/**
- * The bgiframe is chainable and applies the iframe hack to get 
- * around zIndex issues in IE6. It will only apply itself in IE 
- * and adds a class to the iframe called 'bgiframe'. The iframe
- * is appeneded as the first child of the matched element(s) 
- * with a tabIndex and zIndex of -1.
- * 
- * By default the plugin will take borders, sized with pixel units,
- * into account. If a different unit is used for the border's width,
- * then you will need to use the top and left settings as explained below.
- *
- * NOTICE: This plugin has been reported to cause perfromance problems
- * when used on elements that change properties (like width, height and
- * opacity) a lot in IE6. Most of these problems have been caused by 
- * the expressions used to calculate the elements width, height and 
- * borders. Some have reported it is due to the opacity filter. All 
- * these settings can be changed if needed as explained below.
- *
- * @example $('div').bgiframe();
- * @before <div><p>Paragraph</p></div>
- * @result <div><iframe class="bgiframe".../><p>Paragraph</p></div>
- *
- * @param Map settings Optional settings to configure the iframe.
- * @option String|Number top The iframe must be offset to the top
- * 		by the width of the top border. This should be a negative 
- *      number representing the border-top-width. If a number is 
- * 		is used here, pixels will be assumed. Otherwise, be sure
- *		to specify a unit. An expression could also be used. 
- * 		By default the value is "auto" which will use an expression 
- * 		to get the border-top-width if it is in pixels.
- * @option String|Number left The iframe must be offset to the left
- * 		by the width of the left border. This should be a negative 
- *      number representing the border-left-width. If a number is 
- * 		is used here, pixels will be assumed. Otherwise, be sure
- *		to specify a unit. An expression could also be used. 
- * 		By default the value is "auto" which will use an expression 
- * 		to get the border-left-width if it is in pixels.
- * @option String|Number width This is the width of the iframe. If
- *		a number is used here, pixels will be assume. Otherwise, be sure
- * 		to specify a unit. An experssion could also be used.
- *		By default the value is "auto" which will use an experssion
- * 		to get the offsetWidth.
- * @option String|Number height This is the height of the iframe. If
- *		a number is used here, pixels will be assume. Otherwise, be sure
- * 		to specify a unit. An experssion could also be used.
- *		By default the value is "auto" which will use an experssion
- * 		to get the offsetHeight.
- * @option Boolean opacity This is a boolean representing whether or not
- * 		to use opacity. If set to true, the opacity of 0 is applied. If
- *		set to false, the opacity filter is not applied. Default: true.
- * @option String src This setting is provided so that one could change 
- *		the src of the iframe to whatever they need.
- *		Default: "javascript:false;"
- *
- * @name bgiframe
- * @type jQuery
- * @cat Plugins/bgiframe
- * @author Brandon Aaron (brandon.aaron@gmail.com || http://brandonaaron.net)
- */
-$.fn.bgIframe = $.fn.bgiframe = function(s) {
-	// This is only for IE6
-	if ( $.browser.msie && parseInt($.browser.version) <= 6 ) {
-		s = $.extend({
-			top     : 'auto', // auto == .currentStyle.borderTopWidth
-			left    : 'auto', // auto == .currentStyle.borderLeftWidth
-			width   : 'auto', // auto == offsetWidth
-			height  : 'auto', // auto == offsetHeight
-			opacity : true,
-			src     : 'javascript:false;'
-		}, s || {});
-		var prop = function(n){return n&&n.constructor==Number?n+'px':n;},
-		    html = '<iframe class="bgiframe"frameborder="0"tabindex="-1"src="'+s.src+'"'+
-		               'style="display:block;position:absolute;z-index:-1;'+
-			               (s.opacity !== false?'filter:Alpha(Opacity=\'0\');':'')+
-					       'top:'+(s.top=='auto'?'expression(((parseInt(this.parentNode.currentStyle.borderTopWidth)||0)*-1)+\'px\')':prop(s.top))+';'+
-					       'left:'+(s.left=='auto'?'expression(((parseInt(this.parentNode.currentStyle.borderLeftWidth)||0)*-1)+\'px\')':prop(s.left))+';'+
-					       'width:'+(s.width=='auto'?'expression(this.parentNode.offsetWidth+\'px\')':prop(s.width))+';'+
-					       'height:'+(s.height=='auto'?'expression(this.parentNode.offsetHeight+\'px\')':prop(s.height))+';'+
-					'"/>';
-		return this.each(function() {
-			if ( $('> iframe.bgiframe', this).length == 0 )
-				this.insertBefore( document.createElement(html), this.firstChild );
-		});
-	}
-	return this;
-};
-
-// Add browser.version if it doesn't exist
-if (!$.browser.version)
-	$.browser.version = navigator.userAgent.toLowerCase().match(/.+(?:rv|it|ra|ie)[\/: ]([\d.]+)/)[1];
-
-})(jQuery);/*
-Copyright 2008-2009 University of Cambridge
-Copyright 2008-2009 University of Toronto
-Copyright 2010-2011 OCAD University
-Copyright 2010 Lucendo Development Ltd.
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global fluid_1_4:true, jQuery*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {
-
-    /******************
-     * Pager Bar View *
-     ******************/
-
-    
-    function updateStyles(pageListThat, newModel, oldModel) {
-        if (!pageListThat.pageLinks) {
-            return;
-        }
-        if (oldModel.pageIndex !== undefined) {
-            var oldLink = pageListThat.pageLinks.eq(oldModel.pageIndex);
-            oldLink.removeClass(pageListThat.options.styles.currentPage);
-        }
-        var pageLink = pageListThat.pageLinks.eq(newModel.pageIndex);
-        pageLink.addClass(pageListThat.options.styles.currentPage); 
-    }
-    
-    function bindLinkClick(link, events, eventArg) {
-        link.unbind("click.fluid.pager");
-        link.bind("click.fluid.pager", function () {
-            events.initiatePageChange.fire(eventArg);
-        });
-    }
-    
-    // 10 -> 1, 11 -> 2
-    function computePageCount(model) {
-        model.pageCount = Math.max(1, Math.floor((model.totalRange - 1) / model.pageSize) + 1);
-    }
-
-    fluid.pager = function () {
-        return fluid.pagerImpl.apply(null, arguments);
-    };
-    
-    fluid.pager.computePageLimit = function (model) {
-        return Math.min(model.totalRange, (model.pageIndex + 1) * model.pageSize);
-    };
-
-    fluid.pager.directPageList = function (container, events, options) {
-        var that = fluid.initView("fluid.pager.directPageList", container, options);
-        that.pageLinks = that.locate("pageLinks");
-        for (var i = 0; i < that.pageLinks.length; ++i) {
-            var pageLink = that.pageLinks.eq(i);
-            bindLinkClick(pageLink, events, {pageIndex: i});
-        }
-        events.onModelChange.addListener(
-            function (newModel, oldModel) {
-                updateStyles(that, newModel, oldModel);
-            }
-        );
-        that.defaultModel = {
-            pageIndex: undefined,
-            pageSize: 1,
-            totalRange: that.pageLinks.length
-        };
-        return that;
-    };
-    
-    /** Returns an array of size count, filled with increasing integers, 
-     *  starting at 0 or at the index specified by first. 
-     */
-    
-    fluid.iota = function (count, first) {
-        first = first || 0;
-        var togo = [];
-        for (var i = 0; i < count; ++i) {
-            togo[togo.length] = first++;
-        }
-        return togo;
-    };
-    
-    fluid.pager.everyPageStrategy = fluid.iota;
-    
-    fluid.pager.gappedPageStrategy = function (locality, midLocality) {
-        if (!locality) {
-            locality = 3;
-        }
-        if (!midLocality) {
-            midLocality = locality;
-        }
-        return function (count, first, mid) {
-            var togo = [];
-            var j = 0;
-            var lastSkip = false;
-            for (var i = 0; i < count; ++i) {
-                if (i < locality || (count - i - 1) < locality || (i >= mid - midLocality && i <= mid + midLocality)) {
-                    togo[j++] = i;
-                    lastSkip = false;
-                } else if (!lastSkip) {
-                    togo[j++] = -1;
-                    lastSkip = true;
-                }
-            }
-            return togo;
-        };
-    };
-    
-    /**
-     * An impl of a page strategy that will always display same number of page links (including skip place holders). 
-     * @param   endLinkCount    int     The # of elements first and last trunks of elements
-     * @param   midLinkCount    int     The # of elements from beside the selected #
-     * @author  Eric Dalquist
-     */
-    fluid.pager.consistentGappedPageStrategy = function (endLinkCount, midLinkCount) {
-        if (!endLinkCount) {
-            endLinkCount = 1;
-        }
-        if (!midLinkCount) {
-            midLinkCount = endLinkCount;
-        }
-        var endWidth = endLinkCount + 2 + midLinkCount;
-
-        return function (count, first, mid) {
-            var pages = [];
-            var anchoredLeft = mid < endWidth;
-            var anchoredRight = mid >= count - endWidth;
-            var anchoredEndWidth = endWidth + midLinkCount;
-            var midStart = mid - midLinkCount;
-            var midEnd = mid + midLinkCount;
-            var lastSkip = false;
-            
-            for (var page = 0; page < count; page++) {
-                if (page < endLinkCount || // start pages
-                        count - page <= endLinkCount || // end pages
-                        (anchoredLeft && page < anchoredEndWidth) || // pages if no skipped pages between start and mid
-                        (anchoredRight && page >= count - anchoredEndWidth) || // pages if no skipped pages between mid and end
-                        (page >= midStart && page <= midEnd) // pages around the mid
-                        ) {
-                    pages.push(page);
-                    lastSkip = false;
-                } else if (!lastSkip) {
-                    pages.push(-1);
-                    lastSkip = true;
-                }
-            }
-            return pages;
-        };
-    };  
-    
-    fluid.pager.renderedPageList = function (container, events, pagerBarOptions, options, strings) {
-        options = $.extend(true, pagerBarOptions, options);
-        var that = fluid.initView("fluid.pager.renderedPageList", container, options);
-        options = that.options; // pick up any defaults
-        var idMap = {};
-        var renderOptions = {
-            cutpoints: [ 
-                {
-                    id: "page-link:link",
-                    selector: pagerBarOptions.selectors.pageLinks
-                },
-                {
-                    id: "page-link:skip",
-                    selector: pagerBarOptions.selectors.pageLinkSkip
-                }
-            ],
-            idMap: idMap
-        };
-        
-        if (options.linkBody) {
-            renderOptions.cutpoints[renderOptions.cutpoints.length] = {
-                id: "payload-component",
-                selector: options.linkBody
-            };
-        }   
-        
-        var assembleComponent = function (page, isCurrent) {
-            var obj = {
-                ID: "page-link:link",
-                localID: page + 1,
-                value: page + 1,
-                pageIndex: page,
-                decorators: [
-                    {
-                        type: "jQuery",
-                        func: "click", 
-                        args: function (event) {
-                            events.initiatePageChange.fire({pageIndex: page});
-                            event.preventDefault();
-                        }
-                    }
-                ]
-            };
-            
-            if (isCurrent) {
-                obj.current = true;
-                obj.decorators = obj.decorators.concat([
-                    {
-                        type: "addClass",
-                        classes: that.options.styles.currentPage
-                    },
-                    {
-                        type: "jQuery",
-                        func: "attr", 
-                        args: ["aria-label", that.options.strings.currentPageIndexMsg] 
-                    }
-                ]);
-            }
-            
-            return obj;
-        };
-             
-        function pageToComponent(current) {
-            return function (page) {
-                return page === -1 ? {
-                    ID: "page-link:skip"
-                } : assembleComponent(page, page === current);
-            };
-        }
-        
-        var root = that.locate("root");
-        fluid.expectFilledSelector(root, "Error finding root template for fluid.pager.renderedPageList");
-        
-        var template = fluid.selfRender(root, {}, renderOptions);
-        events.onModelChange.addListener(
-            function (newModel, oldModel) {
-                var pages = that.options.pageStrategy(newModel.pageCount, 0, newModel.pageIndex);
-                var pageTree = fluid.transform(pages, pageToComponent(newModel.pageIndex));
-                if (pageTree.length > 1) {
-                    pageTree[pageTree.length - 1].value = pageTree[pageTree.length - 1].value + strings.last;
-                }
-                events.onRenderPageLinks.fire(pageTree, newModel);
-                
-                //Destroys all the tooltips before rerendering the pagelinks.
-                //This will clean up the tooltips, which are all added to the end at the end of the DOM,
-                //and prevent the tooltips from sticking around when using the keyboard to activate
-                //the page links.
-                $.each(idMap, function (key, id) {
-                    var pageLink = fluid.jById(id);
-                    if (pageLink.tooltip) {
-                        pageLink.tooltip("destroy");
-                    }
-                });
-                fluid.reRender(template, root, pageTree, renderOptions);
-                updateStyles(that, newModel, oldModel);
-            }
-        );
-        return that;
-    };
-    
-    fluid.defaults("fluid.pager.renderedPageList", {
-        selectors: {
-            root: ".flc-pager-links"
-        },
-        linkBody: "a",
-        pageStrategy: fluid.pager.everyPageStrategy
-    });
-    
-    var updatePreviousNext = function (that, options, newModel) {
-        if (newModel.pageIndex === 0) {
-            that.previous.addClass(options.styles.disabled);
-        } else {
-            that.previous.removeClass(options.styles.disabled);
-        }
-        
-        if (newModel.pageIndex === newModel.pageCount - 1) {
-            that.next.addClass(options.styles.disabled);
-        } else {
-            that.next.removeClass(options.styles.disabled);
-        }
-    };
-    
-    fluid.pager.previousNext = function (container, events, options) {
-        var that = fluid.initView("fluid.pager.previousNext", container, options);
-        that.previous = that.locate("previous");
-        bindLinkClick(that.previous, events, {relativePage: -1});
-        that.next = that.locate("next");
-        bindLinkClick(that.next, events, {relativePage: +1});
-        events.onModelChange.addListener(
-            function (newModel, oldModel, overallThat) {
-                updatePreviousNext(that, options, newModel);
-            }
-        );
-        return that;
-    };
-
-    fluid.pager.pagerBar = function (events, container, options, strings) {
-        var that = fluid.initView("fluid.pager.pagerBar", container, options);
-        that.pageList = fluid.initSubcomponent(that, "pageList", 
-            [container, events, that.options, fluid.COMPONENT_OPTIONS, strings]);
-        that.previousNext = fluid.initSubcomponent(that, "previousNext", 
-            [container, events, that.options, fluid.COMPONENT_OPTIONS, strings]);
-        
-        return that;
-    };
-
-    
-    fluid.defaults("fluid.pager.pagerBar", {
-            
-        previousNext: {
-            type: "fluid.pager.previousNext"
-        },
-        
-        pageList: {
-            type: "fluid.pager.renderedPageList",
-            options: {
-                pageStrategy: fluid.pager.gappedPageStrategy(3, 1)
-            }
-        },
-        
-        selectors: {
-            pageLinks: ".flc-pager-pageLink",
-            pageLinkSkip: ".flc-pager-pageLink-skip",
-            previous: ".flc-pager-previous",
-            next: ".flc-pager-next"
-        },
-        
-        styles: {
-            currentPage: "fl-pager-currentPage",
-            disabled: "fl-pager-disabled"
-        },
-        
-        strings: {
-            currentPageIndexMsg: "Current page"
-        }
-    });
-
-    function getColumnDefs(that) {
-        return that.options.columnDefs;
-    }
-
-    fluid.pager.findColumnDef = function (columnDefs, key) {
-        var columnDef = $.grep(columnDefs, function (def) {
-            return def.key === key;
-        })[0];
-        return columnDef;
-    };
-    
-    function getRoots(target, overallThat, index) {
-        var cellRoot = (overallThat.options.dataOffset ? overallThat.options.dataOffset + "." : "");
-        target.shortRoot = index;
-        target.longRoot = cellRoot + target.shortRoot;
-    }
-    
-    function expandPath(EL, shortRoot, longRoot) {
-        if (EL.charAt(0) === "*") {
-            return longRoot + EL.substring(1); 
-        } else {
-            return EL.replace("*", shortRoot);
-        }
-    }
-    
-    fluid.pager.fetchValue = function (that, dataModel, index, valuebinding, roots) {
-        getRoots(roots, that, index);
-
-        var path = expandPath(valuebinding, roots.shortRoot, roots.longRoot);
-        return fluid.get(dataModel, path);
-    };
-    
-    fluid.pager.basicSorter = function (overallThat, model) {        
-        var dataModel = overallThat.options.dataModel;
-        var roots = {};
-        var columnDefs = getColumnDefs(overallThat);
-        var columnDef = fluid.pager.findColumnDef(columnDefs, model.sortKey);
-        var sortrecs = [];
-        for (var i = 0; i < model.totalRange; ++i) {
-            sortrecs[i] = {
-                index: i,
-                value: fluid.pager.fetchValue(overallThat, dataModel, i, columnDef.valuebinding, roots)
-            };
-        }
-        function sortfunc(arec, brec) {
-            var a = arec.value;
-            var b = brec.value;
-            return a === b ? 0 : (a > b ? model.sortDir : -model.sortDir); 
-        }
-        sortrecs.sort(sortfunc);
-        return fluid.transform(sortrecs, function (row) {
-            return row.index;
-        });
-    };
-
-    
-    fluid.pager.directModelFilter = function (model, pagerModel, perm) {
-        var togo = [];
-        var limit = fluid.pager.computePageLimit(pagerModel);
-        for (var i = pagerModel.pageIndex * pagerModel.pageSize; i < limit; ++i) {
-            var index = perm ? perm[i] : i;
-            togo[togo.length] = {index: index, row: model[index]};
-        }
-        return togo;
-    };
-    
-    function expandVariables(value, opts) {
-        var togo = "";
-        var index = 0;
-        while (true) {
-            var nextindex = value.indexOf("${", index);
-            if (nextindex === -1) {
-                togo += value.substring(index);
-                break;
-            } else {
-                togo += value.substring(index, nextindex);
-                var endi = value.indexOf("}", nextindex + 2);
-                var EL = value.substring(nextindex + 2, endi);
-                if (EL === "VALUE") {
-                    EL = opts.EL;
-                } else {
-                    EL = expandPath(EL, opts.shortRoot, opts.longRoot);
-                }
-                var val = fluid.get(opts.dataModel, EL);
-                togo += val;
-                index = endi + 1;
-            }
-        }
-        return togo;
-    }
-   
-    function expandPaths(target, tree, opts) {
-        for (var i in tree) {
-            var val = tree[i];
-            if (val === fluid.VALUE) {
-                if (i === "valuebinding") {
-                    target[i] = opts.EL;
-                } else {
-                    target[i] = {"valuebinding" : opts.EL};
-                }
-            } else if (i === "valuebinding") {
-                target[i] = expandPath(tree[i], opts);
-            } else if (typeof (val) === 'object') {
-                target[i] = val.length !== undefined ? [] : {};
-                expandPaths(target[i], val, opts);
-            } else if (typeof (val) === 'string') {
-                target[i] = expandVariables(val, opts);
-            } else {
-                target[i] = tree[i];
-            }
-        }
-        return target;
-    }
-   
-   // sets opts.EL, returns ID
-    function iDforColumn(columnDef, opts) {
-        var options = opts.options;
-        var EL = columnDef.valuebinding;
-        var key = columnDef.key;
-        if (!EL) {
-            fluid.fail("Error in definition for column with key " + key + ": valuebinding is not set");
-        }
-        opts.EL = expandPath(EL, opts.shortRoot, opts.longRoot);
-        if (!key) {
-            var segs = fluid.model.parseEL(EL);
-            key = segs[segs.length - 1];
-        }
-        var ID = (options.keyPrefix ? options.keyPrefix : "") + key;
-        return ID;
-    }
-   
-    function expandColumnDefs(filteredRow, opts) {
-        var tree = fluid.transform(opts.columnDefs, function (columnDef) {
-            var ID = iDforColumn(columnDef, opts);
-            var togo;
-            if (!columnDef.components) {
-                return {
-                    ID: ID,
-                    valuebinding: opts.EL
-                };
-            } else if (typeof columnDef.components === 'function') {
-                togo = columnDef.components(filteredRow.row, filteredRow.index);
-            } else {
-                togo = columnDef.components;
-            }
-            togo = expandPaths({}, togo, opts);
-            togo.ID = ID;
-            return togo;
-        });
-        return tree;
-    }
-   
-    function fetchModel(overallThat) {
-        return fluid.get(overallThat.options.dataModel, 
-            overallThat.options.dataOffset);
-    }
-   
-    
-    function bigHeaderForKey(key, opts) {
-        var id = opts.options.renderOptions.idMap["header:" + key];
-        var smallHeader = fluid.jById(id);
-        if (smallHeader.length === 0) {
-            return null;
-        }
-        var headerSortStylisticOffset = opts.overallOptions.selectors.headerSortStylisticOffset;
-        var bigHeader = fluid.findAncestor(smallHeader, function (element) {
-            return $(element).is(headerSortStylisticOffset); 
-        });
-        return bigHeader;
-    }
-   
-    function setSortHeaderClass(styles, element, sort) {
-        element = $(element);
-        element.removeClass(styles.ascendingHeader);
-        element.removeClass(styles.descendingHeader);
-        if (sort !== 0) {
-            element.addClass(sort === 1 ? styles.ascendingHeader : styles.descendingHeader);
-            //aria-sort property are specified in the w3 WAI spec, ascending, descending, none, other.
-            //since pager currently uses ascending and descending, we do not support the others.
-            //http://www.w3.org/WAI/PF/aria/states_and_properties#aria-sort
-            element.attr('aria-sort', sort === 1 ? 'ascending' : 'descending'); 
-        }
-    }
-    
-    function isCurrentColumnSortable(columnDefs, model) {
-        var columnDef = model.sortKey ? fluid.pager.findColumnDef(columnDefs, model.sortKey) : null;
-        return columnDef ? columnDef.sortable : false;
-    }
-    
-    function setModelSortHeaderClass(newModel, opts) {
-        var styles = opts.overallOptions.styles;
-        var sort = isCurrentColumnSortable(opts.columnDefs, newModel) ? newModel.sortDir : 0;
-        setSortHeaderClass(styles, bigHeaderForKey(newModel.sortKey, opts), sort);
-    }
-   
-    function fireModelChange(that, newModel, forceUpdate) {
-        computePageCount(newModel);
-        if (newModel.pageIndex >= newModel.pageCount) {
-            newModel.pageIndex = newModel.pageCount - 1;
-        }
-        if (forceUpdate || newModel.pageIndex !== that.model.pageIndex || newModel.pageSize !== that.model.pageSize || newModel.sortKey !== that.model.sortKey ||
-                newModel.sortDir !== that.model.sortDir) {
-            var sorted = isCurrentColumnSortable(getColumnDefs(that), newModel) ? 
-                that.options.sorter(that, newModel) : null;
-            that.permutation = sorted;
-            that.events.onModelChange.fire(newModel, that.model, that);
-            fluid.model.copyModel(that.model, newModel);
-        }
-    }
-
-    function generateColumnClick(overallThat, columnDef, opts) {
-        return function () {
-            if (columnDef.sortable === true) {
-                var model = overallThat.model;
-                var newModel = fluid.copy(model);
-                var styles = overallThat.options.styles;
-                var oldKey = model.sortKey;
-                if (columnDef.key !== model.sortKey) {
-                    newModel.sortKey = columnDef.key;
-                    newModel.sortDir = 1;
-                    var oldBig = bigHeaderForKey(oldKey, opts);
-                    if (oldBig) {
-                        setSortHeaderClass(styles, oldBig, 0);
-                    }
-                } else if (newModel.sortKey === columnDef.key) {
-                    newModel.sortDir = -1 * newModel.sortDir;
-                } else {
-                    return false;
-                }
-                newModel.pageIndex = 0;
-                fireModelChange(overallThat, newModel, true);
-                setModelSortHeaderClass(newModel, opts);                
-            }
-            return false;
-        };
-    }
-   
-    function fetchHeaderDecorators(decorators, columnDef) {
-        return decorators[columnDef.sortable ? "sortableHeader" : "unsortableHeader"];
-    }
-   
-    function generateHeader(overallThat, newModel, columnDefs, opts) {
-        var sortableColumnTxt = opts.options.strings.sortableColumnText;
-        if (newModel.sortDir === 1) {
-            sortableColumnTxt = opts.options.strings.sortableColumnTextAsc;
-        } else if (newModel.sortDir === -1) {
-            sortableColumnTxt = opts.options.strings.sortableColumnTextDesc;
-        }
-
-        return {
-            children:  
-                fluid.transform(columnDefs, function (columnDef) {
-                return {
-                    ID: iDforColumn(columnDef, opts),
-                    value: columnDef.label,
-                    decorators: [ 
-                        {"jQuery": ["click", generateColumnClick(overallThat, columnDef, opts)]},
-                        {identify: "header:" + columnDef.key},
-                        {type: "attrs", attributes: { title: (columnDef.key === newModel.sortKey) ? sortableColumnTxt : opts.options.strings.sortableColumnText}}
-                    ].concat(fetchHeaderDecorators(opts.overallOptions.decorators, columnDef))
-                };
-            })
-        };
-    }
-   
-    /** A body renderer implementation which uses the Fluid renderer to render a table section **/
-   
-    fluid.pager.selfRender = function (overallThat, inOptions) {
-        var that = fluid.initView("fluid.pager.selfRender", overallThat.container, inOptions);
-        var options = that.options;
-        options.renderOptions.idMap = options.renderOptions.idMap || {};
-        var idMap = options.renderOptions.idMap;
-        var root = that.locate("root");
-        var template = fluid.selfRender(root, {}, options.renderOptions);
-        root.addClass(options.styles.root);
-        var columnDefs = getColumnDefs(overallThat);
-        var expOpts = {options: options, columnDefs: columnDefs, overallOptions: overallThat.options, dataModel: overallThat.options.dataModel, idMap: idMap};
-        var directModel = fetchModel(overallThat);
-
-        return {
-            returnedOptions: {
-                listeners: {
-                    onModelChange: function (newModel, oldModel) {
-                        var filtered = overallThat.options.modelFilter(directModel, newModel, overallThat.permutation);
-                        var tree = fluid.transform(filtered, 
-                            function (filteredRow) {
-                                getRoots(expOpts, overallThat, filteredRow.index);
-                                if (columnDefs === "explode") {
-                                    return fluid.explode(filteredRow.row, expOpts.longRoot);
-                                } else if (columnDefs.length) {
-                                    return expandColumnDefs(filteredRow, expOpts);
-                                }
-                            });
-                        var fullTree = {};
-                        fullTree[options.row] = tree;
-                        if (typeof (columnDefs) === "object") {
-                            fullTree[options.header] = generateHeader(overallThat, newModel, columnDefs, expOpts);
-                        }
-                        options.renderOptions = options.renderOptions || {};
-                        options.renderOptions.model = expOpts.dataModel;
-                        fluid.reRender(template, root, fullTree, options.renderOptions);
-                        setModelSortHeaderClass(newModel, expOpts); // TODO, should this not be actually renderable?
-                    }
-                }
-            }
-        };
-    };
-
-    fluid.defaults("fluid.pager.selfRender", {
-        selectors: {
-            root: ".flc-pager-body-template"
-        },
-        
-        styles: {
-            root: "fl-pager"
-        },
-        
-        keyStrategy: "id",
-        keyPrefix: "",
-        row: "row:",
-        header: "header:",
-        
-        strings: {
-            sortableColumnText: "Select to sort",
-            sortableColumnTextDesc: "Select to sort in ascending, currently in descending order.",
-            sortableColumnTextAsc: "Select to sort in descending, currently in ascending order."
-        },
-
-        // Options passed upstream to the renderer
-        renderOptions: {}
-    });
-
-    fluid.pager.summaryAria = function (element) {
-        element.attr({
-            "aria-relevant": "all",
-            "aria-atomic": "false",
-            "aria-live": "assertive",
-            "role": "status"
-        });
-    };
-
-    fluid.pager.summary = function (dom, options) {
-        var node = dom.locate("summary");
-        fluid.pager.summaryAria(node);
-        return {
-            returnedOptions: {
-                listeners: {
-                    onModelChange: function (newModel, oldModel) {
-                        var text = fluid.stringTemplate(options.message, {
-                            first: newModel.pageIndex * newModel.pageSize + 1,
-                            last: fluid.pager.computePageLimit(newModel),
-                            total: newModel.totalRange,
-                            currentPage: newModel.pageIndex + 1
-                        });
-                        if (node.length > 0) {
-                            node.text(text);
-                        }
-                    }
-                }
-            }
-        };
-    };
-    
-    fluid.pager.directPageSize = function (that) {
-        var node = that.locate("pageSize");
-        if (node.length > 0) {
-            that.events.onModelChange.addListener(
-                function (newModel, oldModel) {
-                    if (node.val() !== newModel.pageSize) {
-                        node.val(newModel.pageSize);
-                    }
-                }
-            );
-            node.change(function () {
-                that.events.initiatePageSizeChange.fire(node.val());
-            });
-        }
-    };
-
-
-    fluid.pager.rangeAnnotator = function (that, options) {
-        var roots = {};
-        that.events.onRenderPageLinks.addListener(function (tree, newModel) {
-            var column = that.options.annotateColumnRange;
-            var dataModel = that.options.dataModel;
-            // TODO: reaching into another component's options like this is a bit unfortunate
-            var columnDefs = getColumnDefs(that);
-
-            if (!column || !dataModel || !columnDefs) {
-                return;
-            }
-            var columnDef = fluid.pager.findColumnDef(columnDefs, column);
-            
-            function fetchValue(index) {
-                index = that.permutation ? that.permutation[index] : index;
-                return fluid.pager.fetchValue(that, dataModel, index, columnDef.valuebinding, roots);
-            }
-            var tModel = {};
-            fluid.model.copyModel(tModel, newModel);
-            
-            fluid.transform(tree, function (cell) {
-                if (cell.ID === "page-link:link") {
-                    var page = cell.pageIndex;
-                    var start = page * tModel.pageSize;
-                    tModel.pageIndex = page;
-                    var limit = fluid.pager.computePageLimit(tModel);
-                    var iValue = fetchValue(start);
-                    var lValue = fetchValue(limit - 1);
-                    
-                    var tooltipOpts = fluid.copy(that.options.tooltip.options) || {};
-                    
-                    if (!tooltipOpts.content) {
-                        tooltipOpts.content = function () { 
-                            return fluid.stringTemplate(that.options.markup.rangeAnnotation, {
-                                first: iValue,
-                                last: lValue
-                            });
-                        };
-                    }
-                    
-                    if (!cell.current) {
-                        var decorators = [
-                            {
-                                type: "fluid",
-                                func: that.options.tooltip.type,
-                                options: tooltipOpts
-                            },
-                            {
-                                identify: page
-                            }
-                        ];
-                        cell.decorators = cell.decorators.concat(decorators);
-                    }
-                }
-            });
-        });
-    };
-
-    /*******************
-     * Pager Component *
-     *******************/
-    
-    fluid.pagerImpl = function (container, options) {
-        var that = fluid.initView("fluid.pager", container, options);
-                
-        that.container.attr("role", "application");
-        
-        that.events.initiatePageChange.addListener(
-            function (arg) {
-                var newModel = fluid.copy(that.model);
-                if (arg.relativePage !== undefined) {
-                    newModel.pageIndex = that.model.pageIndex + arg.relativePage;
-                } else {
-                    newModel.pageIndex = arg.pageIndex;
-                }
-                if (newModel.pageIndex === undefined || newModel.pageIndex < 0) {
-                    newModel.pageIndex = 0;
-                }
-                fireModelChange(that, newModel, arg.forceUpdate);
-            }
-        );
-        
-        that.events.initiatePageSizeChange.addListener(
-            function (arg) {
-                var newModel = fluid.copy(that.model);
-                newModel.pageSize = arg;
-                fireModelChange(that, newModel);     
-            }
-        );
-
-        // Setup the top and bottom pager bars.
-        var pagerBarElement = that.locate("pagerBar");
-        if (pagerBarElement.length > 0) {
-            that.pagerBar = fluid.initSubcomponent(that, "pagerBar", 
-                [that.events, pagerBarElement, fluid.COMPONENT_OPTIONS, that.options.strings]);
-        }
-        
-        var pagerBarSecondaryElement = that.locate("pagerBarSecondary");
-        if (pagerBarSecondaryElement.length > 0) {
-            that.pagerBarSecondary = fluid.initSubcomponent(that, "pagerBar",
-                [that.events, pagerBarSecondaryElement, fluid.COMPONENT_OPTIONS, that.options.strings]);
-        }
- 
-        that.bodyRenderer = fluid.initSubcomponent(that, "bodyRenderer", [that, fluid.COMPONENT_OPTIONS]);
-        
-        that.summary = fluid.initSubcomponent(that, "summary", [that.dom, fluid.COMPONENT_OPTIONS]);
-        
-        that.pageSize = fluid.initSubcomponent(that, "pageSize", [that]);
-        
-        that.rangeAnnotator = fluid.initSubcomponent(that, "rangeAnnotator", [that, fluid.COMPONENT_OPTIONS]);
- 
-        that.model = fluid.copy(that.options.model);
-        
-        var dataModel = fetchModel(that);
-        if (dataModel) {
-            that.model.totalRange = dataModel.length;
-        }
-        if (that.model.totalRange === undefined) {
-            if (!that.pagerBar) {
-                fluid.fail("Error in Pager configuration - cannot determine total range, " +
-                    " since not configured in model.totalRange and no PagerBar is configured");
-            }
-            that.model = that.pagerBar.pageList.defaultModel;
-        }
-        that.applier = fluid.makeChangeApplier(that.model);
-
-        that.events.initiatePageChange.fire({pageIndex: that.model.pageIndex ? that.model.pageIndex : 0, 
-            forceUpdate: true});
-
-        return that;
-    };
-    
-    fluid.defaults("fluid.pager", {
-        mergePolicy: {
-            dataModel: "preserve",
-            model: "preserve"
-        },
-        pagerBar: {
-            type: "fluid.pager.pagerBar"
-        },
-        
-        summary: {type: "fluid.pager.summary", options: {
-            message: "Viewing page %currentPage. Showing records %first - %last of %total items." 
-        }},
-        
-        pageSize: {
-            type: "fluid.pager.directPageSize"
-        },
-        
-        modelFilter: fluid.pager.directModelFilter,
-        
-        sorter: fluid.pager.basicSorter,
-        
-        bodyRenderer: {
-            type: "fluid.pager.selfRender"
-        },
-        
-        model: {
-            pageIndex: undefined,
-            pageSize: 10,
-            totalRange: undefined
-        },
-        
-        dataModel: undefined,
-        // Offset of the tree's "main" data from the overall dataModel root
-        dataOffset: "",
-        
-        // strategy for generating a tree row, either "explode" or an array of columnDef objects
-        columnDefs: [
-            {
-                key: "column1",
-                valuebinding: "*.value1",  
-                sortable: true
-            }
-        ],
-        
-        annotateColumnRange: "column1",
-        
-        tooltip: {
-            type: "fluid.tooltip"
-        },
-        
-        rangeAnnotator: {
-            type: "fluid.pager.rangeAnnotator"
-        },
-        
-        selectors: {
-            pagerBar: ".flc-pager-top",
-            pagerBarSecondary: ".flc-pager-bottom",
-            summary: ".flc-pager-summary",
-            pageSize: ".flc-pager-page-size",
-            headerSortStylisticOffset: ".flc-pager-sort-header"
-        },
-        
-        styles: {
-            ascendingHeader: "fl-pager-asc",
-            descendingHeader: "fl-pager-desc"
-        },
-        
-        decorators: {
-            sortableHeader: [],
-            unsortableHeader: []
-        },
-        
-        strings: {
-            last: " (last)"
-        },
-        
-        events: {
-            initiatePageChange: null,
-            initiatePageSizeChange: null,
-            onModelChange: null,
-            onRenderPageLinks: null
-        },
-        
-        markup: {
-            rangeAnnotation: "<b> %first </b><br/>&mdash;<br/><b> %last </b>"
-        }
-    });
-})(jQuery, fluid_1_4);
-/*
-Copyright 2008-2009 University of Toronto
-Copyright 2008-2009 University of California, Berkeley
-Copyright 2010-2011 OCAD University
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global fluid_1_4:true, jQuery*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {    
-    
-    var animateDisplay = function (elm, animation, defaultAnimation) {
-        animation = (animation) ? animation : defaultAnimation;
-        elm.animate(animation.params, animation.duration, animation.callback);
-    };
-    
-    var animateProgress = function (elm, width, speed) {
-        // de-queue any left over animations
-        elm.queue("fx", []); 
-        
-        elm.animate({ 
-            width: width,
-            queue: false
-        }, 
-        speed);
-    };
-    
-    var showProgress = function (that, animation) {
-        if (animation === false) {
-            that.displayElement.show();
-        } else {
-            animateDisplay(that.displayElement, animation, that.options.showAnimation);
-        }
-    };
-    
-    var hideProgress = function (that, delay, animation) {
-        
-        delay = (delay === null || isNaN(delay)) ? that.options.delay : delay;
-        
-        if (delay) {
-            // use a setTimeout to delay the hide for n millies, note use of recursion
-            var timeOut = setTimeout(function () {
-                hideProgress(that, 0, animation);
-            }, delay);
-        } else {
-            if (animation === false) {
-                that.displayElement.hide();
-            } else {
-                animateDisplay(that.displayElement, animation, that.options.hideAnimation);
-            }
-        }   
-    };
-    
-    var updateWidth = function (that, newWidth, dontAnimate) {
-        dontAnimate  = dontAnimate || false;
-        var currWidth = that.indicator.width();
-        var direction = that.options.animate;
-        if ((newWidth > currWidth) && (direction === "both" || direction === "forward") && !dontAnimate) {
-            animateProgress(that.indicator, newWidth, that.options.speed);
-        } else if ((newWidth < currWidth) && (direction === "both" || direction === "backward") && !dontAnimate) {
-            animateProgress(that.indicator, newWidth, that.options.speed);
-        } else {
-            that.indicator.width(newWidth);
-        }
-    };
-         
-    var percentToPixels = function (that, percent) {
-        // progress does not support percents over 100, also all numbers are rounded to integers
-        return Math.round((Math.min(percent, 100) * that.progressBar.innerWidth()) / 100);
-    };
-    
-    var refreshRelativeWidth = function (that)  {
-        var pixels = Math.max(percentToPixels(that, parseFloat(that.storedPercent)), that.options.minWidth);
-        updateWidth(that, pixels, true);
-    };
-        
-    var initARIA = function (ariaElement, ariaBusyText) {
-        ariaElement.attr("role", "progressbar");
-        ariaElement.attr("aria-valuemin", "0");
-        ariaElement.attr("aria-valuemax", "100");
-        ariaElement.attr("aria-valuenow", "0");
-        //Empty value for ariaBusyText will default to aria-valuenow.
-        if (ariaBusyText) {
-            ariaElement.attr("aria-valuetext", "");
-        }
-        ariaElement.attr("aria-busy", "false");
-    };
-    
-    var updateARIA = function (that, percent) {
-        var str = that.options.strings;
-        var busy = percent < 100 && percent > 0;
-        that.ariaElement.attr("aria-busy", busy);
-        that.ariaElement.attr("aria-valuenow", percent);   
-        //Empty value for ariaBusyText will default to aria-valuenow.
-        if (str.ariaBusyText) {
-            if (busy) {
-                var busyString = fluid.stringTemplate(str.ariaBusyText, {percentComplete : percent});           
-                that.ariaElement.attr("aria-valuetext", busyString);
-            } else if (percent === 100) {
-                // FLUID-2936: JAWS doesn't currently read the "Progress is complete" message to the user, even though we set it here.
-                that.ariaElement.attr("aria-valuetext", str.ariaDoneText);
-            }
-        }
-    };
-        
-    var updateText = function (label, value) {
-        label.html(value);
-    };
-    
-    var repositionIndicator = function (that) {
-        that.indicator.css("top", that.progressBar.position().top)
-            .css("left", 0)
-            .height(that.progressBar.height());
-        refreshRelativeWidth(that);
-    };
-        
-    var updateProgress = function (that, percent, labelText, animationForShow) {
-        
-        // show progress before updating, jQuery will handle the case if the object is already displayed
-        showProgress(that, animationForShow);
-            
-        // do not update if the value of percent is falsey
-        if (percent !== null) {
-            that.storedPercent = percent;
-        
-            var pixels = Math.max(percentToPixels(that, parseFloat(percent)), that.options.minWidth);   
-            updateWidth(that, pixels);
-        }
-        
-        if (labelText !== null) {
-            updateText(that.label, labelText);
-        }
-        
-        // update ARIA
-        if (that.ariaElement) {
-            updateARIA(that, percent);
-        }
-    };
-        
-    var setupProgress = function (that) {
-        that.displayElement = that.locate("displayElement");
-
-        // hide file progress in case it is showing
-        if (that.options.initiallyHidden) {
-            that.displayElement.hide();
-        }
-
-        that.progressBar = that.locate("progressBar");
-        that.label = that.locate("label");
-        that.indicator = that.locate("indicator");
-        that.ariaElement = that.locate("ariaElement");
-        
-        that.indicator.width(that.options.minWidth);
-
-        that.storedPercent = 0;
-                
-        // initialize ARIA
-        if (that.ariaElement) {
-            initARIA(that.ariaElement, that.options.strings.ariaBusyText);
-        }
-        
-        // afterProgressHidden:  
-        // Registering listener with the callback provided by the user and reinitializing
-        // the event trigger function. 
-        // Note: callback depricated as of 1.5, use afterProgressHidden event
-        if (that.options.hideAnimation.callback) {
-            that.events.afterProgressHidden.addListener(that.options.hideAnimation.callback);           
-        }
-        
-        // triggers the afterProgressHidden event    
-        // Note: callback depricated as of 1.5, use afterProgressHidden event
-        that.options.hideAnimation.callback = that.events.afterProgressHidden.fire;
-
-        
-        // onProgressBegin:
-        // Registering listener with the callback provided by the user and reinitializing
-        // the event trigger function.  
-        // Note: callback depricated as of 1.5, use onProgressBegin event
-        if (that.options.showAnimation.callback) {
-            that.events.onProgressBegin.addListener(that.options.showAnimation.callback);                      
-        } 
-            
-        // triggers the onProgressBegin event
-        // Note: callback depricated as of 1.5, use onProgressBegin event
-        that.options.showAnimation.callback = that.events.onProgressBegin.fire;
-    };
-           
-    /**
-    * Instantiates a new Progress component.
-    * 
-    * @param {jQuery|Selector|Element} container the DOM element in which the Uploader lives
-    * @param {Object} options configuration options for the component.
-    */
-    fluid.progress = function (container, options) {
-        var that = fluid.initView("fluid.progress", container, options);
-        setupProgress(that);
-        
-        /**
-         * Shows the progress bar if is currently hidden.
-         * 
-         * @param {Object} animation a custom animation used when showing the progress bar
-         */
-        that.show = function (animation) {
-            showProgress(that, animation);
-        };
-        
-        /**
-         * Hides the progress bar if it is visible.
-         * 
-         * @param {Number} delay the amount of time to wait before hiding
-         * @param {Object} animation a custom animation used when hiding the progress bar
-         */
-        that.hide = function (delay, animation) {
-            hideProgress(that, delay, animation);
-        };
-        
-        /**
-         * Updates the state of the progress bar.
-         * This will automatically show the progress bar if it is currently hidden.
-         * Percentage is specified as a decimal value, but will be automatically converted if needed.
-         * 
-         * 
-         * @param {Number|String} percentage the current percentage, specified as a "float-ish" value 
-         * @param {String} labelValue the value to set for the label; this can be an HTML string
-         * @param {Object} animationForShow the animation to use when showing the progress bar if it is hidden
-         */
-        that.update = function (percentage, labelValue, animationForShow) {
-            updateProgress(that, percentage, labelValue, animationForShow);
-        };
-        
-        that.refreshView = function () {
-            repositionIndicator(that);
-        };
-                        
-        return that;  
-    };
-      
-    fluid.defaults("fluid.progress", {
-        gradeNames: "fluid.viewComponent",
-        selectors: {
-            displayElement: ".flc-progress", // required, the element that gets displayed when progress is displayed, could be the indicator or bar or some larger outer wrapper as in an overlay effect
-            progressBar: ".flc-progress-bar", //required
-            indicator: ".flc-progress-indicator", //required
-            label: ".flc-progress-label", //optional
-            ariaElement: ".flc-progress-bar" // usually required, except in cases where there are more than one progressor for the same data such as a total and a sub-total
-        },
-        
-        strings: {
-            //Empty value for ariaBusyText will default to aria-valuenow.
-            ariaBusyText: "Progress is %percentComplete percent complete",
-            ariaDoneText: "Progress is complete."
-        },
-        
-        // progress display and hide animations, use the jQuery animation primatives, set to false to use no animation
-        // animations must be symetrical (if you hide with width, you'd better show with width) or you get odd effects
-        // see jQuery docs about animations to customize
-        showAnimation: {
-            params: {
-                opacity: "show"
-            }, 
-            duration: "slow",
-            //callback has been deprecated and will be removed as of 1.5, instead use onProgressBegin event 
-            callback: null 
-        }, // equivalent of $().fadeIn("slow")
-        
-        hideAnimation: {
-            params: {
-                opacity: "hide"
-            }, 
-            duration: "slow", 
-            //callback has been deprecated and will be removed as of 1.5, instead use afterProgressHidden event 
-            callback: null
-        }, // equivalent of $().fadeOut("slow")
-        
-        events: {            
-            onProgressBegin: null,
-            afterProgressHidden: null            
-        },
-
-        minWidth: 5, // 0 length indicators can look broken if there is a long pause between updates
-        delay: 0, // the amount to delay the fade out of the progress
-        speed: 200, // default speed for animations, pretty fast
-        animate: "forward", // suppport "forward", "backward", and "both", any other value is no animation either way
-        initiallyHidden: true, // supports progress indicators which may always be present
-        updatePosition: false
-    });
-    
-})(jQuery, fluid_1_4);
-/*
- * jQuery UI Draggable 1.8.11
- *
- * Copyright 2011, AUTHORS.txt (http://jqueryui.com/about)
- * Dual licensed under the MIT or GPL Version 2 licenses.
- * http://jquery.org/license
- *
- * http://docs.jquery.com/UI/Draggables
- *
- * Depends:
- *	jquery.ui.core.js
- *	jquery.ui.mouse.js
- *	jquery.ui.widget.js
- */
-(function( $, undefined ) {
-
-$.widget("ui.draggable", $.ui.mouse, {
-	widgetEventPrefix: "drag",
-	options: {
-		addClasses: true,
-		appendTo: "parent",
-		axis: false,
-		connectToSortable: false,
-		containment: false,
-		cursor: "auto",
-		cursorAt: false,
-		grid: false,
-		handle: false,
-		helper: "original",
-		iframeFix: false,
-		opacity: false,
-		refreshPositions: false,
-		revert: false,
-		revertDuration: 500,
-		scope: "default",
-		scroll: true,
-		scrollSensitivity: 20,
-		scrollSpeed: 20,
-		snap: false,
-		snapMode: "both",
-		snapTolerance: 20,
-		stack: false,
-		zIndex: false
-	},
-	_create: function() {
-
-		if (this.options.helper == 'original' && !(/^(?:r|a|f)/).test(this.element.css("position")))
-			this.element[0].style.position = 'relative';
-
-		(this.options.addClasses && this.element.addClass("ui-draggable"));
-		(this.options.disabled && this.element.addClass("ui-draggable-disabled"));
-
-		this._mouseInit();
-
-	},
-
-	destroy: function() {
-		if(!this.element.data('draggable')) return;
-		this.element
-			.removeData("draggable")
-			.unbind(".draggable")
-			.removeClass("ui-draggable"
-				+ " ui-draggable-dragging"
-				+ " ui-draggable-disabled");
-		this._mouseDestroy();
-
-		return this;
-	},
-
-	_mouseCapture: function(event) {
-
-		var o = this.options;
-
-		// among others, prevent a drag on a resizable-handle
-		if (this.helper || o.disabled || $(event.target).is('.ui-resizable-handle'))
-			return false;
-
-		//Quit if we're not on a valid handle
-		this.handle = this._getHandle(event);
-		if (!this.handle)
-			return false;
-
-		return true;
-
-	},
-
-	_mouseStart: function(event) {
-
-		var o = this.options;
-
-		//Create and append the visible helper
-		this.helper = this._createHelper(event);
-
-		//Cache the helper size
-		this._cacheHelperProportions();
-
-		//If ddmanager is used for droppables, set the global draggable
-		if($.ui.ddmanager)
-			$.ui.ddmanager.current = this;
-
-		/*
-		 * - Position generation -
-		 * This block generates everything position related - it's the core of draggables.
-		 */
-
-		//Cache the margins of the original element
-		this._cacheMargins();
-
-		//Store the helper's css position
-		this.cssPosition = this.helper.css("position");
-		this.scrollParent = this.helper.scrollParent();
-
-		//The element's absolute position on the page minus margins
-		this.offset = this.positionAbs = this.element.offset();
-		this.offset = {
-			top: this.offset.top - this.margins.top,
-			left: this.offset.left - this.margins.left
-		};
-
-		$.extend(this.offset, {
-			click: { //Where the click happened, relative to the element
-				left: event.pageX - this.offset.left,
-				top: event.pageY - this.offset.top
-			},
-			parent: this._getParentOffset(),
-			relative: this._getRelativeOffset() //This is a relative to absolute position minus the actual position calculation - only used for relative positioned helper
-		});
-
-		//Generate the original position
-		this.originalPosition = this.position = this._generatePosition(event);
-		this.originalPageX = event.pageX;
-		this.originalPageY = event.pageY;
-
-		//Adjust the mouse offset relative to the helper if 'cursorAt' is supplied
-		(o.cursorAt && this._adjustOffsetFromHelper(o.cursorAt));
-
-		//Set a containment if given in the options
-		if(o.containment)
-			this._setContainment();
-
-		//Trigger event + callbacks
-		if(this._trigger("start", event) === false) {
-			this._clear();
-			return false;
-		}
-
-		//Recache the helper size
-		this._cacheHelperProportions();
-
-		//Prepare the droppable offsets
-		if ($.ui.ddmanager && !o.dropBehaviour)
-			$.ui.ddmanager.prepareOffsets(this, event);
-
-		this.helper.addClass("ui-draggable-dragging");
-		this._mouseDrag(event, true); //Execute the drag once - this causes the helper not to be visible before getting its correct position
-		return true;
-	},
-
-	_mouseDrag: function(event, noPropagation) {
-
-		//Compute the helpers position
-		this.position = this._generatePosition(event);
-		this.positionAbs = this._convertPositionTo("absolute");
-
-		//Call plugins and callbacks and use the resulting position if something is returned
-		if (!noPropagation) {
-			var ui = this._uiHash();
-			if(this._trigger('drag', event, ui) === false) {
-				this._mouseUp({});
-				return false;
-			}
-			this.position = ui.position;
-		}
-
-		if(!this.options.axis || this.options.axis != "y") this.helper[0].style.left = this.position.left+'px';
-		if(!this.options.axis || this.options.axis != "x") this.helper[0].style.top = this.position.top+'px';
-		if($.ui.ddmanager) $.ui.ddmanager.drag(this, event);
-
-		return false;
-	},
-
-	_mouseStop: function(event) {
-
-		//If we are using droppables, inform the manager about the drop
-		var dropped = false;
-		if ($.ui.ddmanager && !this.options.dropBehaviour)
-			dropped = $.ui.ddmanager.drop(this, event);
-
-		//if a drop comes from outside (a sortable)
-		if(this.dropped) {
-			dropped = this.dropped;
-			this.dropped = false;
-		}
-		
-		//if the original element is removed, don't bother to continue if helper is set to "original"
-		if((!this.element[0] || !this.element[0].parentNode) && this.options.helper == "original")
-			return false;
-
-		if((this.options.revert == "invalid" && !dropped) || (this.options.revert == "valid" && dropped) || this.options.revert === true || ($.isFunction(this.options.revert) && this.options.revert.call(this.element, dropped))) {
-			var self = this;
-			$(this.helper).animate(this.originalPosition, parseInt(this.options.revertDuration, 10), function() {
-				if(self._trigger("stop", event) !== false) {
-					self._clear();
-				}
-			});
-		} else {
-			if(this._trigger("stop", event) !== false) {
-				this._clear();
-			}
-		}
-
-		return false;
-	},
-	
-	cancel: function() {
-		
-		if(this.helper.is(".ui-draggable-dragging")) {
-			this._mouseUp({});
-		} else {
-			this._clear();
-		}
-		
-		return this;
-		
-	},
-
-	_getHandle: function(event) {
-
-		var handle = !this.options.handle || !$(this.options.handle, this.element).length ? true : false;
-		$(this.options.handle, this.element)
-			.find("*")
-			.andSelf()
-			.each(function() {
-				if(this == event.target) handle = true;
-			});
-
-		return handle;
-
-	},
-
-	_createHelper: function(event) {
-
-		var o = this.options;
-		var helper = $.isFunction(o.helper) ? $(o.helper.apply(this.element[0], [event])) : (o.helper == 'clone' ? this.element.clone() : this.element);
-
-		if(!helper.parents('body').length)
-			helper.appendTo((o.appendTo == 'parent' ? this.element[0].parentNode : o.appendTo));
-
-		if(helper[0] != this.element[0] && !(/(fixed|absolute)/).test(helper.css("position")))
-			helper.css("position", "absolute");
-
-		return helper;
-
-	},
-
-	_adjustOffsetFromHelper: function(obj) {
-		if (typeof obj == 'string') {
-			obj = obj.split(' ');
-		}
-		if ($.isArray(obj)) {
-			obj = {left: +obj[0], top: +obj[1] || 0};
-		}
-		if ('left' in obj) {
-			this.offset.click.left = obj.left + this.margins.left;
-		}
-		if ('right' in obj) {
-			this.offset.click.left = this.helperProportions.width - obj.right + this.margins.left;
-		}
-		if ('top' in obj) {
-			this.offset.click.top = obj.top + this.margins.top;
-		}
-		if ('bottom' in obj) {
-			this.offset.click.top = this.helperProportions.height - obj.bottom + this.margins.top;
-		}
-	},
-
-	_getParentOffset: function() {
-
-		//Get the offsetParent and cache its position
-		this.offsetParent = this.helper.offsetParent();
-		var po = this.offsetParent.offset();
-
-		// This is a special case where we need to modify a offset calculated on start, since the following happened:
-		// 1. The position of the helper is absolute, so it's position is calculated based on the next positioned parent
-		// 2. The actual offset parent is a child of the scroll parent, and the scroll parent isn't the document, which means that
-		//    the scroll is included in the initial calculation of the offset of the parent, and never recalculated upon drag
-		if(this.cssPosition == 'absolute' && this.scrollParent[0] != document && $.ui.contains(this.scrollParent[0], this.offsetParent[0])) {
-			po.left += this.scrollParent.scrollLeft();
-			po.top += this.scrollParent.scrollTop();
-		}
-
-		if((this.offsetParent[0] == document.body) //This needs to be actually done for all browsers, since pageX/pageY includes this information
-		|| (this.offsetParent[0].tagName && this.offsetParent[0].tagName.toLowerCase() == 'html' && $.browser.msie)) //Ugly IE fix
-			po = { top: 0, left: 0 };
-
-		return {
-			top: po.top + (parseInt(this.offsetParent.css("borderTopWidth"),10) || 0),
-			left: po.left + (parseInt(this.offsetParent.css("borderLeftWidth"),10) || 0)
-		};
-
-	},
-
-	_getRelativeOffset: function() {
-
-		if(this.cssPosition == "relative") {
-			var p = this.element.position();
-			return {
-				top: p.top - (parseInt(this.helper.css("top"),10) || 0) + this.scrollParent.scrollTop(),
-				left: p.left - (parseInt(this.helper.css("left"),10) || 0) + this.scrollParent.scrollLeft()
-			};
-		} else {
-			return { top: 0, left: 0 };
-		}
-
-	},
-
-	_cacheMargins: function() {
-		this.margins = {
-			left: (parseInt(this.element.css("marginLeft"),10) || 0),
-			top: (parseInt(this.element.css("marginTop"),10) || 0),
-			right: (parseInt(this.element.css("marginRight"),10) || 0),
-			bottom: (parseInt(this.element.css("marginBottom"),10) || 0)
-		};
-	},
-
-	_cacheHelperProportions: function() {
-		this.helperProportions = {
-			width: this.helper.outerWidth(),
-			height: this.helper.outerHeight()
-		};
-	},
-
-	_setContainment: function() {
-
-		var o = this.options;
-		if(o.containment == 'parent') o.containment = this.helper[0].parentNode;
-		if(o.containment == 'document' || o.containment == 'window') this.containment = [
-			(o.containment == 'document' ? 0 : $(window).scrollLeft()) - this.offset.relative.left - this.offset.parent.left,
-			(o.containment == 'document' ? 0 : $(window).scrollTop()) - this.offset.relative.top - this.offset.parent.top,
-			(o.containment == 'document' ? 0 : $(window).scrollLeft()) + $(o.containment == 'document' ? document : window).width() - this.helperProportions.width - this.margins.left,
-			(o.containment == 'document' ? 0 : $(window).scrollTop()) + ($(o.containment == 'document' ? document : window).height() || document.body.parentNode.scrollHeight) - this.helperProportions.height - this.margins.top
-		];
-
-		if(!(/^(document|window|parent)$/).test(o.containment) && o.containment.constructor != Array) {
-			var ce = $(o.containment)[0]; if(!ce) return;
-			var co = $(o.containment).offset();
-			var over = ($(ce).css("overflow") != 'hidden');
-
-			this.containment = [
-				co.left + (parseInt($(ce).css("borderLeftWidth"),10) || 0) + (parseInt($(ce).css("paddingLeft"),10) || 0),
-				co.top + (parseInt($(ce).css("borderTopWidth"),10) || 0) + (parseInt($(ce).css("paddingTop"),10) || 0),
-				co.left+(over ? Math.max(ce.scrollWidth,ce.offsetWidth) : ce.offsetWidth) - (parseInt($(ce).css("borderLeftWidth"),10) || 0) - (parseInt($(ce).css("paddingRight"),10) || 0) - this.helperProportions.width - this.margins.left - this.margins.right,
-				co.top+(over ? Math.max(ce.scrollHeight,ce.offsetHeight) : ce.offsetHeight) - (parseInt($(ce).css("borderTopWidth"),10) || 0) - (parseInt($(ce).css("paddingBottom"),10) || 0) - this.helperProportions.height - this.margins.top  - this.margins.bottom
-			];
-		} else if(o.containment.constructor == Array) {
-			this.containment = o.containment;
-		}
-
-	},
-
-	_convertPositionTo: function(d, pos) {
-
-		if(!pos) pos = this.position;
-		var mod = d == "absolute" ? 1 : -1;
-		var o = this.options, scroll = this.cssPosition == 'absolute' && !(this.scrollParent[0] != document && $.ui.contains(this.scrollParent[0], this.offsetParent[0])) ? this.offsetParent : this.scrollParent, scrollIsRootNode = (/(html|body)/i).test(scroll[0].tagName);
-
-		return {
-			top: (
-				pos.top																	// The absolute mouse position
-				+ this.offset.relative.top * mod										// Only for relative positioned nodes: Relative offset from element to offset parent
-				+ this.offset.parent.top * mod											// The offsetParent's offset without borders (offset + border)
-				- ($.browser.safari && $.browser.version < 526 && this.cssPosition == 'fixed' ? 0 : ( this.cssPosition == 'fixed' ? -this.scrollParent.scrollTop() : ( scrollIsRootNode ? 0 : scroll.scrollTop() ) ) * mod)
-			),
-			left: (
-				pos.left																// The absolute mouse position
-				+ this.offset.relative.left * mod										// Only for relative positioned nodes: Relative offset from element to offset parent
-				+ this.offset.parent.left * mod											// The offsetParent's offset without borders (offset + border)
-				- ($.browser.safari && $.browser.version < 526 && this.cssPosition == 'fixed' ? 0 : ( this.cssPosition == 'fixed' ? -this.scrollParent.scrollLeft() : scrollIsRootNode ? 0 : scroll.scrollLeft() ) * mod)
-			)
-		};
-
-	},
-
-	_generatePosition: function(event) {
-
-		var o = this.options, scroll = this.cssPosition == 'absolute' && !(this.scrollParent[0] != document && $.ui.contains(this.scrollParent[0], this.offsetParent[0])) ? this.offsetParent : this.scrollParent, scrollIsRootNode = (/(html|body)/i).test(scroll[0].tagName);
-		var pageX = event.pageX;
-		var pageY = event.pageY;
-
-		/*
-		 * - Position constraining -
-		 * Constrain the position to a mix of grid, containment.
-		 */
-
-		if(this.originalPosition) { //If we are not dragging yet, we won't check for options
-
-			if(this.containment) {
-				if(event.pageX - this.offset.click.left < this.containment[0]) pageX = this.containment[0] + this.offset.click.left;
-				if(event.pageY - this.offset.click.top < this.containment[1]) pageY = this.containment[1] + this.offset.click.top;
-				if(event.pageX - this.offset.click.left > this.containment[2]) pageX = this.containment[2] + this.offset.click.left;
-				if(event.pageY - this.offset.click.top > this.containment[3]) pageY = this.containment[3] + this.offset.click.top;
-			}
-
-			if(o.grid) {
-				var top = this.originalPageY + Math.round((pageY - this.originalPageY) / o.grid[1]) * o.grid[1];
-				pageY = this.containment ? (!(top - this.offset.click.top < this.containment[1] || top - this.offset.click.top > this.containment[3]) ? top : (!(top - this.offset.click.top < this.containment[1]) ? top - o.grid[1] : top + o.grid[1])) : top;
-
-				var left = this.originalPageX + Math.round((pageX - this.originalPageX) / o.grid[0]) * o.grid[0];
-				pageX = this.containment ? (!(left - this.offset.click.left < this.containment[0] || left - this.offset.click.left > this.containment[2]) ? left : (!(left - this.offset.click.left < this.containment[0]) ? left - o.grid[0] : left + o.grid[0])) : left;
-			}
-
-		}
-
-		return {
-			top: (
-				pageY																// The absolute mouse position
-				- this.offset.click.top													// Click offset (relative to the element)
-				- this.offset.relative.top												// Only for relative positioned nodes: Relative offset from element to offset parent
-				- this.offset.parent.top												// The offsetParent's offset without borders (offset + border)
-				+ ($.browser.safari && $.browser.version < 526 && this.cssPosition == 'fixed' ? 0 : ( this.cssPosition == 'fixed' ? -this.scrollParent.scrollTop() : ( scrollIsRootNode ? 0 : scroll.scrollTop() ) ))
-			),
-			left: (
-				pageX																// The absolute mouse position
-				- this.offset.click.left												// Click offset (relative to the element)
-				- this.offset.relative.left												// Only for relative positioned nodes: Relative offset from element to offset parent
-				- this.offset.parent.left												// The offsetParent's offset without borders (offset + border)
-				+ ($.browser.safari && $.browser.version < 526 && this.cssPosition == 'fixed' ? 0 : ( this.cssPosition == 'fixed' ? -this.scrollParent.scrollLeft() : scrollIsRootNode ? 0 : scroll.scrollLeft() ))
-			)
-		};
-
-	},
-
-	_clear: function() {
-		this.helper.removeClass("ui-draggable-dragging");
-		if(this.helper[0] != this.element[0] && !this.cancelHelperRemoval) this.helper.remove();
-		//if($.ui.ddmanager) $.ui.ddmanager.current = null;
-		this.helper = null;
-		this.cancelHelperRemoval = false;
-	},
-
-	// From now on bulk stuff - mainly helpers
-
-	_trigger: function(type, event, ui) {
-		ui = ui || this._uiHash();
-		$.ui.plugin.call(this, type, [event, ui]);
-		if(type == "drag") this.positionAbs = this._convertPositionTo("absolute"); //The absolute position has to be recalculated after plugins
-		return $.Widget.prototype._trigger.call(this, type, event, ui);
-	},
-
-	plugins: {},
-
-	_uiHash: function(event) {
-		return {
-			helper: this.helper,
-			position: this.position,
-			originalPosition: this.originalPosition,
-			offset: this.positionAbs
-		};
-	}
-
-});
-
-$.extend($.ui.draggable, {
-	version: "1.8.11"
-});
-
-$.ui.plugin.add("draggable", "connectToSortable", {
-	start: function(event, ui) {
-
-		var inst = $(this).data("draggable"), o = inst.options,
-			uiSortable = $.extend({}, ui, { item: inst.element });
-		inst.sortables = [];
-		$(o.connectToSortable).each(function() {
-			var sortable = $.data(this, 'sortable');
-			if (sortable && !sortable.options.disabled) {
-				inst.sortables.push({
-					instance: sortable,
-					shouldRevert: sortable.options.revert
-				});
-				sortable.refreshPositions();	// Call the sortable's refreshPositions at drag start to refresh the containerCache since the sortable container cache is used in drag and needs to be up to date (this will ensure it's initialised as well as being kept in step with any changes that might have happened on the page).
-				sortable._trigger("activate", event, uiSortable);
-			}
-		});
-
-	},
-	stop: function(event, ui) {
-
-		//If we are still over the sortable, we fake the stop event of the sortable, but also remove helper
-		var inst = $(this).data("draggable"),
-			uiSortable = $.extend({}, ui, { item: inst.element });
-
-		$.each(inst.sortables, function() {
-			if(this.instance.isOver) {
-
-				this.instance.isOver = 0;
-
-				inst.cancelHelperRemoval = true; //Don't remove the helper in the draggable instance
-				this.instance.cancelHelperRemoval = false; //Remove it in the sortable instance (so sortable plugins like revert still work)
-
-				//The sortable revert is supported, and we have to set a temporary dropped variable on the draggable to support revert: 'valid/invalid'
-				if(this.shouldRevert) this.instance.options.revert = true;
-
-				//Trigger the stop of the sortable
-				this.instance._mouseStop(event);
-
-				this.instance.options.helper = this.instance.options._helper;
-
-				//If the helper has been the original item, restore properties in the sortable
-				if(inst.options.helper == 'original')
-					this.instance.currentItem.css({ top: 'auto', left: 'auto' });
-
-			} else {
-				this.instance.cancelHelperRemoval = false; //Remove the helper in the sortable instance
-				this.instance._trigger("deactivate", event, uiSortable);
-			}
-
-		});
-
-	},
-	drag: function(event, ui) {
-
-		var inst = $(this).data("draggable"), self = this;
-
-		var checkPos = function(o) {
-			var dyClick = this.offset.click.top, dxClick = this.offset.click.left;
-			var helperTop = this.positionAbs.top, helperLeft = this.positionAbs.left;
-			var itemHeight = o.height, itemWidth = o.width;
-			var itemTop = o.top, itemLeft = o.left;
-
-			return $.ui.isOver(helperTop + dyClick, helperLeft + dxClick, itemTop, itemLeft, itemHeight, itemWidth);
-		};
-
-		$.each(inst.sortables, function(i) {
-			
-			//Copy over some variables to allow calling the sortable's native _intersectsWith
-			this.instance.positionAbs = inst.positionAbs;
-			this.instance.helperProportions = inst.helperProportions;
-			this.instance.offset.click = inst.offset.click;
-			
-			if(this.instance._intersectsWith(this.instance.containerCache)) {
-
-				//If it intersects, we use a little isOver variable and set it once, so our move-in stuff gets fired only once
-				if(!this.instance.isOver) {
-
-					this.instance.isOver = 1;
-					//Now we fake the start of dragging for the sortable instance,
-					//by cloning the list group item, appending it to the sortable and using it as inst.currentItem
-					//We can then fire the start event of the sortable with our passed browser event, and our own helper (so it doesn't create a new one)
-					this.instance.currentItem = $(self).clone().appendTo(this.instance.element).data("sortable-item", true);
-					this.instance.options._helper = this.instance.options.helper; //Store helper option to later restore it
-					this.instance.options.helper = function() { return ui.helper[0]; };
-
-					event.target = this.instance.currentItem[0];
-					this.instance._mouseCapture(event, true);
-					this.instance._mouseStart(event, true, true);
-
-					//Because the browser event is way off the new appended portlet, we modify a couple of variables to reflect the changes
-					this.instance.offset.click.top = inst.offset.click.top;
-					this.instance.offset.click.left = inst.offset.click.left;
-					this.instance.offset.parent.left -= inst.offset.parent.left - this.instance.offset.parent.left;
-					this.instance.offset.parent.top -= inst.offset.parent.top - this.instance.offset.parent.top;
-
-					inst._trigger("toSortable", event);
-					inst.dropped = this.instance.element; //draggable revert needs that
-					//hack so receive/update callbacks work (mostly)
-					inst.currentItem = inst.element;
-					this.instance.fromOutside = inst;
-
-				}
-
-				//Provided we did all the previous steps, we can fire the drag event of the sortable on every draggable drag, when it intersects with the sortable
-				if(this.instance.currentItem) this.instance._mouseDrag(event);
-
-			} else {
-
-				//If it doesn't intersect with the sortable, and it intersected before,
-				//we fake the drag stop of the sortable, but make sure it doesn't remove the helper by using cancelHelperRemoval
-				if(this.instance.isOver) {
-
-					this.instance.isOver = 0;
-					this.instance.cancelHelperRemoval = true;
-					
-					//Prevent reverting on this forced stop
-					this.instance.options.revert = false;
-					
-					// The out event needs to be triggered independently
-					this.instance._trigger('out', event, this.instance._uiHash(this.instance));
-					
-					this.instance._mouseStop(event, true);
-					this.instance.options.helper = this.instance.options._helper;
-
-					//Now we remove our currentItem, the list group clone again, and the placeholder, and animate the helper back to it's original size
-					this.instance.currentItem.remove();
-					if(this.instance.placeholder) this.instance.placeholder.remove();
-
-					inst._trigger("fromSortable", event);
-					inst.dropped = false; //draggable revert needs that
-				}
-
-			};
-
-		});
-
-	}
-});
-
-$.ui.plugin.add("draggable", "cursor", {
-	start: function(event, ui) {
-		var t = $('body'), o = $(this).data('draggable').options;
-		if (t.css("cursor")) o._cursor = t.css("cursor");
-		t.css("cursor", o.cursor);
-	},
-	stop: function(event, ui) {
-		var o = $(this).data('draggable').options;
-		if (o._cursor) $('body').css("cursor", o._cursor);
-	}
-});
-
-$.ui.plugin.add("draggable", "iframeFix", {
-	start: function(event, ui) {
-		var o = $(this).data('draggable').options;
-		$(o.iframeFix === true ? "iframe" : o.iframeFix).each(function() {
-			$('<div class="ui-draggable-iframeFix" style="background: #fff;"></div>')
-			.css({
-				width: this.offsetWidth+"px", height: this.offsetHeight+"px",
-				position: "absolute", opacity: "0.001", zIndex: 1000
-			})
-			.css($(this).offset())
-			.appendTo("body");
-		});
-	},
-	stop: function(event, ui) {
-		$("div.ui-draggable-iframeFix").each(function() { this.parentNode.removeChild(this); }); //Remove frame helpers
-	}
-});
-
-$.ui.plugin.add("draggable", "opacity", {
-	start: function(event, ui) {
-		var t = $(ui.helper), o = $(this).data('draggable').options;
-		if(t.css("opacity")) o._opacity = t.css("opacity");
-		t.css('opacity', o.opacity);
-	},
-	stop: function(event, ui) {
-		var o = $(this).data('draggable').options;
-		if(o._opacity) $(ui.helper).css('opacity', o._opacity);
-	}
-});
-
-$.ui.plugin.add("draggable", "scroll", {
-	start: function(event, ui) {
-		var i = $(this).data("draggable");
-		if(i.scrollParent[0] != document && i.scrollParent[0].tagName != 'HTML') i.overflowOffset = i.scrollParent.offset();
-	},
-	drag: function(event, ui) {
-
-		var i = $(this).data("draggable"), o = i.options, scrolled = false;
-
-		if(i.scrollParent[0] != document && i.scrollParent[0].tagName != 'HTML') {
-
-			if(!o.axis || o.axis != 'x') {
-				if((i.overflowOffset.top + i.scrollParent[0].offsetHeight) - event.pageY < o.scrollSensitivity)
-					i.scrollParent[0].scrollTop = scrolled = i.scrollParent[0].scrollTop + o.scrollSpeed;
-				else if(event.pageY - i.overflowOffset.top < o.scrollSensitivity)
-					i.scrollParent[0].scrollTop = scrolled = i.scrollParent[0].scrollTop - o.scrollSpeed;
-			}
-
-			if(!o.axis || o.axis != 'y') {
-				if((i.overflowOffset.left + i.scrollParent[0].offsetWidth) - event.pageX < o.scrollSensitivity)
-					i.scrollParent[0].scrollLeft = scrolled = i.scrollParent[0].scrollLeft + o.scrollSpeed;
-				else if(event.pageX - i.overflowOffset.left < o.scrollSensitivity)
-					i.scrollParent[0].scrollLeft = scrolled = i.scrollParent[0].scrollLeft - o.scrollSpeed;
-			}
-
-		} else {
-
-			if(!o.axis || o.axis != 'x') {
-				if(event.pageY - $(document).scrollTop() < o.scrollSensitivity)
-					scrolled = $(document).scrollTop($(document).scrollTop() - o.scrollSpeed);
-				else if($(window).height() - (event.pageY - $(document).scrollTop()) < o.scrollSensitivity)
-					scrolled = $(document).scrollTop($(document).scrollTop() + o.scrollSpeed);
-			}
-
-			if(!o.axis || o.axis != 'y') {
-				if(event.pageX - $(document).scrollLeft() < o.scrollSensitivity)
-					scrolled = $(document).scrollLeft($(document).scrollLeft() - o.scrollSpeed);
-				else if($(window).width() - (event.pageX - $(document).scrollLeft()) < o.scrollSensitivity)
-					scrolled = $(document).scrollLeft($(document).scrollLeft() + o.scrollSpeed);
-			}
-
-		}
-
-		if(scrolled !== false && $.ui.ddmanager && !o.dropBehaviour)
-			$.ui.ddmanager.prepareOffsets(i, event);
-
-	}
-});
-
-$.ui.plugin.add("draggable", "snap", {
-	start: function(event, ui) {
-
-		var i = $(this).data("draggable"), o = i.options;
-		i.snapElements = [];
-
-		$(o.snap.constructor != String ? ( o.snap.items || ':data(draggable)' ) : o.snap).each(function() {
-			var $t = $(this); var $o = $t.offset();
-			if(this != i.element[0]) i.snapElements.push({
-				item: this,
-				width: $t.outerWidth(), height: $t.outerHeight(),
-				top: $o.top, left: $o.left
-			});
-		});
-
-	},
-	drag: function(event, ui) {
-
-		var inst = $(this).data("draggable"), o = inst.options;
-		var d = o.snapTolerance;
-
-		var x1 = ui.offset.left, x2 = x1 + inst.helperProportions.width,
-			y1 = ui.offset.top, y2 = y1 + inst.helperProportions.height;
-
-		for (var i = inst.snapElements.length - 1; i >= 0; i--){
-
-			var l = inst.snapElements[i].left, r = l + inst.snapElements[i].width,
-				t = inst.snapElements[i].top, b = t + inst.snapElements[i].height;
-
-			//Yes, I know, this is insane ;)
-			if(!((l-d < x1 && x1 < r+d && t-d < y1 && y1 < b+d) || (l-d < x1 && x1 < r+d && t-d < y2 && y2 < b+d) || (l-d < x2 && x2 < r+d && t-d < y1 && y1 < b+d) || (l-d < x2 && x2 < r+d && t-d < y2 && y2 < b+d))) {
-				if(inst.snapElements[i].snapping) (inst.options.snap.release && inst.options.snap.release.call(inst.element, event, $.extend(inst._uiHash(), { snapItem: inst.snapElements[i].item })));
-				inst.snapElements[i].snapping = false;
-				continue;
-			}
-
-			if(o.snapMode != 'inner') {
-				var ts = Math.abs(t - y2) <= d;
-				var bs = Math.abs(b - y1) <= d;
-				var ls = Math.abs(l - x2) <= d;
-				var rs = Math.abs(r - x1) <= d;
-				if(ts) ui.position.top = inst._convertPositionTo("relative", { top: t - inst.helperProportions.height, left: 0 }).top - inst.margins.top;
-				if(bs) ui.position.top = inst._convertPositionTo("relative", { top: b, left: 0 }).top - inst.margins.top;
-				if(ls) ui.position.left = inst._convertPositionTo("relative", { top: 0, left: l - inst.helperProportions.width }).left - inst.margins.left;
-				if(rs) ui.position.left = inst._convertPositionTo("relative", { top: 0, left: r }).left - inst.margins.left;
-			}
-
-			var first = (ts || bs || ls || rs);
-
-			if(o.snapMode != 'outer') {
-				var ts = Math.abs(t - y1) <= d;
-				var bs = Math.abs(b - y2) <= d;
-				var ls = Math.abs(l - x1) <= d;
-				var rs = Math.abs(r - x2) <= d;
-				if(ts) ui.position.top = inst._convertPositionTo("relative", { top: t, left: 0 }).top - inst.margins.top;
-				if(bs) ui.position.top = inst._convertPositionTo("relative", { top: b - inst.helperProportions.height, left: 0 }).top - inst.margins.top;
-				if(ls) ui.position.left = inst._convertPositionTo("relative", { top: 0, left: l }).left - inst.margins.left;
-				if(rs) ui.position.left = inst._convertPositionTo("relative", { top: 0, left: r - inst.helperProportions.width }).left - inst.margins.left;
-			}
-
-			if(!inst.snapElements[i].snapping && (ts || bs || ls || rs || first))
-				(inst.options.snap.snap && inst.options.snap.snap.call(inst.element, event, $.extend(inst._uiHash(), { snapItem: inst.snapElements[i].item })));
-			inst.snapElements[i].snapping = (ts || bs || ls || rs || first);
-
-		};
-
-	}
-});
-
-$.ui.plugin.add("draggable", "stack", {
-	start: function(event, ui) {
-
-		var o = $(this).data("draggable").options;
-
-		var group = $.makeArray($(o.stack)).sort(function(a,b) {
-			return (parseInt($(a).css("zIndex"),10) || 0) - (parseInt($(b).css("zIndex"),10) || 0);
-		});
-		if (!group.length) { return; }
-		
-		var min = parseInt(group[0].style.zIndex) || 0;
-		$(group).each(function(i) {
-			this.style.zIndex = min + i;
-		});
-
-		this[0].style.zIndex = min + group.length;
-
-	}
-});
-
-$.ui.plugin.add("draggable", "zIndex", {
-	start: function(event, ui) {
-		var t = $(ui.helper), o = $(this).data("draggable").options;
-		if(t.css("zIndex")) o._zIndex = t.css("zIndex");
-		t.css('zIndex', o.zIndex);
-	},
-	stop: function(event, ui) {
-		var o = $(this).data("draggable").options;
-		if(o._zIndex) $(ui.helper).css('zIndex', o._zIndex);
-	}
-});
-
-})(jQuery);
-/*
- * jQuery UI Dialog 1.8.11
- *
- * Copyright 2011, AUTHORS.txt (http://jqueryui.com/about)
- * Dual licensed under the MIT or GPL Version 2 licenses.
- * http://jquery.org/license
- *
- * http://docs.jquery.com/UI/Dialog
- *
- * Depends:
- *	jquery.ui.core.js
- *	jquery.ui.widget.js
- *  jquery.ui.button.js
- *	jquery.ui.draggable.js
- *	jquery.ui.mouse.js
- *	jquery.ui.position.js
- *	jquery.ui.resizable.js
- */
-(function( $, undefined ) {
-
-var uiDialogClasses =
-		'ui-dialog ' +
-		'ui-widget ' +
-		'ui-widget-content ' +
-		'ui-corner-all ',
-	sizeRelatedOptions = {
-		buttons: true,
-		height: true,
-		maxHeight: true,
-		maxWidth: true,
-		minHeight: true,
-		minWidth: true,
-		width: true
-	},
-	resizableRelatedOptions = {
-		maxHeight: true,
-		maxWidth: true,
-		minHeight: true,
-		minWidth: true
-	};
-
-$.widget("ui.dialog", {
-	options: {
-		autoOpen: true,
-		buttons: {},
-		closeOnEscape: true,
-		closeText: 'close',
-		dialogClass: '',
-		draggable: true,
-		hide: null,
-		height: 'auto',
-		maxHeight: false,
-		maxWidth: false,
-		minHeight: 150,
-		minWidth: 150,
-		modal: false,
-		position: {
-			my: 'center',
-			at: 'center',
-			collision: 'fit',
-			// ensure that the titlebar is never outside the document
-			using: function(pos) {
-				var topOffset = $(this).css(pos).offset().top;
-				if (topOffset < 0) {
-					$(this).css('top', pos.top - topOffset);
-				}
-			}
-		},
-		resizable: true,
-		show: null,
-		stack: true,
-		title: '',
-		width: 300,
-		zIndex: 1000
-	},
-
-	_create: function() {
-		this.originalTitle = this.element.attr('title');
-		// #5742 - .attr() might return a DOMElement
-		if ( typeof this.originalTitle !== "string" ) {
-			this.originalTitle = "";
-		}
-
-		this.options.title = this.options.title || this.originalTitle;
-		var self = this,
-			options = self.options,
-
-			title = options.title || '&#160;',
-			titleId = $.ui.dialog.getTitleId(self.element),
-
-			uiDialog = (self.uiDialog = $('<div></div>'))
-				.appendTo(document.body)
-				.hide()
-				.addClass(uiDialogClasses + options.dialogClass)
-				.css({
-					zIndex: options.zIndex
-				})
-				// setting tabIndex makes the div focusable
-				// setting outline to 0 prevents a border on focus in Mozilla
-				.attr('tabIndex', -1).css('outline', 0).keydown(function(event) {
-					if (options.closeOnEscape && event.keyCode &&
-						event.keyCode === $.ui.keyCode.ESCAPE) {
-						
-						self.close(event);
-						event.preventDefault();
-					}
-				})
-				.attr({
-					role: 'dialog',
-					'aria-labelledby': titleId
-				})
-				.mousedown(function(event) {
-					self.moveToTop(false, event);
-				}),
-
-			uiDialogContent = self.element
-				.show()
-				.removeAttr('title')
-				.addClass(
-					'ui-dialog-content ' +
-					'ui-widget-content')
-				.appendTo(uiDialog),
-
-			uiDialogTitlebar = (self.uiDialogTitlebar = $('<div></div>'))
-				.addClass(
-					'ui-dialog-titlebar ' +
-					'ui-widget-header ' +
-					'ui-corner-all ' +
-					'ui-helper-clearfix'
-				)
-				.prependTo(uiDialog),
-
-			uiDialogTitlebarClose = $('<a href="#"></a>')
-				.addClass(
-					'ui-dialog-titlebar-close ' +
-					'ui-corner-all'
-				)
-				.attr('role', 'button')
-				.hover(
-					function() {
-						uiDialogTitlebarClose.addClass('ui-state-hover');
-					},
-					function() {
-						uiDialogTitlebarClose.removeClass('ui-state-hover');
-					}
-				)
-				.focus(function() {
-					uiDialogTitlebarClose.addClass('ui-state-focus');
-				})
-				.blur(function() {
-					uiDialogTitlebarClose.removeClass('ui-state-focus');
-				})
-				.click(function(event) {
-					self.close(event);
-					return false;
-				})
-				.appendTo(uiDialogTitlebar),
-
-			uiDialogTitlebarCloseText = (self.uiDialogTitlebarCloseText = $('<span></span>'))
-				.addClass(
-					'ui-icon ' +
-					'ui-icon-closethick'
-				)
-				.text(options.closeText)
-				.appendTo(uiDialogTitlebarClose),
-
-			uiDialogTitle = $('<span></span>')
-				.addClass('ui-dialog-title')
-				.attr('id', titleId)
-				.html(title)
-				.prependTo(uiDialogTitlebar);
-
-		//handling of deprecated beforeclose (vs beforeClose) option
-		//Ticket #4669 http://dev.jqueryui.com/ticket/4669
-		//TODO: remove in 1.9pre
-		if ($.isFunction(options.beforeclose) && !$.isFunction(options.beforeClose)) {
-			options.beforeClose = options.beforeclose;
-		}
-
-		uiDialogTitlebar.find("*").add(uiDialogTitlebar).disableSelection();
-
-		if (options.draggable && $.fn.draggable) {
-			self._makeDraggable();
-		}
-		if (options.resizable && $.fn.resizable) {
-			self._makeResizable();
-		}
-
-		self._createButtons(options.buttons);
-		self._isOpen = false;
-
-		if ($.fn.bgiframe) {
-			uiDialog.bgiframe();
-		}
-	},
-
-	_init: function() {
-		if ( this.options.autoOpen ) {
-			this.open();
-		}
-	},
-
-	destroy: function() {
-		var self = this;
-		
-		if (self.overlay) {
-			self.overlay.destroy();
-		}
-		self.uiDialog.hide();
-		self.element
-			.unbind('.dialog')
-			.removeData('dialog')
-			.removeClass('ui-dialog-content ui-widget-content')
-			.hide().appendTo('body');
-		self.uiDialog.remove();
-
-		if (self.originalTitle) {
-			self.element.attr('title', self.originalTitle);
-		}
-
-		return self;
-	},
-
-	widget: function() {
-		return this.uiDialog;
-	},
-
-	close: function(event) {
-		var self = this,
-			maxZ, thisZ;
-		
-		if (false === self._trigger('beforeClose', event)) {
-			return;
-		}
-
-		if (self.overlay) {
-			self.overlay.destroy();
-		}
-		self.uiDialog.unbind('keypress.ui-dialog');
-
-		self._isOpen = false;
-
-		if (self.options.hide) {
-			self.uiDialog.hide(self.options.hide, function() {
-				self._trigger('close', event);
-			});
-		} else {
-			self.uiDialog.hide();
-			self._trigger('close', event);
-		}
-
-		$.ui.dialog.overlay.resize();
-
-		// adjust the maxZ to allow other modal dialogs to continue to work (see #4309)
-		if (self.options.modal) {
-			maxZ = 0;
-			$('.ui-dialog').each(function() {
-				if (this !== self.uiDialog[0]) {
-					thisZ = $(this).css('z-index');
-					if(!isNaN(thisZ)) {
-						maxZ = Math.max(maxZ, thisZ);
-					}
-				}
-			});
-			$.ui.dialog.maxZ = maxZ;
-		}
-
-		return self;
-	},
-
-	isOpen: function() {
-		return this._isOpen;
-	},
-
-	// the force parameter allows us to move modal dialogs to their correct
-	// position on open
-	moveToTop: function(force, event) {
-		var self = this,
-			options = self.options,
-			saveScroll;
-
-		if ((options.modal && !force) ||
-			(!options.stack && !options.modal)) {
-			return self._trigger('focus', event);
-		}
-
-		if (options.zIndex > $.ui.dialog.maxZ) {
-			$.ui.dialog.maxZ = options.zIndex;
-		}
-		if (self.overlay) {
-			$.ui.dialog.maxZ += 1;
-			self.overlay.$el.css('z-index', $.ui.dialog.overlay.maxZ = $.ui.dialog.maxZ);
-		}
-
-		//Save and then restore scroll since Opera 9.5+ resets when parent z-Index is changed.
-		//  http://ui.jquery.com/bugs/ticket/3193
-		saveScroll = { scrollTop: self.element.attr('scrollTop'), scrollLeft: self.element.attr('scrollLeft') };
-		$.ui.dialog.maxZ += 1;
-		self.uiDialog.css('z-index', $.ui.dialog.maxZ);
-		self.element.attr(saveScroll);
-		self._trigger('focus', event);
-
-		return self;
-	},
-
-	open: function() {
-		if (this._isOpen) { return; }
-
-		var self = this,
-			options = self.options,
-			uiDialog = self.uiDialog;
-
-		self.overlay = options.modal ? new $.ui.dialog.overlay(self) : null;
-		self._size();
-		self._position(options.position);
-		uiDialog.show(options.show);
-		self.moveToTop(true);
-
-		// prevent tabbing out of modal dialogs
-		if (options.modal) {
-			uiDialog.bind('keypress.ui-dialog', function(event) {
-				if (event.keyCode !== $.ui.keyCode.TAB) {
-					return;
-				}
-
-				var tabbables = $(':tabbable', this),
-					first = tabbables.filter(':first'),
-					last  = tabbables.filter(':last');
-
-				if (event.target === last[0] && !event.shiftKey) {
-					first.focus(1);
-					return false;
-				} else if (event.target === first[0] && event.shiftKey) {
-					last.focus(1);
-					return false;
-				}
-			});
-		}
-
-		// set focus to the first tabbable element in the content area or the first button
-		// if there are no tabbable elements, set focus on the dialog itself
-		$(self.element.find(':tabbable').get().concat(
-			uiDialog.find('.ui-dialog-buttonpane :tabbable').get().concat(
-				uiDialog.get()))).eq(0).focus();
-
-		self._isOpen = true;
-		self._trigger('open');
-
-		return self;
-	},
-
-	_createButtons: function(buttons) {
-		var self = this,
-			hasButtons = false,
-			uiDialogButtonPane = $('<div></div>')
-				.addClass(
-					'ui-dialog-buttonpane ' +
-					'ui-widget-content ' +
-					'ui-helper-clearfix'
-				),
-			uiButtonSet = $( "<div></div>" )
-				.addClass( "ui-dialog-buttonset" )
-				.appendTo( uiDialogButtonPane );
-
-		// if we already have a button pane, remove it
-		self.uiDialog.find('.ui-dialog-buttonpane').remove();
-
-		if (typeof buttons === 'object' && buttons !== null) {
-			$.each(buttons, function() {
-				return !(hasButtons = true);
-			});
-		}
-		if (hasButtons) {
-			$.each(buttons, function(name, props) {
-				props = $.isFunction( props ) ?
-					{ click: props, text: name } :
-					props;
-				var button = $('<button type="button"></button>')
-					.attr( props, true )
-					.unbind('click')
-					.click(function() {
-						props.click.apply(self.element[0], arguments);
-					})
-					.appendTo(uiButtonSet);
-				if ($.fn.button) {
-					button.button();
-				}
-			});
-			uiDialogButtonPane.appendTo(self.uiDialog);
-		}
-	},
-
-	_makeDraggable: function() {
-		var self = this,
-			options = self.options,
-			doc = $(document),
-			heightBeforeDrag;
-
-		function filteredUi(ui) {
-			return {
-				position: ui.position,
-				offset: ui.offset
-			};
-		}
-
-		self.uiDialog.draggable({
-			cancel: '.ui-dialog-content, .ui-dialog-titlebar-close',
-			handle: '.ui-dialog-titlebar',
-			containment: 'document',
-			start: function(event, ui) {
-				heightBeforeDrag = options.height === "auto" ? "auto" : $(this).height();
-				$(this).height($(this).height()).addClass("ui-dialog-dragging");
-				self._trigger('dragStart', event, filteredUi(ui));
-			},
-			drag: function(event, ui) {
-				self._trigger('drag', event, filteredUi(ui));
-			},
-			stop: function(event, ui) {
-				options.position = [ui.position.left - doc.scrollLeft(),
-					ui.position.top - doc.scrollTop()];
-				$(this).removeClass("ui-dialog-dragging").height(heightBeforeDrag);
-				self._trigger('dragStop', event, filteredUi(ui));
-				$.ui.dialog.overlay.resize();
-			}
-		});
-	},
-
-	_makeResizable: function(handles) {
-		handles = (handles === undefined ? this.options.resizable : handles);
-		var self = this,
-			options = self.options,
-			// .ui-resizable has position: relative defined in the stylesheet
-			// but dialogs have to use absolute or fixed positioning
-			position = self.uiDialog.css('position'),
-			resizeHandles = (typeof handles === 'string' ?
-				handles	:
-				'n,e,s,w,se,sw,ne,nw'
-			);
-
-		function filteredUi(ui) {
-			return {
-				originalPosition: ui.originalPosition,
-				originalSize: ui.originalSize,
-				position: ui.position,
-				size: ui.size
-			};
-		}
-
-		self.uiDialog.resizable({
-			cancel: '.ui-dialog-content',
-			containment: 'document',
-			alsoResize: self.element,
-			maxWidth: options.maxWidth,
-			maxHeight: options.maxHeight,
-			minWidth: options.minWidth,
-			minHeight: self._minHeight(),
-			handles: resizeHandles,
-			start: function(event, ui) {
-				$(this).addClass("ui-dialog-resizing");
-				self._trigger('resizeStart', event, filteredUi(ui));
-			},
-			resize: function(event, ui) {
-				self._trigger('resize', event, filteredUi(ui));
-			},
-			stop: function(event, ui) {
-				$(this).removeClass("ui-dialog-resizing");
-				options.height = $(this).height();
-				options.width = $(this).width();
-				self._trigger('resizeStop', event, filteredUi(ui));
-				$.ui.dialog.overlay.resize();
-			}
-		})
-		.css('position', position)
-		.find('.ui-resizable-se').addClass('ui-icon ui-icon-grip-diagonal-se');
-	},
-
-	_minHeight: function() {
-		var options = this.options;
-
-		if (options.height === 'auto') {
-			return options.minHeight;
-		} else {
-			return Math.min(options.minHeight, options.height);
-		}
-	},
-
-	_position: function(position) {
-		var myAt = [],
-			offset = [0, 0],
-			isVisible;
-
-		if (position) {
-			// deep extending converts arrays to objects in jQuery <= 1.3.2 :-(
-	//		if (typeof position == 'string' || $.isArray(position)) {
-	//			myAt = $.isArray(position) ? position : position.split(' ');
-
-			if (typeof position === 'string' || (typeof position === 'object' && '0' in position)) {
-				myAt = position.split ? position.split(' ') : [position[0], position[1]];
-				if (myAt.length === 1) {
-					myAt[1] = myAt[0];
-				}
-
-				$.each(['left', 'top'], function(i, offsetPosition) {
-					if (+myAt[i] === myAt[i]) {
-						offset[i] = myAt[i];
-						myAt[i] = offsetPosition;
-					}
-				});
-
-				position = {
-					my: myAt.join(" "),
-					at: myAt.join(" "),
-					offset: offset.join(" ")
-				};
-			} 
-
-			position = $.extend({}, $.ui.dialog.prototype.options.position, position);
-		} else {
-			position = $.ui.dialog.prototype.options.position;
-		}
-
-		// need to show the dialog to get the actual offset in the position plugin
-		isVisible = this.uiDialog.is(':visible');
-		if (!isVisible) {
-			this.uiDialog.show();
-		}
-		this.uiDialog
-			// workaround for jQuery bug #5781 http://dev.jquery.com/ticket/5781
-			.css({ top: 0, left: 0 })
-			.position($.extend({ of: window }, position));
-		if (!isVisible) {
-			this.uiDialog.hide();
-		}
-	},
-
-	_setOptions: function( options ) {
-		var self = this,
-			resizableOptions = {},
-			resize = false;
-
-		$.each( options, function( key, value ) {
-			self._setOption( key, value );
-			
-			if ( key in sizeRelatedOptions ) {
-				resize = true;
-			}
-			if ( key in resizableRelatedOptions ) {
-				resizableOptions[ key ] = value;
-			}
-		});
-
-		if ( resize ) {
-			this._size();
-		}
-		if ( this.uiDialog.is( ":data(resizable)" ) ) {
-			this.uiDialog.resizable( "option", resizableOptions );
-		}
-	},
-
-	_setOption: function(key, value){
-		var self = this,
-			uiDialog = self.uiDialog;
-
-		switch (key) {
-			//handling of deprecated beforeclose (vs beforeClose) option
-			//Ticket #4669 http://dev.jqueryui.com/ticket/4669
-			//TODO: remove in 1.9pre
-			case "beforeclose":
-				key = "beforeClose";
-				break;
-			case "buttons":
-				self._createButtons(value);
-				break;
-			case "closeText":
-				// ensure that we always pass a string
-				self.uiDialogTitlebarCloseText.text("" + value);
-				break;
-			case "dialogClass":
-				uiDialog
-					.removeClass(self.options.dialogClass)
-					.addClass(uiDialogClasses + value);
-				break;
-			case "disabled":
-				if (value) {
-					uiDialog.addClass('ui-dialog-disabled');
-				} else {
-					uiDialog.removeClass('ui-dialog-disabled');
-				}
-				break;
-			case "draggable":
-				var isDraggable = uiDialog.is( ":data(draggable)" );
-				if ( isDraggable && !value ) {
-					uiDialog.draggable( "destroy" );
-				}
-				
-				if ( !isDraggable && value ) {
-					self._makeDraggable();
-				}
-				break;
-			case "position":
-				self._position(value);
-				break;
-			case "resizable":
-				// currently resizable, becoming non-resizable
-				var isResizable = uiDialog.is( ":data(resizable)" );
-				if (isResizable && !value) {
-					uiDialog.resizable('destroy');
-				}
-
-				// currently resizable, changing handles
-				if (isResizable && typeof value === 'string') {
-					uiDialog.resizable('option', 'handles', value);
-				}
-
-				// currently non-resizable, becoming resizable
-				if (!isResizable && value !== false) {
-					self._makeResizable(value);
-				}
-				break;
-			case "title":
-				// convert whatever was passed in o a string, for html() to not throw up
-				$(".ui-dialog-title", self.uiDialogTitlebar).html("" + (value || '&#160;'));
-				break;
-		}
-
-		$.Widget.prototype._setOption.apply(self, arguments);
-	},
-
-	_size: function() {
-		/* If the user has resized the dialog, the .ui-dialog and .ui-dialog-content
-		 * divs will both have width and height set, so we need to reset them
-		 */
-		var options = this.options,
-			nonContentHeight,
-			minContentHeight,
-			isVisible = this.uiDialog.is( ":visible" );
-
-		// reset content sizing
-		this.element.show().css({
-			width: 'auto',
-			minHeight: 0,
-			height: 0
-		});
-
-		if (options.minWidth > options.width) {
-			options.width = options.minWidth;
-		}
-
-		// reset wrapper sizing
-		// determine the height of all the non-content elements
-		nonContentHeight = this.uiDialog.css({
-				height: 'auto',
-				width: options.width
-			})
-			.height();
-		minContentHeight = Math.max( 0, options.minHeight - nonContentHeight );
-		
-		if ( options.height === "auto" ) {
-			// only needed for IE6 support
-			if ( $.support.minHeight ) {
-				this.element.css({
-					minHeight: minContentHeight,
-					height: "auto"
-				});
-			} else {
-				this.uiDialog.show();
-				var autoHeight = this.element.css( "height", "auto" ).height();
-				if ( !isVisible ) {
-					this.uiDialog.hide();
-				}
-				this.element.height( Math.max( autoHeight, minContentHeight ) );
-			}
-		} else {
-			this.element.height( Math.max( options.height - nonContentHeight, 0 ) );
-		}
-
-		if (this.uiDialog.is(':data(resizable)')) {
-			this.uiDialog.resizable('option', 'minHeight', this._minHeight());
-		}
-	}
-});
-
-$.extend($.ui.dialog, {
-	version: "1.8.11",
-
-	uuid: 0,
-	maxZ: 0,
-
-	getTitleId: function($el) {
-		var id = $el.attr('id');
-		if (!id) {
-			this.uuid += 1;
-			id = this.uuid;
-		}
-		return 'ui-dialog-title-' + id;
-	},
-
-	overlay: function(dialog) {
-		this.$el = $.ui.dialog.overlay.create(dialog);
-	}
-});
-
-$.extend($.ui.dialog.overlay, {
-	instances: [],
-	// reuse old instances due to IE memory leak with alpha transparency (see #5185)
-	oldInstances: [],
-	maxZ: 0,
-	events: $.map('focus,mousedown,mouseup,keydown,keypress,click'.split(','),
-		function(event) { return event + '.dialog-overlay'; }).join(' '),
-	create: function(dialog) {
-		if (this.instances.length === 0) {
-			// prevent use of anchors and inputs
-			// we use a setTimeout in case the overlay is created from an
-			// event that we're going to be cancelling (see #2804)
-			setTimeout(function() {
-				// handle $(el).dialog().dialog('close') (see #4065)
-				if ($.ui.dialog.overlay.instances.length) {
-					$(document).bind($.ui.dialog.overlay.events, function(event) {
-						// stop events if the z-index of the target is < the z-index of the overlay
-						// we cannot return true when we don't want to cancel the event (#3523)
-						if ($(event.target).zIndex() < $.ui.dialog.overlay.maxZ) {
-							return false;
-						}
-					});
-				}
-			}, 1);
-
-			// allow closing by pressing the escape key
-			$(document).bind('keydown.dialog-overlay', function(event) {
-				if (dialog.options.closeOnEscape && event.keyCode &&
-					event.keyCode === $.ui.keyCode.ESCAPE) {
-					
-					dialog.close(event);
-					event.preventDefault();
-				}
-			});
-
-			// handle window resize
-			$(window).bind('resize.dialog-overlay', $.ui.dialog.overlay.resize);
-		}
-
-		var $el = (this.oldInstances.pop() || $('<div></div>').addClass('ui-widget-overlay'))
-			.appendTo(document.body)
-			.css({
-				width: this.width(),
-				height: this.height()
-			});
-
-		if ($.fn.bgiframe) {
-			$el.bgiframe();
-		}
-
-		this.instances.push($el);
-		return $el;
-	},
-
-	destroy: function($el) {
-		var indexOf = $.inArray($el, this.instances);
-		if (indexOf != -1){
-			this.oldInstances.push(this.instances.splice(indexOf, 1)[0]);
-		}
-
-		if (this.instances.length === 0) {
-			$([document, window]).unbind('.dialog-overlay');
-		}
-
-		$el.remove();
-		
-		// adjust the maxZ to allow other modal dialogs to continue to work (see #4309)
-		var maxZ = 0;
-		$.each(this.instances, function() {
-			maxZ = Math.max(maxZ, this.css('z-index'));
-		});
-		this.maxZ = maxZ;
-	},
-
-	height: function() {
-		var scrollHeight,
-			offsetHeight;
-		// handle IE 6
-		if ($.browser.msie && $.browser.version < 7) {
-			scrollHeight = Math.max(
-				document.documentElement.scrollHeight,
-				document.body.scrollHeight
-			);
-			offsetHeight = Math.max(
-				document.documentElement.offsetHeight,
-				document.body.offsetHeight
-			);
-
-			if (scrollHeight < offsetHeight) {
-				return $(window).height() + 'px';
-			} else {
-				return scrollHeight + 'px';
-			}
-		// handle "good" browsers
-		} else {
-			return $(document).height() + 'px';
-		}
-	},
-
-	width: function() {
-		var scrollWidth,
-			offsetWidth;
-		// handle IE 6
-		if ($.browser.msie && $.browser.version < 7) {
-			scrollWidth = Math.max(
-				document.documentElement.scrollWidth,
-				document.body.scrollWidth
-			);
-			offsetWidth = Math.max(
-				document.documentElement.offsetWidth,
-				document.body.offsetWidth
-			);
-
-			if (scrollWidth < offsetWidth) {
-				return $(window).width() + 'px';
-			} else {
-				return scrollWidth + 'px';
-			}
-		// handle "good" browsers
-		} else {
-			return $(document).width() + 'px';
-		}
-	},
-
-	resize: function() {
-		/* If the dialog is draggable and the user drags it past the
-		 * right edge of the window, the document becomes wider so we
-		 * need to stretch the overlay. If the user then drags the
-		 * dialog back to the left, the document will become narrower,
-		 * so we need to shrink the overlay to the appropriate size.
-		 * This is handled by shrinking the overlay before setting it
-		 * to the full document size.
-		 */
-		var $overlays = $([]);
-		$.each($.ui.dialog.overlay.instances, function() {
-			$overlays = $overlays.add(this);
-		});
-
-		$overlays.css({
-			width: 0,
-			height: 0
-		}).css({
-			width: $.ui.dialog.overlay.width(),
-			height: $.ui.dialog.overlay.height()
-		});
-	}
-});
-
-$.extend($.ui.dialog.overlay.prototype, {
-	destroy: function() {
-		$.ui.dialog.overlay.destroy(this.$el);
-	}
-});
-
-}(jQuery));
-/*
- * jQuery UI Slider 1.8.11
- *
- * Copyright 2011, AUTHORS.txt (http://jqueryui.com/about)
- * Dual licensed under the MIT or GPL Version 2 licenses.
- * http://jquery.org/license
- *
- * http://docs.jquery.com/UI/Slider
- *
- * Depends:
- *	jquery.ui.core.js
- *	jquery.ui.mouse.js
- *	jquery.ui.widget.js
- */
-(function( $, undefined ) {
-
-// number of pages in a slider
-// (how many times can you page up/down to go through the whole range)
-var numPages = 5;
-
-$.widget( "ui.slider", $.ui.mouse, {
-
-	widgetEventPrefix: "slide",
-
-	options: {
-		animate: false,
-		distance: 0,
-		max: 100,
-		min: 0,
-		orientation: "horizontal",
-		range: false,
-		step: 1,
-		value: 0,
-		values: null
-	},
-
-	_create: function() {
-		var self = this,
-			o = this.options;
-
-		this._keySliding = false;
-		this._mouseSliding = false;
-		this._animateOff = true;
-		this._handleIndex = null;
-		this._detectOrientation();
-		this._mouseInit();
-
-		this.element
-			.addClass( "ui-slider" +
-				" ui-slider-" + this.orientation +
-				" ui-widget" +
-				" ui-widget-content" +
-				" ui-corner-all" );
-		
-		if ( o.disabled ) {
-			this.element.addClass( "ui-slider-disabled ui-disabled" );
-		}
-
-		this.range = $([]);
-
-		if ( o.range ) {
-			if ( o.range === true ) {
-				this.range = $( "<div></div>" );
-				if ( !o.values ) {
-					o.values = [ this._valueMin(), this._valueMin() ];
-				}
-				if ( o.values.length && o.values.length !== 2 ) {
-					o.values = [ o.values[0], o.values[0] ];
-				}
-			} else {
-				this.range = $( "<div></div>" );
-			}
-
-			this.range
-				.appendTo( this.element )
-				.addClass( "ui-slider-range" );
-
-			if ( o.range === "min" || o.range === "max" ) {
-				this.range.addClass( "ui-slider-range-" + o.range );
-			}
-
-			// note: this isn't the most fittingly semantic framework class for this element,
-			// but worked best visually with a variety of themes
-			this.range.addClass( "ui-widget-header" );
-		}
-
-		if ( $( ".ui-slider-handle", this.element ).length === 0 ) {
-			$( "<a href='#'></a>" )
-				.appendTo( this.element )
-				.addClass( "ui-slider-handle" );
-		}
-
-		if ( o.values && o.values.length ) {
-			while ( $(".ui-slider-handle", this.element).length < o.values.length ) {
-				$( "<a href='#'></a>" )
-					.appendTo( this.element )
-					.addClass( "ui-slider-handle" );
-			}
-		}
-
-		this.handles = $( ".ui-slider-handle", this.element )
-			.addClass( "ui-state-default" +
-				" ui-corner-all" );
-
-		this.handle = this.handles.eq( 0 );
-
-		this.handles.add( this.range ).filter( "a" )
-			.click(function( event ) {
-				event.preventDefault();
-			})
-			.hover(function() {
-				if ( !o.disabled ) {
-					$( this ).addClass( "ui-state-hover" );
-				}
-			}, function() {
-				$( this ).removeClass( "ui-state-hover" );
-			})
-			.focus(function() {
-				if ( !o.disabled ) {
-					$( ".ui-slider .ui-state-focus" ).removeClass( "ui-state-focus" );
-					$( this ).addClass( "ui-state-focus" );
-				} else {
-					$( this ).blur();
-				}
-			})
-			.blur(function() {
-				$( this ).removeClass( "ui-state-focus" );
-			});
-
-		this.handles.each(function( i ) {
-			$( this ).data( "index.ui-slider-handle", i );
-		});
-
-		this.handles
-			.keydown(function( event ) {
-				var ret = true,
-					index = $( this ).data( "index.ui-slider-handle" ),
-					allowed,
-					curVal,
-					newVal,
-					step;
-	
-				if ( self.options.disabled ) {
-					return;
-				}
-	
-				switch ( event.keyCode ) {
-					case $.ui.keyCode.HOME:
-					case $.ui.keyCode.END:
-					case $.ui.keyCode.PAGE_UP:
-					case $.ui.keyCode.PAGE_DOWN:
-					case $.ui.keyCode.UP:
-					case $.ui.keyCode.RIGHT:
-					case $.ui.keyCode.DOWN:
-					case $.ui.keyCode.LEFT:
-						ret = false;
-						if ( !self._keySliding ) {
-							self._keySliding = true;
-							$( this ).addClass( "ui-state-active" );
-							allowed = self._start( event, index );
-							if ( allowed === false ) {
-								return;
-							}
-						}
-						break;
-				}
-	
-				step = self.options.step;
-				if ( self.options.values && self.options.values.length ) {
-					curVal = newVal = self.values( index );
-				} else {
-					curVal = newVal = self.value();
-				}
-	
-				switch ( event.keyCode ) {
-					case $.ui.keyCode.HOME:
-						newVal = self._valueMin();
-						break;
-					case $.ui.keyCode.END:
-						newVal = self._valueMax();
-						break;
-					case $.ui.keyCode.PAGE_UP:
-						newVal = self._trimAlignValue( curVal + ( (self._valueMax() - self._valueMin()) / numPages ) );
-						break;
-					case $.ui.keyCode.PAGE_DOWN:
-						newVal = self._trimAlignValue( curVal - ( (self._valueMax() - self._valueMin()) / numPages ) );
-						break;
-					case $.ui.keyCode.UP:
-					case $.ui.keyCode.RIGHT:
-						if ( curVal === self._valueMax() ) {
-							return;
-						}
-						newVal = self._trimAlignValue( curVal + step );
-						break;
-					case $.ui.keyCode.DOWN:
-					case $.ui.keyCode.LEFT:
-						if ( curVal === self._valueMin() ) {
-							return;
-						}
-						newVal = self._trimAlignValue( curVal - step );
-						break;
-				}
-	
-				self._slide( event, index, newVal );
-	
-				return ret;
-	
-			})
-			.keyup(function( event ) {
-				var index = $( this ).data( "index.ui-slider-handle" );
-	
-				if ( self._keySliding ) {
-					self._keySliding = false;
-					self._stop( event, index );
-					self._change( event, index );
-					$( this ).removeClass( "ui-state-active" );
-				}
-	
-			});
-
-		this._refreshValue();
-
-		this._animateOff = false;
-	},
-
-	destroy: function() {
-		this.handles.remove();
-		this.range.remove();
-
-		this.element
-			.removeClass( "ui-slider" +
-				" ui-slider-horizontal" +
-				" ui-slider-vertical" +
-				" ui-slider-disabled" +
-				" ui-widget" +
-				" ui-widget-content" +
-				" ui-corner-all" )
-			.removeData( "slider" )
-			.unbind( ".slider" );
-
-		this._mouseDestroy();
-
-		return this;
-	},
-
-	_mouseCapture: function( event ) {
-		var o = this.options,
-			position,
-			normValue,
-			distance,
-			closestHandle,
-			self,
-			index,
-			allowed,
-			offset,
-			mouseOverHandle;
-
-		if ( o.disabled ) {
-			return false;
-		}
-
-		this.elementSize = {
-			width: this.element.outerWidth(),
-			height: this.element.outerHeight()
-		};
-		this.elementOffset = this.element.offset();
-
-		position = { x: event.pageX, y: event.pageY };
-		normValue = this._normValueFromMouse( position );
-		distance = this._valueMax() - this._valueMin() + 1;
-		self = this;
-		this.handles.each(function( i ) {
-			var thisDistance = Math.abs( normValue - self.values(i) );
-			if ( distance > thisDistance ) {
-				distance = thisDistance;
-				closestHandle = $( this );
-				index = i;
-			}
-		});
-
-		// workaround for bug #3736 (if both handles of a range are at 0,
-		// the first is always used as the one with least distance,
-		// and moving it is obviously prevented by preventing negative ranges)
-		if( o.range === true && this.values(1) === o.min ) {
-			index += 1;
-			closestHandle = $( this.handles[index] );
-		}
-
-		allowed = this._start( event, index );
-		if ( allowed === false ) {
-			return false;
-		}
-		this._mouseSliding = true;
-
-		self._handleIndex = index;
-
-		closestHandle
-			.addClass( "ui-state-active" )
-			.focus();
-		
-		offset = closestHandle.offset();
-		mouseOverHandle = !$( event.target ).parents().andSelf().is( ".ui-slider-handle" );
-		this._clickOffset = mouseOverHandle ? { left: 0, top: 0 } : {
-			left: event.pageX - offset.left - ( closestHandle.width() / 2 ),
-			top: event.pageY - offset.top -
-				( closestHandle.height() / 2 ) -
-				( parseInt( closestHandle.css("borderTopWidth"), 10 ) || 0 ) -
-				( parseInt( closestHandle.css("borderBottomWidth"), 10 ) || 0) +
-				( parseInt( closestHandle.css("marginTop"), 10 ) || 0)
-		};
-
-		if ( !this.handles.hasClass( "ui-state-hover" ) ) {
-			this._slide( event, index, normValue );
-		}
-		this._animateOff = true;
-		return true;
-	},
-
-	_mouseStart: function( event ) {
-		return true;
-	},
-
-	_mouseDrag: function( event ) {
-		var position = { x: event.pageX, y: event.pageY },
-			normValue = this._normValueFromMouse( position );
-		
-		this._slide( event, this._handleIndex, normValue );
-
-		return false;
-	},
-
-	_mouseStop: function( event ) {
-		this.handles.removeClass( "ui-state-active" );
-		this._mouseSliding = false;
-
-		this._stop( event, this._handleIndex );
-		this._change( event, this._handleIndex );
-
-		this._handleIndex = null;
-		this._clickOffset = null;
-		this._animateOff = false;
-
-		return false;
-	},
-	
-	_detectOrientation: function() {
-		this.orientation = ( this.options.orientation === "vertical" ) ? "vertical" : "horizontal";
-	},
-
-	_normValueFromMouse: function( position ) {
-		var pixelTotal,
-			pixelMouse,
-			percentMouse,
-			valueTotal,
-			valueMouse;
-
-		if ( this.orientation === "horizontal" ) {
-			pixelTotal = this.elementSize.width;
-			pixelMouse = position.x - this.elementOffset.left - ( this._clickOffset ? this._clickOffset.left : 0 );
-		} else {
-			pixelTotal = this.elementSize.height;
-			pixelMouse = position.y - this.elementOffset.top - ( this._clickOffset ? this._clickOffset.top : 0 );
-		}
-
-		percentMouse = ( pixelMouse / pixelTotal );
-		if ( percentMouse > 1 ) {
-			percentMouse = 1;
-		}
-		if ( percentMouse < 0 ) {
-			percentMouse = 0;
-		}
-		if ( this.orientation === "vertical" ) {
-			percentMouse = 1 - percentMouse;
-		}
-
-		valueTotal = this._valueMax() - this._valueMin();
-		valueMouse = this._valueMin() + percentMouse * valueTotal;
-
-		return this._trimAlignValue( valueMouse );
-	},
-
-	_start: function( event, index ) {
-		var uiHash = {
-			handle: this.handles[ index ],
-			value: this.value()
-		};
-		if ( this.options.values && this.options.values.length ) {
-			uiHash.value = this.values( index );
-			uiHash.values = this.values();
-		}
-		return this._trigger( "start", event, uiHash );
-	},
-
-	_slide: function( event, index, newVal ) {
-		var otherVal,
-			newValues,
-			allowed;
-
-		if ( this.options.values && this.options.values.length ) {
-			otherVal = this.values( index ? 0 : 1 );
-
-			if ( ( this.options.values.length === 2 && this.options.range === true ) && 
-					( ( index === 0 && newVal > otherVal) || ( index === 1 && newVal < otherVal ) )
-				) {
-				newVal = otherVal;
-			}
-
-			if ( newVal !== this.values( index ) ) {
-				newValues = this.values();
-				newValues[ index ] = newVal;
-				// A slide can be canceled by returning false from the slide callback
-				allowed = this._trigger( "slide", event, {
-					handle: this.handles[ index ],
-					value: newVal,
-					values: newValues
-				} );
-				otherVal = this.values( index ? 0 : 1 );
-				if ( allowed !== false ) {
-					this.values( index, newVal, true );
-				}
-			}
-		} else {
-			if ( newVal !== this.value() ) {
-				// A slide can be canceled by returning false from the slide callback
-				allowed = this._trigger( "slide", event, {
-					handle: this.handles[ index ],
-					value: newVal
-				} );
-				if ( allowed !== false ) {
-					this.value( newVal );
-				}
-			}
-		}
-	},
-
-	_stop: function( event, index ) {
-		var uiHash = {
-			handle: this.handles[ index ],
-			value: this.value()
-		};
-		if ( this.options.values && this.options.values.length ) {
-			uiHash.value = this.values( index );
-			uiHash.values = this.values();
-		}
-
-		this._trigger( "stop", event, uiHash );
-	},
-
-	_change: function( event, index ) {
-		if ( !this._keySliding && !this._mouseSliding ) {
-			var uiHash = {
-				handle: this.handles[ index ],
-				value: this.value()
-			};
-			if ( this.options.values && this.options.values.length ) {
-				uiHash.value = this.values( index );
-				uiHash.values = this.values();
-			}
-
-			this._trigger( "change", event, uiHash );
-		}
-	},
-
-	value: function( newValue ) {
-		if ( arguments.length ) {
-			this.options.value = this._trimAlignValue( newValue );
-			this._refreshValue();
-			this._change( null, 0 );
-		}
-
-		return this._value();
-	},
-
-	values: function( index, newValue ) {
-		var vals,
-			newValues,
-			i;
-
-		if ( arguments.length > 1 ) {
-			this.options.values[ index ] = this._trimAlignValue( newValue );
-			this._refreshValue();
-			this._change( null, index );
-		}
-
-		if ( arguments.length ) {
-			if ( $.isArray( arguments[ 0 ] ) ) {
-				vals = this.options.values;
-				newValues = arguments[ 0 ];
-				for ( i = 0; i < vals.length; i += 1 ) {
-					vals[ i ] = this._trimAlignValue( newValues[ i ] );
-					this._change( null, i );
-				}
-				this._refreshValue();
-			} else {
-				if ( this.options.values && this.options.values.length ) {
-					return this._values( index );
-				} else {
-					return this.value();
-				}
-			}
-		} else {
-			return this._values();
-		}
-	},
-
-	_setOption: function( key, value ) {
-		var i,
-			valsLength = 0;
-
-		if ( $.isArray( this.options.values ) ) {
-			valsLength = this.options.values.length;
-		}
-
-		$.Widget.prototype._setOption.apply( this, arguments );
-
-		switch ( key ) {
-			case "disabled":
-				if ( value ) {
-					this.handles.filter( ".ui-state-focus" ).blur();
-					this.handles.removeClass( "ui-state-hover" );
-					this.handles.attr( "disabled", "disabled" );
-					this.element.addClass( "ui-disabled" );
-				} else {
-					this.handles.removeAttr( "disabled" );
-					this.element.removeClass( "ui-disabled" );
-				}
-				break;
-			case "orientation":
-				this._detectOrientation();
-				this.element
-					.removeClass( "ui-slider-horizontal ui-slider-vertical" )
-					.addClass( "ui-slider-" + this.orientation );
-				this._refreshValue();
-				break;
-			case "value":
-				this._animateOff = true;
-				this._refreshValue();
-				this._change( null, 0 );
-				this._animateOff = false;
-				break;
-			case "values":
-				this._animateOff = true;
-				this._refreshValue();
-				for ( i = 0; i < valsLength; i += 1 ) {
-					this._change( null, i );
-				}
-				this._animateOff = false;
-				break;
-		}
-	},
-
-	//internal value getter
-	// _value() returns value trimmed by min and max, aligned by step
-	_value: function() {
-		var val = this.options.value;
-		val = this._trimAlignValue( val );
-
-		return val;
-	},
-
-	//internal values getter
-	// _values() returns array of values trimmed by min and max, aligned by step
-	// _values( index ) returns single value trimmed by min and max, aligned by step
-	_values: function( index ) {
-		var val,
-			vals,
-			i;
-
-		if ( arguments.length ) {
-			val = this.options.values[ index ];
-			val = this._trimAlignValue( val );
-
-			return val;
-		} else {
-			// .slice() creates a copy of the array
-			// this copy gets trimmed by min and max and then returned
-			vals = this.options.values.slice();
-			for ( i = 0; i < vals.length; i+= 1) {
-				vals[ i ] = this._trimAlignValue( vals[ i ] );
-			}
-
-			return vals;
-		}
-	},
-	
-	// returns the step-aligned value that val is closest to, between (inclusive) min and max
-	_trimAlignValue: function( val ) {
-		if ( val <= this._valueMin() ) {
-			return this._valueMin();
-		}
-		if ( val >= this._valueMax() ) {
-			return this._valueMax();
-		}
-		var step = ( this.options.step > 0 ) ? this.options.step : 1,
-			valModStep = (val - this._valueMin()) % step;
-			alignValue = val - valModStep;
-
-		if ( Math.abs(valModStep) * 2 >= step ) {
-			alignValue += ( valModStep > 0 ) ? step : ( -step );
-		}
-
-		// Since JavaScript has problems with large floats, round
-		// the final value to 5 digits after the decimal point (see #4124)
-		return parseFloat( alignValue.toFixed(5) );
-	},
-
-	_valueMin: function() {
-		return this.options.min;
-	},
-
-	_valueMax: function() {
-		return this.options.max;
-	},
-	
-	_refreshValue: function() {
-		var oRange = this.options.range,
-			o = this.options,
-			self = this,
-			animate = ( !this._animateOff ) ? o.animate : false,
-			valPercent,
-			_set = {},
-			lastValPercent,
-			value,
-			valueMin,
-			valueMax;
-
-		if ( this.options.values && this.options.values.length ) {
-			this.handles.each(function( i, j ) {
-				valPercent = ( self.values(i) - self._valueMin() ) / ( self._valueMax() - self._valueMin() ) * 100;
-				_set[ self.orientation === "horizontal" ? "left" : "bottom" ] = valPercent + "%";
-				$( this ).stop( 1, 1 )[ animate ? "animate" : "css" ]( _set, o.animate );
-				if ( self.options.range === true ) {
-					if ( self.orientation === "horizontal" ) {
-						if ( i === 0 ) {
-							self.range.stop( 1, 1 )[ animate ? "animate" : "css" ]( { left: valPercent + "%" }, o.animate );
-						}
-						if ( i === 1 ) {
-							self.range[ animate ? "animate" : "css" ]( { width: ( valPercent - lastValPercent ) + "%" }, { queue: false, duration: o.animate } );
-						}
-					} else {
-						if ( i === 0 ) {
-							self.range.stop( 1, 1 )[ animate ? "animate" : "css" ]( { bottom: ( valPercent ) + "%" }, o.animate );
-						}
-						if ( i === 1 ) {
-							self.range[ animate ? "animate" : "css" ]( { height: ( valPercent - lastValPercent ) + "%" }, { queue: false, duration: o.animate } );
-						}
-					}
-				}
-				lastValPercent = valPercent;
-			});
-		} else {
-			value = this.value();
-			valueMin = this._valueMin();
-			valueMax = this._valueMax();
-			valPercent = ( valueMax !== valueMin ) ?
-					( value - valueMin ) / ( valueMax - valueMin ) * 100 :
-					0;
-			_set[ self.orientation === "horizontal" ? "left" : "bottom" ] = valPercent + "%";
-			this.handle.stop( 1, 1 )[ animate ? "animate" : "css" ]( _set, o.animate );
-
-			if ( oRange === "min" && this.orientation === "horizontal" ) {
-				this.range.stop( 1, 1 )[ animate ? "animate" : "css" ]( { width: valPercent + "%" }, o.animate );
-			}
-			if ( oRange === "max" && this.orientation === "horizontal" ) {
-				this.range[ animate ? "animate" : "css" ]( { width: ( 100 - valPercent ) + "%" }, { queue: false, duration: o.animate } );
-			}
-			if ( oRange === "min" && this.orientation === "vertical" ) {
-				this.range.stop( 1, 1 )[ animate ? "animate" : "css" ]( { height: valPercent + "%" }, o.animate );
-			}
-			if ( oRange === "max" && this.orientation === "vertical" ) {
-				this.range[ animate ? "animate" : "css" ]( { height: ( 100 - valPercent ) + "%" }, { queue: false, duration: o.animate } );
-			}
-		}
-	}
-
-});
-
-$.extend( $.ui.slider, {
-	version: "1.8.11"
-});
-
-}(jQuery));
-/*
-    json2.js
-    2007-11-06
-
-    Public Domain
-
-    No warranty expressed or implied. Use at your own risk.
-
-    See http://www.JSON.org/js.html
-
-    This file creates a global JSON object containing two methods:
-
-        JSON.stringify(value, whitelist)
-            value       any JavaScript value, usually an object or array.
-
-            whitelist   an optional that determines how object values are
-                        stringified.
-
-            This method produces a JSON text from a JavaScript value.
-            There are three possible ways to stringify an object, depending
-            on the optional whitelist parameter.
-
-            If an object has a toJSON method, then the toJSON() method will be
-            called. The value returned from the toJSON method will be
-            stringified.
-
-            Otherwise, if the optional whitelist parameter is an array, then
-            the elements of the array will be used to select members of the
-            object for stringification.
-
-            Otherwise, if there is no whitelist parameter, then all of the
-            members of the object will be stringified.
-
-            Values that do not have JSON representaions, such as undefined or
-            functions, will not be serialized. Such values in objects will be
-            dropped, in arrays will be replaced with null. JSON.stringify()
-            returns undefined. Dates will be stringified as quoted ISO dates.
-
-            Example:
-
-            var text = JSON.stringify(['e', {pluribus: 'unum'}]);
-            // text is '["e",{"pluribus":"unum"}]'
-
-        JSON.parse(text, filter)
-            This method parses a JSON text to produce an object or
-            array. It can throw a SyntaxError exception.
-
-            The optional filter parameter is a function that can filter and
-            transform the results. It receives each of the keys and values, and
-            its return value is used instead of the original value. If it
-            returns what it received, then structure is not modified. If it
-            returns undefined then the member is deleted.
-
-            Example:
-
-            // Parse the text. If a key contains the string 'date' then
-            // convert the value to a date.
-
-            myData = JSON.parse(text, function (key, value) {
-                return key.indexOf('date') >= 0 ? new Date(value) : value;
-            });
-
-    This is a reference implementation. You are free to copy, modify, or
-    redistribute.
-
-    Use your own copy. It is extremely unwise to load third party
-    code into your pages.
-*/
-
-/*jslint evil: true */
-/*extern JSON */
-
-if (!this.JSON) {
-
-    JSON = function () {
-
-        function f(n) {    // Format integers to have at least two digits.
-            return n < 10 ? '0' + n : n;
-        }
-
-        Date.prototype.toJSON = function () {
-
-// Eventually, this method will be based on the date.toISOString method.
-
-            return this.getUTCFullYear()   + '-' +
-                 f(this.getUTCMonth() + 1) + '-' +
-                 f(this.getUTCDate())      + 'T' +
-                 f(this.getUTCHours())     + ':' +
-                 f(this.getUTCMinutes())   + ':' +
-                 f(this.getUTCSeconds())   + 'Z';
-        };
-
-
-        var m = {    // table of character substitutions
-            '\b': '\\b',
-            '\t': '\\t',
-            '\n': '\\n',
-            '\f': '\\f',
-            '\r': '\\r',
-            '"' : '\\"',
-            '\\': '\\\\'
-        };
-
-        function stringify(value, whitelist) {
-            var a,          // The array holding the partial texts.
-                i,          // The loop counter.
-                k,          // The member key.
-                l,          // Length.
-                r = /["\\\x00-\x1f\x7f-\x9f]/g,
-                v;          // The member value.
-
-            switch (typeof value) {
-            case 'string':
-
-// If the string contains no control characters, no quote characters, and no
-// backslash characters, then we can safely slap some quotes around it.
-// Otherwise we must also replace the offending characters with safe sequences.
-
-                return r.test(value) ?
-                    '"' + value.replace(r, function (a) {
-                        var c = m[a];
-                        if (c) {
-                            return c;
-                        }
-                        c = a.charCodeAt();
-                        return '\\u00' + Math.floor(c / 16).toString(16) +
-                                                   (c % 16).toString(16);
-                    }) + '"' :
-                    '"' + value + '"';
-
-            case 'number':
-
-// JSON numbers must be finite. Encode non-finite numbers as null.
-
-                return isFinite(value) ? String(value) : 'null';
-
-            case 'boolean':
-            case 'null':
-                return String(value);
-
-            case 'object':
-
-// Due to a specification blunder in ECMAScript,
-// typeof null is 'object', so watch out for that case.
-
-                if (!value) {
-                    return 'null';
-                }
-
-// If the object has a toJSON method, call it, and stringify the result.
-
-                if (typeof value.toJSON === 'function') {
-                    return stringify(value.toJSON());
-                }
-                a = [];
-                if (typeof value.length === 'number' &&
-                        !(value.propertyIsEnumerable('length'))) {
-
-// The object is an array. Stringify every element. Use null as a placeholder
-// for non-JSON values.
-
-                    l = value.length;
-                    for (i = 0; i < l; i += 1) {
-                        a.push(stringify(value[i], whitelist) || 'null');
-                    }
-
-// Join all of the elements together and wrap them in brackets.
-
-                    return '[' + a.join(',') + ']';
-                }
-                if (whitelist) {
-
-// If a whitelist (array of keys) is provided, use it to select the components
-// of the object.
-
-                    l = whitelist.length;
-                    for (i = 0; i < l; i += 1) {
-                        k = whitelist[i];
-                        if (typeof k === 'string') {
-                            v = stringify(value[k], whitelist);
-                            if (v) {
-                                a.push(stringify(k) + ':' + v);
-                            }
-                        }
-                    }
-                } else {
-
-// Otherwise, iterate through all of the keys in the object.
-
-                    for (k in value) {
-                        if (typeof k === 'string') {
-                            v = stringify(value[k], whitelist);
-                            if (v) {
-                                a.push(stringify(k) + ':' + v);
-                            }
-                        }
-                    }
-                }
-
-// Join all of the member texts together and wrap them in braces.
-
-                return '{' + a.join(',') + '}';
-            }
-        }
-
-        return {
-            stringify: stringify,
-            parse: function (text, filter) {
-                var j;
-
-                function walk(k, v) {
-                    var i, n;
-                    if (v && typeof v === 'object') {
-                        for (i in v) {
-                            if (Object.prototype.hasOwnProperty.apply(v, [i])) {
-                                n = walk(i, v[i]);
-                                if (n !== undefined) {
-                                    v[i] = n;
-                                }
-                            }
-                        }
-                    }
-                    return filter(k, v);
-                }
-
-
-// Parsing happens in three stages. In the first stage, we run the text against
-// regular expressions that look for non-JSON patterns. We are especially
-// concerned with '()' and 'new' because they can cause invocation, and '='
-// because it can cause mutation. But just to be safe, we want to reject all
-// unexpected forms.
-
-// We split the first stage into 4 regexp operations in order to work around
-// crippling inefficiencies in IE's and Safari's regexp engines. First we
-// replace all backslash pairs with '@' (a non-JSON character). Second, we
-// replace all simple value tokens with ']' characters. Third, we delete all
-// open brackets that follow a colon or comma or that begin the text. Finally,
-// we look to see that the remaining characters are only whitespace or ']' or
-// ',' or ':' or '{' or '}'. If that is so, then the text is safe for eval.
-
-                if (/^[\],:{}\s]*$/.test(text.replace(/\\./g, '@').
-replace(/"[^"\\\n\r]*"|true|false|null|-?\d+(?:\.\d*)?(:?[eE][+\-]?\d+)?/g, ']').
-replace(/(?:^|:|,)(?:\s*\[)+/g, ''))) {
-
-// In the second stage we use the eval function to compile the text into a
-// JavaScript structure. The '{' operator is subject to a syntactic ambiguity
-// in JavaScript: it can begin a block or an object literal. We wrap the text
-// in parens to eliminate the ambiguity.
-
-                    j = eval('(' + text + ')');
-
-// In the optional third stage, we recursively walk the new structure, passing
-// each name/value pair to a filter function for possible transformation.
-
-                    return typeof filter === 'function' ? walk('', j) : j;
-                }
-
-// If the text is not JSON parseable, then a SyntaxError is thrown.
-
-                throw new SyntaxError('parseJSON');
-            }
-        };
-    }();
-}
-/*
-Copyright 2008-2010 University of Cambridge
-Copyright 2008-2010 University of Toronto
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global fluid_1_4:true, jQuery*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {
-    /** 
-     * Returns the absolute position of a supplied DOM node in pixels.
-     * Implementation taken from quirksmode http://www.quirksmode.org/js/findpos.html
-     */
-    fluid.dom.computeAbsolutePosition = function (element) {
-        var curleft = 0, curtop = 0;
-        if (element.offsetParent) {
-            do {
-                curleft += element.offsetLeft;
-                curtop += element.offsetTop;
-                element = element.offsetParent;
-            } while (element);
-            return [curleft, curtop];
-        }
-    };
-    
-    /** 
-     * Cleanse the children of a DOM node by removing all <script> tags.
-     * This is necessary to prevent the possibility that these blocks are
-     * reevaluated if the node were reattached to the document. 
-     */
-    fluid.dom.cleanseScripts = function (element) {
-        var cleansed = $.data(element, fluid.dom.cleanseScripts.MARKER);
-        if (!cleansed) {
-            fluid.dom.iterateDom(element, function (node) {
-                return node.tagName.toLowerCase() === "script"? "delete" : null;
-            });
-            $.data(element, fluid.dom.cleanseScripts.MARKER, true);
-        }
-    };  
-    fluid.dom.cleanseScripts.MARKER = "fluid-scripts-cleansed";
-
-    /**
-     * Inserts newChild as the next sibling of refChild.
-     * @param {Object} newChild
-     * @param {Object} refChild
-     */
-    fluid.dom.insertAfter = function (newChild, refChild) {
-        var nextSib = refChild.nextSibling;
-        if (!nextSib) {
-            refChild.parentNode.appendChild(newChild);
-        }
-        else {
-            refChild.parentNode.insertBefore(newChild, nextSib);
-        }
-    };
-    
-    // The following two functions taken from http://developer.mozilla.org/En/Whitespace_in_the_DOM
-    /**
-     * Determine whether a node's text content is entirely whitespace.
-     *
-     * @param node  A node implementing the |CharacterData| interface (i.e.,
-     *              a |Text|, |Comment|, or |CDATASection| node
-     * @return     True if all of the text content of |nod| is whitespace,
-     *             otherwise false.
-     */
-    fluid.dom.isWhitespaceNode = function (node) {
-       // Use ECMA-262 Edition 3 String and RegExp features
-        return !(/[^\t\n\r ]/.test(node.data));
-    };
-    
-    /**
-     * Determine if a node should be ignored by the iterator functions.
-     *
-     * @param nod  An object implementing the DOM1 |Node| interface.
-     * @return     true if the node is:
-     *                1) A |Text| node that is all whitespace
-     *                2) A |Comment| node
-     *             and otherwise false.
-     */
-    fluid.dom.isIgnorableNode = function (node) {
-        return (node.nodeType === 8) || // A comment node
-         ((node.nodeType === 3) && fluid.dom.isWhitespaceNode(node)); // a text node, all ws
-    };
-
-})(jQuery, fluid_1_4);
-/*
-Copyright 2008-2010 University of Cambridge
-Copyright 2008-2010 University of Toronto
-Copyright 2010 OCAD University
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global window, fluid_1_4:true, jQuery*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {
-    
-    fluid.orientation = {
-        HORIZONTAL: 4,
-        VERTICAL: 1
-    };
-    
-    fluid.rectSides = {
-        // agree with fluid.orientation
-        4: ["left", "right"],
-        1: ["top", "bottom"],
-        // agree with fluid.direction
-        8: "top",
-        12: "bottom",
-        2: "left",
-        3: "right"
-    };
-    
-    /**
-     * This is the position, relative to a given drop target, that a dragged item should be dropped.
-     */
-    fluid.position = {
-        BEFORE: -1,
-        AFTER: 1,
-        INSIDE: 2,
-        REPLACE: 3
-    };
-    
-    /**
-     * For incrementing/decrementing a count or index, or moving in a rectilinear direction.
-     */
-    fluid.direction = {
-        NEXT: 1,
-        PREVIOUS: -1,
-        UP: 8,
-        DOWN: 12,
-        LEFT: 2,
-        RIGHT: 3
-    };
-    
-    fluid.directionSign = function (direction) {
-        return direction === fluid.direction.UP || direction === fluid.direction.LEFT ? 
-             fluid.direction.PREVIOUS : fluid.direction.NEXT;
-    };
-    
-    fluid.directionAxis = function (direction) {
-        return direction === fluid.direction.LEFT || direction === fluid.direction.RIGHT ?
-            0 : 1; 
-    };
-    
-    fluid.directionOrientation = function (direction) {
-        return fluid.directionAxis(direction) ? fluid.orientation.VERTICAL : fluid.orientation.HORIZONTAL;
-    };
-    
-    fluid.keycodeDirection = {
-        up: fluid.direction.UP,
-        down: fluid.direction.DOWN,
-        left: fluid.direction.LEFT,
-        right: fluid.direction.RIGHT
-    };
-    
-    // moves a single node in the DOM to a new position relative to another
-    fluid.moveDom = function (source, target, position) {
-        source = fluid.unwrap(source);
-        target = fluid.unwrap(target);
-        
-        var scan;
-        // fluid.log("moveDom source " + fluid.dumpEl(source) + " target " + fluid.dumpEl(target) + " position " + position);     
-        if (position === fluid.position.INSIDE) {
-            target.appendChild(source);
-        }
-        else if (position === fluid.position.BEFORE) {
-            for (scan = target.previousSibling; ; scan = scan.previousSibling) {
-                if (!scan || !fluid.dom.isIgnorableNode(scan)) {
-                    if (scan !== source) {
-                        fluid.dom.cleanseScripts(source);
-                        target.parentNode.insertBefore(source, target);    
-                    }
-                    break;
-                }
-            }
-        }
-        else if (position === fluid.position.AFTER) {
-            for (scan = target.nextSibling; ; scan = scan.nextSibling) {
-                if (!scan || !fluid.dom.isIgnorableNode(scan)) {
-                    if (scan !== source) {
-                        fluid.dom.cleanseScripts(source);
-                        fluid.dom.insertAfter(source, target);
-                    }
-                    break;
-                }
-            }
-        }
-        else {
-            fluid.fail("Unrecognised position supplied to fluid.moveDom: " + position);
-        }
-    };
-    
-    // unsupported, NON-API function
-    fluid.normalisePosition = function (position, samespan, targeti, sourcei) {
-        // convert a REPLACE into a primitive BEFORE/AFTER
-        if (position === fluid.position.REPLACE) {
-            position = samespan && targeti >= sourcei ? fluid.position.AFTER: fluid.position.BEFORE;
-        }
-        return position;
-    };
-    
-    fluid.permuteDom = function (element, target, position, sourceelements, targetelements) {
-        element = fluid.unwrap(element);
-        target = fluid.unwrap(target);
-        var sourcei = $.inArray(element, sourceelements);
-        if (sourcei === -1) {
-            fluid.fail("Error in permuteDom: source element " + fluid.dumpEl(element) + 
-                " not found in source list " + fluid.dumpEl(sourceelements));
-        }
-        var targeti = $.inArray(target, targetelements);
-        if (targeti === -1) {
-            fluid.fail("Error in permuteDom: target element " + fluid.dumpEl(target) + 
-                " not found in source list " + fluid.dumpEl(targetelements));
-        }
-        var samespan = sourceelements === targetelements;
-        position = fluid.normalisePosition(position, samespan, targeti, sourcei);
-
-        //fluid.log("permuteDom sourcei " + sourcei + " targeti " + targeti);
-        // cache the old neighbourhood of the element for the final move
-        var oldn = {};
-        oldn[fluid.position.AFTER] = element.nextSibling;
-        oldn[fluid.position.BEFORE] = element.previousSibling;
-        fluid.moveDom(sourceelements[sourcei], targetelements[targeti], position);
-        
-        // perform the leftward-moving, AFTER shift
-        var frontlimit = samespan ? targeti - 1: sourceelements.length - 2;
-        var i;
-        if (position === fluid.position.BEFORE && samespan) { 
-            // we cannot do skip processing if the element was "fused against the grain" 
-            frontlimit--;
-        }
-        if (!samespan || targeti > sourcei) {
-            for (i = frontlimit; i > sourcei; -- i) {
-                fluid.moveDom(sourceelements[i + 1], sourceelements[i], fluid.position.AFTER);
-            }
-            if (sourcei + 1 < sourceelements.length) {
-                fluid.moveDom(sourceelements[sourcei + 1], oldn[fluid.position.AFTER], fluid.position.BEFORE);
-            }
-        }
-        // perform the rightward-moving, BEFORE shift
-        var backlimit = samespan ? sourcei - 1: targetelements.length - 1;
-        if (position === fluid.position.AFTER) { 
-            // we cannot do skip processing if the element was "fused against the grain" 
-            targeti++;
-        }
-        if (!samespan || targeti < sourcei) {
-            for (i = targeti; i < backlimit; ++ i) {
-                fluid.moveDom(targetelements[i], targetelements[i + 1], fluid.position.BEFORE);
-            }
-            if (backlimit >= 0 && backlimit < targetelements.length - 1) {
-                fluid.moveDom(targetelements[backlimit], oldn[fluid.position.BEFORE], fluid.position.AFTER);
-            }                
-        }
-
-    };
-  
-    var curCss = function (a, name) {
-        return window.getComputedStyle ? window.getComputedStyle(a, null).getPropertyValue(name) : 
-          a.currentStyle[name];
-    };
-    
-    var isAttached = function (node) {
-        while (node && node.nodeName) {
-            if (node.nodeName === "BODY") {
-                return true;
-            }
-            node = node.parentNode;
-        }
-        return false;
-    };
-    
-    var generalHidden = function (a) {
-        return "hidden" === a.type || curCss(a, "display") === "none" || curCss(a, "visibility") === "hidden" || !isAttached(a);
-    };
-    
-
-    var computeGeometry = function (element, orientation, disposition) {
-        var elem = {};
-        elem.element = element;
-        elem.orientation = orientation;
-        if (disposition === fluid.position.INSIDE) {
-            elem.position = disposition;
-        }
-        if (generalHidden(element)) {
-            elem.clazz = "hidden";
-        }
-        var pos = fluid.dom.computeAbsolutePosition(element) || [0, 0];
-        var width = element.offsetWidth;
-        var height = element.offsetHeight;
-        elem.rect = {left: pos[0], top: pos[1]};
-        elem.rect.right = pos[0] + width;
-        elem.rect.bottom = pos[1] + height;
-        return elem;
-    };
-    
-    // A "suitable large" value for the sentinel blocks at the ends of spans
-    var SENTINEL_DIMENSION = 10000;
-
-    function dumprect(rect) {
-        return "Rect top: " + rect.top +
-                 " left: " + rect.left + 
-               " bottom: " + rect.bottom +
-                " right: " + rect.right;
-    }
-
-    function dumpelem(cacheelem) {
-        if (!cacheelem || !cacheelem.rect) {
-            return "null";
-        } else {
-            return dumprect(cacheelem.rect) + " position: " +
-            cacheelem.position +
-            " for " +
-            fluid.dumpEl(cacheelem.element);
-        }
-    }
-    
-   
-    // unsupported, NON-API function
-    fluid.dropManager = function () { 
-        var targets = [];
-        var cache = {};
-        var that = {};        
-        
-        var lastClosest;              
-        var lastGeometry;
-        var displacementX, displacementY;
-        
-        that.updateGeometry = function (geometricInfo) {
-            lastGeometry = geometricInfo;
-            targets = [];
-            cache = {};
-            var mapper = geometricInfo.elementMapper;
-            for (var i = 0; i < geometricInfo.extents.length; ++ i) {
-                var thisInfo = geometricInfo.extents[i];
-                var orientation = thisInfo.orientation;
-                var sides = fluid.rectSides[orientation];
-                
-                var processElement = function (element, sentB, sentF, disposition, j) {
-                    var cacheelem = computeGeometry(element, orientation, disposition);
-                    cacheelem.owner = thisInfo;
-                    if (cacheelem.clazz !== "hidden" && mapper) {
-                        cacheelem.clazz = mapper(element);
-                    }
-                    cache[fluid.dropManager.cacheKey(element)] = cacheelem;
-                    var backClass = fluid.dropManager.getRelativeClass(thisInfo.elements, j, fluid.position.BEFORE, cacheelem.clazz, mapper); 
-                    var frontClass = fluid.dropManager.getRelativeClass(thisInfo.elements, j, fluid.position.AFTER, cacheelem.clazz, mapper); 
-                    if (disposition === fluid.position.INSIDE) {
-                        targets[targets.length] = cacheelem;
-                    }
-                    else {
-                        fluid.dropManager.splitElement(targets, sides, cacheelem, disposition, backClass, frontClass);
-                    }
-                    // deal with sentinel blocks by creating near-copies of the end elements
-                    if (sentB && geometricInfo.sentinelize) {
-                        fluid.dropManager.sentinelizeElement(targets, sides, cacheelem, 1, disposition, backClass);
-                    }
-                    if (sentF && geometricInfo.sentinelize) {
-                        fluid.dropManager.sentinelizeElement(targets, sides, cacheelem, 0, disposition, frontClass);
-                    }
-                    //fluid.log(dumpelem(cacheelem));
-                    return cacheelem;
-                };
-                
-                var allHidden = true;
-                for (var j = 0; j < thisInfo.elements.length; ++ j) {
-                    var element = thisInfo.elements[j];
-                    var cacheelem = processElement(element, j === 0, j === thisInfo.elements.length - 1, 
-                            fluid.position.INTERLEAVED, j);
-                    if (cacheelem.clazz !== "hidden") {
-                        allHidden = false;
-                    }
-                }
-                if (allHidden && thisInfo.parentElement) {
-                    processElement(thisInfo.parentElement, true, true, 
-                            fluid.position.INSIDE);
-                }
-            }   
-        };
-        
-        that.startDrag = function (event, handlePos, handleWidth, handleHeight) {
-            var handleMidX = handlePos[0] + handleWidth / 2;
-            var handleMidY = handlePos[1] + handleHeight / 2;
-            var dX = handleMidX - event.pageX;
-            var dY = handleMidY - event.pageY;
-            that.updateGeometry(lastGeometry);
-            lastClosest = null;
-            displacementX = dX;
-            displacementY = dY;
-            $("body").bind("mousemove.fluid-dropManager", that.mouseMove);
-        };
-        
-        that.lastPosition = function () {
-            return lastClosest;
-        };
-        
-        that.endDrag = function () {
-            $("body").unbind("mousemove.fluid-dropManager");
-        };
-        
-        that.mouseMove = function (evt) {
-            var x = evt.pageX + displacementX;
-            var y = evt.pageY + displacementY;
-            //fluid.log("Mouse x " + x + " y " + y );
-            
-            var closestTarget = that.closestTarget(x, y, lastClosest);
-            if (closestTarget && closestTarget !== fluid.dropManager.NO_CHANGE) {
-                lastClosest = closestTarget;
-              
-                that.dropChangeFirer.fire(closestTarget);
-            }
-        };
-        
-        that.dropChangeFirer = fluid.event.getEventFirer();
-        
-        var blankHolder = {
-            element: null
-        };
-        
-        that.closestTarget = function (x, y, lastClosest) {
-            var mindistance = Number.MAX_VALUE;
-            var minelem = blankHolder;
-            var minlockeddistance = Number.MAX_VALUE;
-            var minlockedelem = blankHolder;
-            for (var i = 0; i < targets.length; ++ i) {
-                var cacheelem = targets[i];
-                if (cacheelem.clazz === "hidden") {
-                    continue;
-                }
-                var distance = fluid.geom.minPointRectangle(x, y, cacheelem.rect);
-                if (cacheelem.clazz === "locked") {
-                    if (distance < minlockeddistance) {
-                        minlockeddistance = distance;
-                        minlockedelem = cacheelem;
-                    }
-                } else {
-                    if (distance < mindistance) {
-                        mindistance = distance;
-                        minelem = cacheelem;
-                    }
-                    if (distance === 0) {
-                        break;
-                    }
-                }
-            }
-            if (!minelem) {
-                return minelem;
-            }
-            if (minlockeddistance >= mindistance) {
-                minlockedelem = blankHolder;
-            }
-            //fluid.log("PRE: mindistance " + mindistance + " element " + 
-            //   fluid.dumpEl(minelem.element) + " minlockeddistance " + minlockeddistance
-            //    + " locked elem " + dumpelem(minlockedelem));
-            if (lastClosest && lastClosest.position === minelem.position &&
-                fluid.unwrap(lastClosest.element) === fluid.unwrap(minelem.element) &&
-                fluid.unwrap(lastClosest.lockedelem) === fluid.unwrap(minlockedelem.element)
-                ) {
-                return fluid.dropManager.NO_CHANGE;
-            }
-            //fluid.log("mindistance " + mindistance + " minlockeddistance " + minlockeddistance);
-            return {
-                position: minelem.position,
-                element: minelem.element,
-                lockedelem: minlockedelem.element
-            };
-        };
-        
-        that.shuffleProjectFrom = function (element, direction, includeLocked, disableWrap) {
-            var togo = that.projectFrom(element, direction, includeLocked, disableWrap);
-            if (togo) {
-                togo.position = fluid.position.REPLACE;
-            }
-            return togo;
-        };
-        
-        that.projectFrom = function (element, direction, includeLocked, disableWrap) {
-            that.updateGeometry(lastGeometry);
-            var cacheelem = cache[fluid.dropManager.cacheKey(element)];
-            var projected = fluid.geom.projectFrom(cacheelem.rect, direction, targets, includeLocked, disableWrap);
-            if (!projected.cacheelem) {
-                return null;
-            }
-            var retpos = projected.cacheelem.position;
-            return {element: projected.cacheelem.element, 
-                     position: retpos ? retpos : fluid.position.BEFORE 
-                     };
-        };
-        
-        that.logicalFrom = function (element, direction, includeLocked, disableWrap) {
-            var orderables = that.getOwningSpan(element, fluid.position.INTERLEAVED, includeLocked);
-            return {element: fluid.dropManager.getRelativeElement(element, direction, orderables, disableWrap), 
-                position: fluid.position.REPLACE};
-        };
-           
-        that.lockedWrapFrom = function (element, direction, includeLocked, disableWrap) {
-            var base = that.logicalFrom(element, direction, includeLocked, disableWrap);
-            var selectables = that.getOwningSpan(element, fluid.position.INTERLEAVED, includeLocked);
-            var allElements = cache[fluid.dropManager.cacheKey(element)].owner.elements;
-            if (includeLocked || selectables[0] === allElements[0]) {
-                return base;
-            }
-            var directElement = fluid.dropManager.getRelativeElement(element, direction, allElements, disableWrap);
-            if (lastGeometry.elementMapper(directElement) === "locked") {
-                base.element = null;
-                base.clazz = "locked";  
-            }
-            return base;
-        }; 
-        
-        that.getOwningSpan = function (element, position, includeLocked) {
-            var owner = cache[fluid.dropManager.cacheKey(element)].owner; 
-            var elements = position === fluid.position.INSIDE ? [owner.parentElement] : owner.elements;
-            if (!includeLocked && lastGeometry.elementMapper) {
-                elements = $.makeArray(elements);
-                fluid.remove_if(elements, function (element) {
-                    return lastGeometry.elementMapper(element) === "locked";
-                });
-            }
-            return elements;
-        };
-        
-        that.geometricMove = function (element, target, position) {
-            var sourceElements = that.getOwningSpan(element, null, true);
-            var targetElements = that.getOwningSpan(target, position, true);
-            fluid.permuteDom(element, target, position, sourceElements, targetElements);
-        };              
-        
-        return that;
-    };    
-   
- 
-    fluid.dropManager.NO_CHANGE = "no change";
-    
-    fluid.dropManager.cacheKey = function (element) {
-        return fluid.allocateSimpleId(element);
-    };
-    
-    fluid.dropManager.sentinelizeElement = function (targets, sides, cacheelem, fc, disposition, clazz) {
-        var elemCopy = $.extend(true, {}, cacheelem);
-        elemCopy.rect[sides[fc]] = elemCopy.rect[sides[1 - fc]] + (fc ? 1: -1);
-        elemCopy.rect[sides[1 - fc]] = (fc ? -1 : 1) * SENTINEL_DIMENSION;
-        elemCopy.position = disposition === fluid.position.INSIDE ?
-           disposition : (fc ? fluid.position.BEFORE : fluid.position.AFTER);
-        elemCopy.clazz = clazz;
-        targets[targets.length] = elemCopy;
-    };
-    
-    fluid.dropManager.splitElement = function (targets, sides, cacheelem, disposition, clazz1, clazz2) {
-        var elem1 = $.extend(true, {}, cacheelem);
-        var elem2 = $.extend(true, {}, cacheelem);
-        var midpoint = (elem1.rect[sides[0]] + elem1.rect[sides[1]]) / 2;
-        elem1.rect[sides[1]] = midpoint; 
-        elem1.position = fluid.position.BEFORE;
-        
-        elem2.rect[sides[0]] = midpoint; 
-        elem2.position = fluid.position.AFTER;
-        
-        elem1.clazz = clazz1;
-        elem2.clazz = clazz2;
-        targets[targets.length] = elem1;
-        targets[targets.length] = elem2;
-    };
-    
-    // Expand this configuration point if we ever go back to a full "permissions" model
-    fluid.dropManager.getRelativeClass = function (thisElements, index, relative, thisclazz, mapper) {
-        index += relative;
-        if (index < 0 && thisclazz === "locked") {
-            return "locked";
-        }
-        if (index >= thisElements.length || mapper === null) {
-            return null;
-        } else {
-            relative = thisElements[index];
-            return mapper(relative) === "locked" && thisclazz === "locked" ? "locked" : null;
-        }
-    };
-    
-    fluid.dropManager.getRelativeElement = function (element, direction, elements, disableWrap) {
-        var folded = fluid.directionSign(direction);
-        
-        var index = $(elements).index(element) + folded;
-        if (index < 0) {
-            index += elements.length;
-        }
-        
-        // disable wrap
-        if (disableWrap) {                   
-            if (index === elements.length || index === (elements.length + folded)) {
-                return element;
-            }
-        }
-          
-        index %= elements.length;
-        return elements[index];              
-    };
-    
-    fluid.geom = fluid.geom || {};
-    
-    // These distance algorithms have been taken from
-    // http://www.cs.mcgill.ca/~cs644/Godfried/2005/Fall/fzamal/concepts.htm
-    
-    /** Returns the minimum squared distance between a point and a rectangle **/
-    fluid.geom.minPointRectangle = function (x, y, rectangle) {
-        var dx = x < rectangle.left ? (rectangle.left - x) : 
-                  (x > rectangle.right ? (x - rectangle.right) : 0);
-        var dy = y < rectangle.top ? (rectangle.top - y) : 
-                  (y > rectangle.bottom ? (y - rectangle.bottom) : 0);
-        return dx * dx + dy * dy;
-    };
-    
-    /** Returns the minimum squared distance between two rectangles **/
-    fluid.geom.minRectRect = function (rect1, rect2) {
-        var dx = rect1.right < rect2.left ? rect2.left - rect1.right : 
-                 rect2.right < rect1.left ? rect1.left - rect2.right :0;
-        var dy = rect1.bottom < rect2.top ? rect2.top - rect1.bottom : 
-                 rect2.bottom < rect1.top ? rect1.top - rect2.bottom :0;
-        return dx * dx + dy * dy;
-    };
-    
-    var makePenCollect = function () {
-        return {
-            mindist: Number.MAX_VALUE,
-            minrdist: Number.MAX_VALUE
-        };
-    };
-
-    /** Determine the one amongst a set of rectangle targets which is the "best fit"
-     * for an axial motion from a "base rectangle" (commonly arising from the case
-     * of cursor key navigation).
-     * @param {Rectangle} baserect The base rectangl from which the motion is to be referred
-     * @param {fluid.direction} direction  The direction of motion
-     * @param {Array of Rectangle holders} targets An array of objects "cache elements" 
-     * for which the member <code>rect</code> is the holder of the rectangle to be tested.
-     * @param disableWrap which is used to enable or disable wrapping of elements
-     * @return The cache element which is the most appropriate for the requested motion.
-     */
-    fluid.geom.projectFrom = function (baserect, direction, targets, forSelection, disableWrap) {
-        var axis = fluid.directionAxis(direction);
-        var frontSide = fluid.rectSides[direction];
-        var backSide = fluid.rectSides[axis * 15 + 5 - direction];
-        var dirSign = fluid.directionSign(direction);
-        
-        var penrect = {left: (7 * baserect.left + 1 * baserect.right) / 8,
-                       right: (5 * baserect.left + 3 * baserect.right) / 8,
-                       top: (7 * baserect.top + 1 * baserect.bottom) / 8,
-                       bottom: (5 * baserect.top + 3 * baserect.bottom) / 8};
-         
-        penrect[frontSide] = dirSign * SENTINEL_DIMENSION;
-        penrect[backSide] = -penrect[frontSide];
-        
-        function accPen(collect, cacheelem, backSign) {
-            var thisrect = cacheelem.rect;
-            var pdist = fluid.geom.minRectRect(penrect, thisrect);
-            var rdist = -dirSign * backSign * (baserect[backSign === 1 ? frontSide:backSide] - 
-                                                thisrect[backSign === 1 ? backSide:frontSide]);
-            // fluid.log("pdist: " + pdist + " rdist: " + rdist);
-            // the oddity in the rdist comparison is intended to express "half-open"-ness of rectangles
-            // (backSign === 1 ? 0 : 1) - this is now gone - must be possible to move to perpendicularly abutting regions
-            if (pdist <= collect.mindist && rdist >= 0) {
-                if (pdist === collect.mindist && rdist * backSign > collect.minrdist) {
-                    return;
-                }
-                collect.minrdist = rdist * backSign;
-                collect.mindist = pdist;
-                collect.minelem = cacheelem;
-            }
-        }
-        var collect = makePenCollect();
-        var backcollect = makePenCollect();
-        var lockedcollect = makePenCollect();
-
-        for (var i = 0; i < targets.length; ++ i) {
-            var elem = targets[i];
-            var isPure = elem.owner && elem.element === elem.owner.parentElement;
-            if (elem.clazz === "hidden" || forSelection && isPure) {
-                continue;
-            }
-            else if (!forSelection && elem.clazz === "locked") {
-                accPen(lockedcollect, elem, 1);
-            }
-            else {
-                accPen(collect, elem, 1);
-                accPen(backcollect, elem, -1);
-            }
-            //fluid.log("Element " + i + " " + dumpelem(elem) + " mindist " + collect.mindist);
-        }
-        var wrap = !collect.minelem || backcollect.mindist < collect.mindist;
-        
-        // disable wrap
-        wrap = wrap && !disableWrap;       
-                
-        var mincollect = wrap ? backcollect: collect;        
-        
-        var togo = {
-            wrapped: wrap,
-            cacheelem: mincollect.minelem
-        };
-        if (lockedcollect.mindist < mincollect.mindist) {
-            togo.lockedelem = lockedcollect.minelem;
-        }
-        return togo;
-    };
-})(jQuery, fluid_1_4);
-/*
-Copyright 2007-2009 University of Toronto
-Copyright 2007-2010 University of Cambridge
-Copyright 2010 OCAD University
-Copyright 2010 Lucendo Development Ltd.
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global fluid_1_4:true, jQuery*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {
-    
-    var defaultAvatarCreator = function (item, cssClass, dropWarning) {
-        fluid.dom.cleanseScripts(fluid.unwrap(item));
-        var avatar = $(item).clone();
-        
-        fluid.dom.iterateDom(avatar.get(0), function (node) {
-            node.removeAttribute("id");
-            if (node.tagName.toLowerCase() === "input") {
-                node.setAttribute("disabled", "disabled");
-            }
-        });
-        
-        avatar.removeAttr("id");
-        avatar.removeClass("ui-droppable");
-        avatar.addClass(cssClass);
-        
-        if (dropWarning) {
-            // Will a 'div' always be valid in this position?
-            var avatarContainer = $(document.createElement("div"));
-            avatarContainer.append(avatar);
-            avatarContainer.append(dropWarning);
-            avatar = avatarContainer;
-        }
-        $("body").append(avatar);
-        if (!$.browser.safari) {
-            // FLUID-1597: Safari appears incapable of correctly determining the dimensions of elements
-            avatar.css("display", "block").width(item.offsetWidth).height(item.offsetHeight);
-        }
-        
-        if ($.browser.opera) { // FLUID-1490. Without this detect, curCSS explodes on the avatar on Firefox.
-            avatar.hide();
-        }
-        return avatar;
-    };
-    
-    function bindHandlersToContainer(container, keyDownHandler, keyUpHandler, mouseMoveHandler) {
-        var actualKeyDown = keyDownHandler;
-        var advancedPrevention = false;
-
-        // FLUID-1598 and others: Opera will refuse to honour a "preventDefault" on a keydown.
-        // http://forums.devshed.com/javascript-development-115/onkeydown-preventdefault-opera-485371.html
-        if ($.browser.opera) {
-            container.keypress(function (evt) {
-                if (advancedPrevention) {
-                    advancedPrevention = false;
-                    evt.preventDefault();
-                    return false;
-                }
-            });
-            actualKeyDown = function (evt) {
-                var oldret = keyDownHandler(evt);
-                if (oldret === false) {
-                    advancedPrevention = true;
-                }
-            };
-        }
-        container.keydown(actualKeyDown);
-        container.keyup(keyUpHandler);
-    }
-    
-    function addRolesToContainer(that) {
-        that.container.attr("role", that.options.containerRole.container);
-        that.container.attr("aria-multiselectable", "false");
-        that.container.attr("aria-readonly", "false");
-        that.container.attr("aria-disabled", "false");
-        // FLUID-3707: We require to have BOTH application role as well as our named role
-        // This however breaks the component completely under NVDA and causes it to perpetually drop back into "browse mode"
-        //that.container.wrap("<div role=\"application\"></div>");
-    }
-    
-    function createAvatarId(parentId) {
-        // Generating the avatar's id to be containerId_avatar
-        // This is safe since there is only a single avatar at a time
-        return parentId + "_avatar";
-    }
-    
-    var adaptKeysets = function (options) {
-        if (options.keysets && !(options.keysets instanceof Array)) {
-            options.keysets = [options.keysets];    
-        }
-    };
-    
-    /**
-     * @param container - A jQueryable designator for the root node of the reorderer (a selector, a DOM node, or a jQuery instance)
-     * @param options - an object containing any of the available options:
-     *                  containerRole - indicates the role, or general use, for this instance of the Reorderer
-     *                  keysets - an object containing sets of keycodes to use for directional navigation. Must contain:
-     *                            modifier - a function that returns a boolean, indicating whether or not the required modifier(s) are activated
-     *                            up
-     *                            down
-     *                            right
-     *                            left
-     *                  styles - an object containing class names for styling the Reorderer
-     *                                  defaultStyle
-     *                                  selected
-     *                                  dragging
-     *                                  hover
-     *                                  dropMarker
-     *                                  mouseDrag
-     *                                  avatar
-     *                  avatarCreator - a function that returns a valid DOM node to be used as the dragging avatar
-     */
-    fluid.reorderer = function (container, options) {
-        if (!container) {
-            fluid.fail("Reorderer initialised with no container");
-        }
-        var thatReorderer = fluid.initView("fluid.reorderer", container, options);
-        options = thatReorderer.options;
-                
-        var dropManager = fluid.dropManager();   
-                
-        thatReorderer.layoutHandler = fluid.initSubcomponent(thatReorderer,
-            "layoutHandler", [thatReorderer.container, options, dropManager, thatReorderer.dom]);
-        
-        thatReorderer.activeItem = undefined;
-
-        adaptKeysets(options);
- 
-        var kbDropWarning = thatReorderer.locate("dropWarning");
-        var mouseDropWarning;
-        if (kbDropWarning) {
-            mouseDropWarning = kbDropWarning.clone();
-        }
-
-        var isMove = function (evt) {
-            var keysets = options.keysets;
-            for (var i = 0; i < keysets.length; i++) {
-                if (keysets[i].modifier(evt)) {
-                    return true;
-                }
-            }
-            return false;
-        };
-        
-        var isActiveItemMovable = function () {
-            return $.inArray(thatReorderer.activeItem, thatReorderer.dom.fastLocate("movables")) >= 0;
-        };
-        
-        var setDropEffects = function (value) {
-            thatReorderer.dom.fastLocate("dropTargets").attr("aria-dropeffect", value);
-        };
-        
-        var styles = options.styles;
-        
-        var noModifier = function (evt) {
-            return (!evt.ctrlKey && !evt.altKey && !evt.shiftKey && !evt.metaKey);
-        };
-        
-        var handleDirectionKeyDown = function (evt) {
-            var item = thatReorderer.activeItem;
-            if (!item) {
-                return true;
-            }
-            var keysets = options.keysets;
-            for (var i = 0; i < keysets.length; i++) {
-                var keyset = keysets[i];
-                var keydir = fluid.keyForValue(keyset, evt.keyCode);
-                if (!keydir) {
-                    continue;
-                }
-                var isMovement = keyset.modifier(evt);
-                
-                var dirnum = fluid.keycodeDirection[keydir];
-                var relativeItem = thatReorderer.layoutHandler.getRelativePosition(item, dirnum, !isMovement);  
-                if (!relativeItem) {
-                    continue;
-                }
-                
-                if (isMovement) {
-                    var prevent = thatReorderer.events.onBeginMove.fire(item);
-                    if (prevent === false) {
-                        return false;
-                    }
-                    if (kbDropWarning.length > 0) {
-                        if (relativeItem.clazz === "locked") {
-                            thatReorderer.events.onShowKeyboardDropWarning.fire(item, kbDropWarning);
-                            kbDropWarning.show();                       
-                        }
-                        else {
-                            kbDropWarning.hide();
-                        }
-                    }
-                    if (relativeItem.element) {
-                        thatReorderer.requestMovement(relativeItem, item);
-                    }
-            
-                } else if (noModifier(evt)) {
-                    item.blur();
-                    $(relativeItem.element).focus();
-                }
-                return false;
-            }
-            return true;
-        };
-
-        // unsupported, NON-API function
-        thatReorderer.handleKeyDown = function (evt) {
-            if (!thatReorderer.activeItem || thatReorderer.activeItem !== evt.target) {
-                return true;
-            }
-            // If the key pressed is ctrl, and the active item is movable we want to restyle the active item.
-            var jActiveItem = $(thatReorderer.activeItem);
-            if (!jActiveItem.hasClass(styles.dragging) && isMove(evt)) {
-               // Don't treat the active item as dragging unless it is a movable.
-                if (isActiveItemMovable()) {
-                    jActiveItem.removeClass(styles.selected);
-                    jActiveItem.addClass(styles.dragging);
-                    jActiveItem.attr("aria-grabbed", "true");
-                    setDropEffects("move");
-                }
-                return false;
-            }
-            // The only other keys we listen for are the arrows.
-            return handleDirectionKeyDown(evt);
-        };
-
-        // unsupported, NON-API function
-        thatReorderer.handleKeyUp = function (evt) {
-            if (!thatReorderer.activeItem || thatReorderer.activeItem !== evt.target) {
-                return true;
-            }
-            var jActiveItem = $(thatReorderer.activeItem);
-            
-            // Handle a key up event for the modifier
-            if (jActiveItem.hasClass(styles.dragging) && !isMove(evt)) {
-                if (kbDropWarning) {
-                    kbDropWarning.hide();
-                }
-                jActiveItem.removeClass(styles.dragging);
-                jActiveItem.addClass(styles.selected);
-                jActiveItem.attr("aria-grabbed", "false");
-                setDropEffects("none");
-                return false;
-            }
-            
-            return false;
-        };
-
-        var dropMarker;
-
-        var createDropMarker = function (tagName) {
-            var dropMarker = $(document.createElement(tagName));
-            dropMarker.addClass(options.styles.dropMarker);
-            dropMarker.hide();
-            return dropMarker;
-        };
-        // unsupported, NON-API function
-        thatReorderer.requestMovement = function (requestedPosition, item) {
-            item = fluid.unwrap(item);
-          // Temporary censoring to get around ModuleLayout inability to update relative to self.
-            if (!requestedPosition || fluid.unwrap(requestedPosition.element) === item) {
-                return;
-            }
-            var activeItem = $(thatReorderer.activeItem);
-            
-            // Fixes FLUID-3288.
-            // Need to unbind the blur event as safari will call blur on movements.
-            // This caused the user to have to double tap the arrow keys to move.
-            activeItem.unbind("blur.fluid.reorderer");
-            
-            thatReorderer.events.onMove.fire(item, requestedPosition);
-            dropManager.geometricMove(item, requestedPosition.element, requestedPosition.position);
-            //$(thatReorderer.activeItem).removeClass(options.styles.selected);
-           
-            // refocus on the active item because moving places focus on the body
-            activeItem.focus();
-            
-            thatReorderer.refresh();
-            
-            dropManager.updateGeometry(thatReorderer.layoutHandler.getGeometricInfo());
-
-            thatReorderer.events.afterMove.fire(item, requestedPosition, thatReorderer.dom.fastLocate("movables"));
-        };
-
-        var hoverStyleHandler = function (item, state) {
-            thatReorderer.dom.fastLocate("grabHandle", item)[state ? "addClass":"removeClass"](styles.hover);
-        };
-        /**
-         * Takes a $ object and adds 'movable' functionality to it
-         */
-        function initMovable(item) {
-            var styles = options.styles;
-            item.attr("aria-grabbed", "false");
-
-            item.mouseover(
-                function () {
-                    thatReorderer.events.onHover.fire(item, true);
-                }
-            );
-        
-            item.mouseout(
-                function () {
-                    thatReorderer.events.onHover.fire(item, false);
-                }
-            );
-            var avatar;
-        
-            thatReorderer.dom.fastLocate("grabHandle", item).draggable({
-                refreshPositions: false,
-                scroll: true,
-                helper: function () {
-                    var dropWarningEl;
-                    if (mouseDropWarning) {
-                        dropWarningEl = mouseDropWarning[0];
-                    }
-                    avatar = $(options.avatarCreator(item[0], styles.avatar, dropWarningEl));
-                    avatar.attr("id", createAvatarId(thatReorderer.container.id));
-                    return avatar;
-                },
-                start: function (e, ui) {
-                    var prevent = thatReorderer.events.onBeginMove.fire(item);
-                    if (prevent === false) {
-                        return false;
-                    }
-                    var handle = thatReorderer.dom.fastLocate("grabHandle", item)[0];
-                    var handlePos = fluid.dom.computeAbsolutePosition(handle);
-                    var handleWidth = handle.offsetWidth;
-                    var handleHeight = handle.offsetHeight;
-                    item.focus();
-                    item.removeClass(options.styles.selected);
-                    item.addClass(options.styles.mouseDrag);
-                    item.attr("aria-grabbed", "true");
-                    setDropEffects("move");
-                    dropManager.startDrag(e, handlePos, handleWidth, handleHeight);
-                    avatar.show();
-                },
-                stop: function (e, ui) {
-                    item.removeClass(options.styles.mouseDrag);
-                    item.addClass(options.styles.selected);
-                    $(thatReorderer.activeItem).attr("aria-grabbed", "false");
-                    var markerNode = fluid.unwrap(dropMarker);
-                    if (markerNode.parentNode) {
-                        markerNode.parentNode.removeChild(markerNode);
-                    }
-                    avatar.hide();
-                    ui.helper = null;
-                    setDropEffects("none");
-                    dropManager.endDrag();
-                    
-                    thatReorderer.requestMovement(dropManager.lastPosition(), item);
-                    // refocus on the active item because moving places focus on the body
-                    thatReorderer.activeItem.focus();
-                },
-                handle: thatReorderer.dom.fastLocate("grabHandle", item)
-            });
-        }
-           
-        function changeSelectedToDefault(jItem, styles) {
-            jItem.removeClass(styles.selected);
-            jItem.removeClass(styles.dragging);
-            jItem.addClass(styles.defaultStyle);
-            jItem.attr("aria-selected", "false");
-        }
-           
-        var selectItem = function (anItem) {
-            thatReorderer.events.onSelect.fire(anItem);
-            var styles = options.styles;
-            // Set the previous active item back to its default state.
-            if (thatReorderer.activeItem && thatReorderer.activeItem !== anItem) {
-                changeSelectedToDefault($(thatReorderer.activeItem), styles);
-            }
-            // Then select the new item.
-            thatReorderer.activeItem = anItem;
-            var jItem = $(anItem);
-            jItem.removeClass(styles.defaultStyle);
-            jItem.addClass(styles.selected);
-            jItem.attr("aria-selected", "true");
-        };
-   
-        var initSelectables = function () {
-            var handleBlur = function (evt) {
-                changeSelectedToDefault($(this), options.styles);
-                return evt.stopPropagation();
-            };
-        
-            var handleFocus = function (evt) {
-                selectItem(this);
-                return evt.stopPropagation();
-            };
-            
-            var selectables = thatReorderer.dom.fastLocate("selectables");
-            for (var i = 0; i < selectables.length; ++ i) {
-                var selectable = $(selectables[i]);
-                if (!$.data(selectable[0], "fluid.reorderer.selectable-initialised")) { 
-                    selectable.addClass(styles.defaultStyle);
-            
-                    selectable.bind("blur.fluid.reorderer", handleBlur);
-                    selectable.focus(handleFocus);
-                    selectable.click(function (evt) {
-                        var handle = fluid.unwrap(thatReorderer.dom.fastLocate("grabHandle", this));
-                        if (fluid.dom.isContainer(handle, evt.target)) {
-                            $(this).focus();
-                        }
-                    });
-                    
-                    selectable.attr("role", options.containerRole.item);
-                    selectable.attr("aria-selected", "false");
-                    selectable.attr("aria-disabled", "false");
-                    $.data(selectable[0], "fluid.reorderer.selectable-initialised", true);
-                }
-            }
-            if (!thatReorderer.selectableContext) {
-                thatReorderer.selectableContext = fluid.selectable(thatReorderer.container, {
-                    selectableElements: selectables,
-                    selectablesTabindex: thatReorderer.options.selectablesTabindex,
-                    direction: null
-                });
-            }
-        };
-    
-        var dropChangeListener = function (dropTarget) {
-            fluid.moveDom(dropMarker, dropTarget.element, dropTarget.position);
-            dropMarker.css("display", "");
-            if (mouseDropWarning) {
-                if (dropTarget.lockedelem) {
-                    mouseDropWarning.show();
-                }
-                else {
-                    mouseDropWarning.hide();
-                }
-            }
-        };
-    
-        var initItems = function () {
-            var movables = thatReorderer.dom.fastLocate("movables");
-            var dropTargets = thatReorderer.dom.fastLocate("dropTargets");
-            initSelectables();
-        
-            // Setup movables
-            for (var i = 0; i < movables.length; i++) {
-                var item = movables[i];
-                if (!$.data(item, "fluid.reorderer.movable-initialised")) { 
-                    initMovable($(item));
-                    $.data(item, "fluid.reorderer.movable-initialised", true);
-                }
-            }
-
-            // In order to create valid html, the drop marker is the same type as the node being dragged.
-            // This creates a confusing UI in cases such as an ordered list. 
-            // drop marker functionality should be made pluggable. 
-            if (movables.length > 0 && !dropMarker) {
-                dropMarker = createDropMarker(movables[0].tagName);
-            }
-            
-            dropManager.updateGeometry(thatReorderer.layoutHandler.getGeometricInfo());
-            
-            dropManager.dropChangeFirer.addListener(dropChangeListener, "fluid.Reorderer");
-            // Set up dropTargets
-            dropTargets.attr("aria-dropeffect", "none");  
-
-        };
-
-
-        // Final initialization of the Reorderer at the end of the construction process 
-        if (thatReorderer.container) {
-            bindHandlersToContainer(thatReorderer.container, 
-                thatReorderer.handleKeyDown,
-                thatReorderer.handleKeyUp);
-            addRolesToContainer(thatReorderer);
-            fluid.tabbable(thatReorderer.container);
-            initItems();
-        }
-
-        if (options.afterMoveCallbackUrl) {
-            thatReorderer.events.afterMove.addListener(function () {
-                var layoutHandler = thatReorderer.layoutHandler;
-                var model = layoutHandler.getModel ? layoutHandler.getModel():
-                     options.acquireModel(thatReorderer);
-                $.post(options.afterMoveCallbackUrl, JSON.stringify(model));
-            }, "postModel");
-        }
-        thatReorderer.events.onHover.addListener(hoverStyleHandler, "style");
-
-        thatReorderer.refresh = function () {
-            thatReorderer.dom.refresh("movables");
-            thatReorderer.dom.refresh("selectables");
-            thatReorderer.dom.refresh("grabHandle", thatReorderer.dom.fastLocate("movables"));
-            thatReorderer.dom.refresh("stylisticOffset", thatReorderer.dom.fastLocate("movables"));
-            thatReorderer.dom.refresh("dropTargets");
-            thatReorderer.events.onRefresh.fire();
-            initItems();
-            thatReorderer.selectableContext.selectables = thatReorderer.dom.fastLocate("selectables");
-            thatReorderer.selectableContext.selectablesUpdated(thatReorderer.activeItem);
-        };
-        
-        fluid.initDependents(thatReorderer);
-
-        thatReorderer.refresh();
-
-        return thatReorderer;
-    };
-    
-    /**
-     * Constants for key codes in events.
-     */    
-    fluid.reorderer.keys = {
-        TAB: 9,
-        ENTER: 13,
-        SHIFT: 16,
-        CTRL: 17,
-        ALT: 18,
-        META: 19,
-        SPACE: 32,
-        LEFT: 37,
-        UP: 38,
-        RIGHT: 39,
-        DOWN: 40,
-        i: 73,
-        j: 74,
-        k: 75,
-        m: 77
-    };
-    
-    /**
-     * The default key sets for the Reorderer. Should be moved into the proper component defaults.
-     */
-    fluid.reorderer.defaultKeysets = [{
-        modifier : function (evt) {
-            return evt.ctrlKey;
-        },
-        up : fluid.reorderer.keys.UP,
-        down : fluid.reorderer.keys.DOWN,
-        right : fluid.reorderer.keys.RIGHT,
-        left : fluid.reorderer.keys.LEFT
-    },
-    {
-        modifier : function (evt) {
-            return evt.ctrlKey;
-        },
-        up : fluid.reorderer.keys.i,
-        down : fluid.reorderer.keys.m,
-        right : fluid.reorderer.keys.k,
-        left : fluid.reorderer.keys.j
-    }];
-    
-    /**
-     * These roles are used to add ARIA roles to orderable items. This list can be extended as needed,
-     * but the values of the container and item roles must match ARIA-specified roles.
-     */  
-    fluid.reorderer.roles = {
-        GRID: { container: "grid", item: "gridcell" },
-        LIST: { container: "list", item: "listitem" },
-        REGIONS: { container: "main", item: "article" }
-    };
-    
-    // Simplified API for reordering lists and grids.
-    var simpleInit = function (container, layoutHandler, options) {
-        options = options || {};
-        options.layoutHandler = layoutHandler;
-        return fluid.reorderer(container, options);
-    };
-    
-    fluid.reorderList = function (container, options) {
-        return simpleInit(container, "fluid.listLayoutHandler", options);
-    };
-    
-    fluid.reorderGrid = function (container, options) {
-        return simpleInit(container, "fluid.gridLayoutHandler", options); 
-    };
-    
-    fluid.reorderer.SHUFFLE_GEOMETRIC_STRATEGY = "shuffleProjectFrom";
-    fluid.reorderer.GEOMETRIC_STRATEGY         = "projectFrom";
-    fluid.reorderer.LOGICAL_STRATEGY           = "logicalFrom";
-    fluid.reorderer.WRAP_LOCKED_STRATEGY       = "lockedWrapFrom";
-    fluid.reorderer.NO_STRATEGY = null;
-    
-    // unsupported, NON-API function
-    fluid.reorderer.relativeInfoGetter = function (orientation, coStrategy, contraStrategy, dropManager, dom, disableWrap) {
-        return function (item, direction, forSelection) {
-            var dirorient = fluid.directionOrientation(direction);
-            var strategy = dirorient === orientation ? coStrategy: contraStrategy;
-            return strategy !== null ? dropManager[strategy](item, direction, forSelection, disableWrap) : null;
-        };
-    };
-    
-    fluid.defaults("fluid.reorderer", {
-        styles: {
-            defaultStyle: "fl-reorderer-movable-default",
-            selected: "fl-reorderer-movable-selected",
-            dragging: "fl-reorderer-movable-dragging",
-            mouseDrag: "fl-reorderer-movable-dragging",
-            hover: "fl-reorderer-movable-hover",
-            dropMarker: "fl-reorderer-dropMarker",
-            avatar: "fl-reorderer-avatar"
-        },
-        selectors: {
-            dropWarning: ".flc-reorderer-dropWarning",
-            movables: ".flc-reorderer-movable",
-            grabHandle: "",
-            stylisticOffset: ""
-        },
-        avatarCreator: defaultAvatarCreator,
-        keysets: fluid.reorderer.defaultKeysets,
-        layoutHandler: {
-            type: "fluid.listLayoutHandler"
-        },
-        
-        events: {
-            onShowKeyboardDropWarning: null,
-            onSelect: null,
-            onBeginMove: "preventable",
-            onMove: null,
-            afterMove: null,
-            onHover: null,
-            onRefresh: null
-        },
-        
-        mergePolicy: {
-            keysets: "replace",
-            "selectors.labelSource": "selectors.grabHandle",
-            "selectors.selectables": "selectors.movables",
-            "selectors.dropTargets": "selectors.movables"
-        },
-        components: {
-            labeller: {
-                type: "fluid.reorderer.labeller",
-                options: {
-                    dom: "{reorderer}.dom",
-                    getGeometricInfo: "{reorderer}.layoutHandler.getGeometricInfo",
-                    orientation: "{reorderer}.options.orientation",
-                    layoutType: "{reorderer}.options.layoutHandler" // TODO, get rid of "global defaults"
-                }          
-            }
-        },
-        
-        // The user option to enable or disable wrapping of elements within the container
-        disableWrap: false        
-        
-    });
-
-
-    /*******************
-     * Layout Handlers *
-     *******************/
-
-    // unsupported, NON-API function
-    fluid.reorderer.makeGeometricInfoGetter = function (orientation, sentinelize, dom) {
-        return function () {
-            var that = {
-                sentinelize: sentinelize,
-                extents: [{
-                    orientation: orientation,
-                    elements: dom.fastLocate("dropTargets")
-                }],
-                elementMapper: function (element) {
-                    return $.inArray(element, dom.fastLocate("movables")) === -1 ? "locked": null;
-                },
-                elementIndexer: function (element) {
-                    var selectables = dom.fastLocate("selectables");
-                    return {
-                        elementClass: that.elementMapper(element),
-                        index: $.inArray(element, selectables),
-                        length: selectables.length
-                    };
-                }
-            };
-            return that;
-        };
-    };
-    
-    fluid.defaults(true, "fluid.listLayoutHandler", 
-        {orientation:         fluid.orientation.VERTICAL,
-         containerRole:       fluid.reorderer.roles.LIST,
-         selectablesTabindex: -1,
-         sentinelize:         true
-        });
-    
-    // Public layout handlers.
-    fluid.listLayoutHandler = function (container, options, dropManager, dom) {
-        var that = {};
-
-        that.getRelativePosition = 
-          fluid.reorderer.relativeInfoGetter(options.orientation, 
-                fluid.reorderer.LOGICAL_STRATEGY, null, dropManager, dom, options.disableWrap);
-        
-        that.getGeometricInfo = fluid.reorderer.makeGeometricInfoGetter(options.orientation, options.sentinelize, dom);
-        
-        return that;
-    }; // End ListLayoutHandler
-
-    fluid.defaults(true, "fluid.gridLayoutHandler", 
-        {orientation:         fluid.orientation.HORIZONTAL,
-         containerRole:       fluid.reorderer.roles.GRID,
-         selectablesTabindex: -1,
-         sentinelize:         false
-         });
-    /*
-     * Items in the Lightbox are stored in a list, but they are visually presented as a grid that
-     * changes dimensions when the window changes size. As a result, when the user presses the up or
-     * down arrow key, what lies above or below depends on the current window size.
-     * 
-     * The GridLayoutHandler is responsible for handling changes to this virtual 'grid' of items
-     * in the window, and of informing the Lightbox of which items surround a given item.
-     */
-    fluid.gridLayoutHandler = function (container, options, dropManager, dom) {
-        var that = {};
-
-        that.getRelativePosition = 
-           fluid.reorderer.relativeInfoGetter(options.orientation, 
-                 options.disableWrap ? fluid.reorderer.SHUFFLE_GEOMETRIC_STRATEGY : fluid.reorderer.LOGICAL_STRATEGY, fluid.reorderer.SHUFFLE_GEOMETRIC_STRATEGY, 
-                 dropManager, dom, options.disableWrap);
-        
-        that.getGeometricInfo = fluid.reorderer.makeGeometricInfoGetter(options.orientation, options.sentinelize, dom);
-        
-        return that;
-    }; // End of GridLayoutHandler
-
-    fluid.defaults("fluid.reorderer.labeller", {
-        strings: {
-            overallTemplate: "%recentStatus %item %position %movable",
-            position:        "%index of %length",
-            position_moduleLayoutHandler: "%index of %length in %moduleCell %moduleIndex of %moduleLength",
-            moduleCell_0:    "row", // NB, these keys must agree with fluid.a11y.orientation constants
-            moduleCell_1:    "column",
-            movable:         "movable",
-            fixed:           "fixed",
-            recentStatus:    "moved from position %position"
-        },
-        components: {
-            resolver: {
-                type: "fluid.messageResolver",
-                options: {
-                    messageBase: "{labeller}.options.strings"
-                }
-            }
-        },
-        invokers: {
-            renderLabel: {
-                funcName: "fluid.reorderer.labeller.renderLabel",
-                args: ["{labeller}", "@0", "@1"]
-            }  
-        }
-    });
-
-    // unsupported, NON-API function
-    // Convert from 0-based to 1-based indices for announcement
-    fluid.reorderer.indexRebaser = function (indices) {
-        indices.index++;
-        if (indices.moduleIndex !== undefined) {
-            indices.moduleIndex++;
-        }
-        return indices;
-    };
-
-    /*************
-     * Labelling *
-     *************/
-     
-    fluid.reorderer.labeller = function (options) {
-        var that = fluid.initLittleComponent("fluid.reorderer.labeller", options);
-        fluid.initDependents(that);
-        that.dom = that.options.dom;
-        
-        that.moduleCell = that.resolver.resolve("moduleCell_" + that.options.orientation);
-        var layoutType = fluid.computeNickName(that.options.layoutType);
-        that.positionTemplate = that.resolver.lookup(["position_" + layoutType, "position"]);
-        
-        var movedMap = {};
-        
-        that.returnedOptions = {
-            listeners: {
-                onRefresh: function () {
-                    var selectables = that.dom.locate("selectables");
-                    fluid.each(selectables, function (selectable) {
-                        var labelOptions = {};
-                        var id = fluid.allocateSimpleId(selectable);
-                        var moved = movedMap[id];
-                        var label = that.renderLabel(selectable);
-                        var plainLabel = label;
-                        if (moved) {
-                            moved.newRender = plainLabel;
-                            label = that.renderLabel(selectable, moved.oldRender.position);
-                            $(selectable).one("focusout", function () {
-                                if (movedMap[id]) {
-                                    var oldLabel = movedMap[id].newRender.label;
-                                    delete movedMap[id];
-                                    fluid.updateAriaLabel(selectable, oldLabel);
-                                }
-                            });
-                            labelOptions.dynamicLabel = true;
-                        }
-                        fluid.updateAriaLabel(selectable, label.label, labelOptions);
-                    });
-                },
-                onMove: function (item, newPosition) {
-                    fluid.clear(movedMap); // if we somehow were fooled into missing a defocus, at least clear the map on a 2nd move
-                    var movingId = fluid.allocateSimpleId(item);
-                    movedMap[movingId] = {
-                        oldRender: that.renderLabel(item)
-                    };
-                }
-            }
-        };
-        return that;
-    };
-    
-    fluid.reorderer.labeller.renderLabel = function (that, selectable, recentPosition) {
-        var geom = that.options.getGeometricInfo();
-        var indices = fluid.reorderer.indexRebaser(geom.elementIndexer(selectable));
-        indices.moduleCell = that.moduleCell;
-            
-        var elementClass = geom.elementMapper(selectable);
-        var labelSource = that.dom.locate("labelSource", selectable);
-        var recentStatus;
-        if (recentPosition) {
-            recentStatus = that.resolver.resolve("recentStatus", {position: recentPosition});
-        }
-        var topModel = {
-            item: typeof(labelSource) === "string" ? labelSource: fluid.dom.getElementText(fluid.unwrap(labelSource)),
-            position: that.positionTemplate.resolveFunc(that.positionTemplate.template, indices),
-            movable: that.resolver.resolve(elementClass === "locked" ? "fixed" : "movable"),
-            recentStatus: recentStatus || ""
-        };
-        
-        var template = that.resolver.lookup(["overallTemplate"]);
-        var label = template.resolveFunc(template.template, topModel);
-        return {
-            position: topModel.position,
-            label: label
-        };
-    };
-
-})(jQuery, fluid_1_4);
-/*
-Copyright 2008-2009 University of Cambridge
-Copyright 2008-2009 University of Toronto
-Copyright 2010 Lucendo Development Ltd.
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global fluid_1_4:true, jQuery*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {
-    
-    var deriveLightboxCellBase = function (namebase, index) {
-        return namebase + "lightbox-cell:" + index + ":";
-    };
-            
-    var addThumbnailActivateHandler = function (container) {
-        var enterKeyHandler = function (evt) {
-            if (evt.which === fluid.reorderer.keys.ENTER) {
-                var thumbnailAnchors = $("a", evt.target);
-                document.location = thumbnailAnchors.attr("href");
-            }
-        };
-        
-        container.keypress(enterKeyHandler);
-    };
-    
-    // Custom query method seeks all tags descended from a given root with a 
-    // particular tag name, whose id matches a regex.
-    var seekNodesById = function (rootnode, tagname, idmatch) {
-        var inputs = rootnode.getElementsByTagName(tagname);
-        var togo = [];
-        for (var i = 0; i < inputs.length; i += 1) {
-            var input = inputs[i];
-            var id = input.id;
-            if (id && id.match(idmatch)) {
-                togo.push(input);
-            }
-        }
-        return togo;
-    };
-    
-    var createImageCellFinder = function (parentNode, containerId) {
-        parentNode = fluid.unwrap(parentNode);
-        
-        var lightboxCellNamePattern = "^" + deriveLightboxCellBase(containerId, "[0-9]+") + "$";
-        
-        return function () {
-            // This orderable finder assumes that the lightbox thumbnails are 'div' elements
-            return seekNodesById(parentNode, "div", lightboxCellNamePattern);
-        };
-    };
-    
-    var seekForm = function (container) {
-        return fluid.findAncestor(container, function (element) {
-            return $(element).is("form");
-        });
-    };
-    
-    var seekInputs = function (container, reorderform) {
-        return seekNodesById(reorderform, 
-                             "input", 
-                             "^" + deriveLightboxCellBase(container.attr("id"), "[^:]*") + "reorder-index$");
-    };
-    
-    var mapIdsToNames = function (container, reorderform) {
-        var inputs = seekInputs(container, reorderform);
-        for (var i = 0; i < inputs.length; i++) {
-            var input = inputs[i];
-            var name = input.name;
-            input.name = name || input.id;
-        }
-    };
-    
-    /**
-     * Returns a default afterMove listener using the id-based, form-driven scheme for communicating with the server.
-     * It is implemented by nesting hidden form fields inside each thumbnail container. The value of these form elements
-     * represent the order for each image. This default listener submits the form's default 
-     * action via AJAX.
-     * 
-     * @param {jQueryable} container the Image Reorderer's container element 
-     */
-    var createIDAfterMoveListener = function (container) {
-        var reorderform = seekForm(container);
-        mapIdsToNames(container, reorderform);
-        
-        return function () {
-            var inputs, i;
-            inputs = seekInputs(container, reorderform);
-            
-            for (i = 0; i < inputs.length; i += 1) {
-                inputs[i].value = i;
-            }
-        
-            if (reorderform && reorderform.action) {
-                var order = $(reorderform).serialize();
-                $.post(reorderform.action, 
-                       order,
-                       function (type, data, evt) { /* No-op response */ });
-            }
-        };
-    };
-
-    
-    var setDefaultValue = function (target, path, value) {
-        var previousValue = fluid.get(target, path);
-        var valueToSet = previousValue || value;
-        fluid.set(target, path, valueToSet);
-    };
-    
-    // Public Lightbox API
-    /**
-     * Creates a new Lightbox instance from the specified parameters, providing full control over how
-     * the Lightbox is configured.
-     * 
-     * @param {Object} container 
-     * @param {Object} options 
-     */
-    fluid.reorderImages = function (container, options) {
-        // Instantiate a mini-Image Reorderer component, then feed its options to the real Reorderer.
-        var that = fluid.initView("fluid.reorderImages", container, options);
-        
-        // If the user didn't specify their own afterMove or movables options,
-        // set up defaults for them using the old id-based scheme.
-        // Backwards API compatiblity. Remove references to afterMoveCallback by Infusion 1.5.
-        setDefaultValue(that, "options.listeners.afterMove", 
-                        that.options.afterMoveCallback || createIDAfterMoveListener(that.container));
-        setDefaultValue(that, "options.selectors.movables", 
-                        createImageCellFinder(that.container, that.container.attr("id")));
-        
-        var reorderer = fluid.reorderer(that.container, that.options);
-        
-        fluid.tabindex($("a", that.container), -1);
-        addThumbnailActivateHandler(that.container);
-        
-        return reorderer;
-    };
-   
-    // This function now deprecated. Please use fluid.reorderImages() instead.
-    fluid.lightbox = fluid.reorderImages;
-    
-    fluid.defaults("fluid.reorderImages", {
-        layoutHandler: "fluid.gridLayoutHandler",
-
-        selectors: {
-            labelSource: ".flc-reorderer-imageTitle"
-        }
-    });
-
-})(jQuery, fluid_1_4);
-/*
-Copyright 2008-2009 University of Cambridge
-Copyright 2008-2009 University of Toronto
-Copyright 2010-2011 OCAD University
-Copyright 2010 Lucendo Development Ltd.
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global fluid_1_4:true, jQuery*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {
-    
-    fluid.registerNamespace("fluid.moduleLayout");
-
-    /**
-     * Calculate the location of the item and the column in which it resides.
-     * @return  An object with column index and item index (within that column) properties.
-     *          These indices are -1 if the item does not exist in the grid.
-     */
-    // unsupported - NON-API function
-    fluid.moduleLayout.findColumnAndItemIndices = function (item, layout) {
-        return fluid.find(layout.columns,
-            function (column, colIndex) {
-                var index = $.inArray(item, column.elements);
-                return index === -1 ? undefined : {columnIndex: colIndex, itemIndex: index};
-            }, {columnIndex: -1, itemIndex: -1});
-    };
-    // unsupported - NON-API function
-    fluid.moduleLayout.findColIndex = function (item, layout) {
-        return fluid.find(layout.columns,
-            function (column, colIndex) {
-                return item === column.container ? colIndex : undefined;
-            }, -1);
-    };
-
-    /**
-     * Move an item within the layout object. 
-     */
-    // unsupported - NON-API function
-    fluid.moduleLayout.updateLayout = function (item, target, position, layout) {
-        item = fluid.unwrap(item);
-        target = fluid.unwrap(target);
-        var itemIndices = fluid.moduleLayout.findColumnAndItemIndices(item, layout);
-        layout.columns[itemIndices.columnIndex].elements.splice(itemIndices.itemIndex, 1);
-        var targetCol;
-        if (position === fluid.position.INSIDE) {
-            targetCol = layout.columns[fluid.moduleLayout.findColIndex(target, layout)].elements;
-            targetCol.splice(targetCol.length, 0, item);
-
-        } else {
-            var relativeItemIndices = fluid.moduleLayout.findColumnAndItemIndices(target, layout);
-            targetCol = layout.columns[relativeItemIndices.columnIndex].elements;
-            position = fluid.normalisePosition(position, 
-                  itemIndices.columnIndex === relativeItemIndices.columnIndex, 
-                  relativeItemIndices.itemIndex, itemIndices.itemIndex);
-            var relative = position === fluid.position.BEFORE ? 0 : 1;
-            targetCol.splice(relativeItemIndices.itemIndex + relative, 0, item);
-        }
-    };
-       
-    /**
-     * Builds a layout object from a set of columns and modules.
-     * @param {jQuery} container
-     * @param {jQuery} columns
-     * @param {jQuery} portlets
-     */
-    fluid.moduleLayout.layoutFromFlat = function (container, columns, portlets) {
-        var layout = {};
-        layout.container = container;
-        layout.columns = fluid.transform(columns, 
-            function (column) {
-                return {
-                    container: column,
-                    elements: $.makeArray(portlets.filter(function () {
-                          // is this a bug in filter? would have expected "this" to be 1st arg
-                        return fluid.dom.isContainer(column, this);
-                    }))
-                };
-            });
-        return layout;
-    };
-      
-    /**
-     * Builds a layout object from a serialisable "layout" object consisting of id lists
-     */
-    fluid.moduleLayout.layoutFromIds = function (idLayout) {
-        return {
-            container: fluid.byId(idLayout.id),
-            columns: fluid.transform(idLayout.columns, function (column) {
-                return {
-                    container: fluid.byId(column.id),
-                    elements: fluid.transform(column.children, fluid.byId)
-                };
-            })
-        };
-    };
-      
-    /**
-     * Serializes the current layout into a structure of ids
-     */
-    fluid.moduleLayout.layoutToIds = function (idLayout) {
-        return {
-            id: fluid.getId(idLayout.container),
-            columns: fluid.transform(idLayout.columns, function (column) {
-                return {
-                    id: fluid.getId(column.container),
-                    children: fluid.transform(column.elements, fluid.getId)
-                };
-            })
-        };
-    };
-    
-    var defaultOnShowKeyboardDropWarning = function (item, dropWarning) {
-        if (dropWarning) {
-            var offset = $(item).offset();
-            dropWarning = $(dropWarning);
-            dropWarning.css("position", "absolute");
-            dropWarning.css("top", offset.top);
-            dropWarning.css("left", offset.left);
-        }
-    };
-    
-    fluid.defaults(true, "fluid.moduleLayoutHandler", 
-        {orientation: fluid.orientation.VERTICAL,
-         containerRole: fluid.reorderer.roles.REGIONS,
-         selectablesTabindex: -1,
-         sentinelize:         true
-         });
-       
-    /**
-     * Module Layout Handler for reordering content modules.
-     * 
-     * General movement guidelines:
-     * 
-     * - Arrowing sideways will always go to the top (moveable) module in the column
-     * - Moving sideways will always move to the top available drop target in the column
-     * - Wrapping is not necessary at this first pass, but is ok
-     */
-    fluid.moduleLayoutHandler = function (container, options, dropManager, dom) {
-        var that = {};
-        
-        function computeLayout() {
-            var togo;
-            if (options.selectors.modules) {
-                togo = fluid.moduleLayout.layoutFromFlat(container, dom.locate("columns"), dom.locate("modules"));
-            }
-            if (!togo) {
-                var idLayout = fluid.get(options, "moduleLayout.layout");
-                fluid.moduleLayout.layoutFromIds(idLayout);
-            }
-            return togo;
-        }
-        var layout = computeLayout();
-        that.layout = layout;
-        
-        function isLocked(item) {
-            var lockedModules = options.selectors.lockedModules ? dom.fastLocate("lockedModules") : [];
-            return $.inArray(item, lockedModules) !== -1;
-        }
-
-        that.getRelativePosition  = 
-           fluid.reorderer.relativeInfoGetter(options.orientation, 
-                 fluid.reorderer.WRAP_LOCKED_STRATEGY, fluid.reorderer.GEOMETRIC_STRATEGY, 
-                 dropManager, dom, options.disableWrap);
-                 
-        that.getGeometricInfo = function () {
-            var extents = [];
-            var togo = {extents: extents,
-                        sentinelize: options.sentinelize};
-            togo.elementMapper = function (element) {
-                return isLocked(element) ? "locked" : null;
-            };
-            togo.elementIndexer = function (element) {
-                var indices = fluid.moduleLayout.findColumnAndItemIndices(element, that.layout);
-                return {
-                    index:        indices.itemIndex,
-                    length:       layout.columns[indices.columnIndex].elements.length,
-                    moduleIndex:  indices.columnIndex,
-                    moduleLength: layout.columns.length
-                };
-            };
-            for (var col = 0; col < layout.columns.length; col++) {
-                var column = layout.columns[col];
-                var thisEls = {
-                    orientation: options.orientation,
-                    elements: $.makeArray(column.elements),
-                    parentElement: column.container
-                };
-              //  fluid.log("Geometry col " + col + " elements " + fluid.dumpEl(thisEls.elements) + " isLocked [" + 
-              //       fluid.transform(thisEls.elements, togo.elementMapper).join(", ") + "]");
-                extents.push(thisEls);
-            }
-
-            return togo;
-        };
-        
-        function computeModules(all) {
-            return function () {
-                var modules = fluid.accumulate(layout.columns, function (column, list) {
-                    return list.concat(column.elements); // note that concat will not work on a jQuery
-                }, []);
-                if (!all) {
-                    fluid.remove_if(modules, isLocked);
-                }
-                return modules;
-            };
-        }
-        
-        that.returnedOptions = {
-            selectors: {
-                movables: computeModules(false),
-                dropTargets: computeModules(false),
-                selectables: computeModules(true)
-            },
-            listeners: {
-                onMove: {
-                    priority: "last",
-                    listener: function (item, requestedPosition) {
-                        fluid.moduleLayout.updateLayout(item, requestedPosition.element, requestedPosition.position, layout);
-                    }
-                },
-                onRefresh: function () {
-                    layout = computeLayout();
-                    that.layout = layout;
-                },
-                "onShowKeyboardDropWarning.setPosition": defaultOnShowKeyboardDropWarning
-            }
-        };
-        
-        that.getModel = function () {
-            return fluid.moduleLayout.layoutToIds(layout);
-        };
-              
-        return that;
-    };
-})(jQuery, fluid_1_4);
-/*
-Copyright 2008-2009 University of Cambridge
-Copyright 2008-2009 University of Toronto
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global fluid_1_4:true, jQuery*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {
- 
-    /**
-     * Simple way to create a layout reorderer.
-     * @param {selector} a jQueryable (selector, element, jQuery) for the layout container
-     * @param {Object} a map of selectors for columns and modules within the layout
-     * @param {Function} a function to be called when the order changes 
-     * @param {Object} additional configuration options
-     */
-    fluid.reorderLayout = function (container, userOptions) {
-        var assembleOptions = {
-            layoutHandler: "fluid.moduleLayoutHandler",
-            selectors: {
-                columns: ".flc-reorderer-column",
-                modules: ".flc-reorderer-module"
-            }
-        };
-        var options = $.extend(true, assembleOptions, userOptions);
-        return fluid.reorderer(container, options);
-    };    
-})(jQuery, fluid_1_4);
-/*
-Copyright 2009 University of Cambridge
-Copyright 2009 University of Toronto
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global fluid_1_4:true, jQuery*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {
-
-    /*
-     *  TODO: 
-     *  - get and implement a design for the table of contents 
-     *  - make the toc template pluggable
-     *  - make sure getting headings using something other then a selector works
-     *  - move interesting parts of the template to the defaults ie. link
-     */ 
-    
-
-    /**
-     * Inserts an anchor into the page in front of the element.
-     * @param {Object} el
-     */    
-    var insertAnchor = function (el) {
-        var a = $("<a name='" + el.text() + "' />", el[0].ownerDocument);
-        el.before(a);
-    };
-    
-    /**
-     * Creates a generic tree node
-     */
-    var createNode = function (id) {
-        var node = {
-            ID: id,
-            children: []
-        };
-        return node;
-    };
-
-    /**
-     * Creates the renderer tree that matches the table of contents template
-     * @param {jQuery Object} headings - the headings to be put into the table of contents
-     */
-    var createTree = function (headings, levels) {
-        
-        // Builds the tree recursively 
-        var generateTree = function (nodes, items, level) {
-            if (items.length === 0) {
-                return;
-            }
-            
-            var item = items[0];
-            
-            if (level === item.level) {
-                nodes[nodes.length - 1].push(item.leaf);
-                items.shift();
-                return generateTree(nodes, items, level);
-            }
-            
-            if (level < item.level) {
-                var prefix = level > -1 ? "level" + (level + 1) + ":" : "";
-                var postfix = level === -1 ? "s:" : "s";
-                var name = prefix + "level" + (level + 2) + postfix;
-                var myNode = createNode(name);
-                nodes[nodes.length - 1].push(myNode);
-                nodes.push(myNode.children);
-                return generateTree(nodes, items, level + 1);
-            }
-            
-            if (level > item.level) {
-                nodes.pop();
-                return generateTree(nodes, items, level - 1);
-            }
-        };
-
-        var tree = {
-            children: []
-        };
-        
-        // Leaf nodes for the renderer tree from the headings
-        var items = fluid.transform(headings, function (heading) {
-                var level = $.inArray(heading.tagName, levels);
-                var text = $(heading).text();
-                return {
-                    level: level,
-                    leaf: {
-                        ID: "level" + (level + 1) + ":item",
-                        children: [{
-                            ID: "link",
-                            linktext: text,
-                            target: "#" + text
-                        }]
-                    }
-                };
-            });
-
-        generateTree([tree.children], items, -1);
-        
-        return tree;
-    };
-    
-    var buildTOC = function (container, headings, levels, templateURL, afterRender) {
-        // Insert anchors into the page that the table of contents will link to
-        headings.each(function (i, el) {
-            insertAnchor($(el));
-        });
-        
-        // Data structure needed by fetchResources
-        var resources = {
-            toc: {
-                href: templateURL
-            }
-        };
-        
-        // Get the template, create the tree and render the table of contents
-        fluid.fetchResources(resources, function () {
-            var templates = fluid.parseTemplates(resources, ["toc"], {});
-            var node = $("<div></div>", container[0].ownerDocument);
-            fluid.reRender(templates, node, createTree(headings, levels), {});
-            container.prepend(node);
-            afterRender.fire(node);
-        });
-    };
-
-    fluid.tableOfContents = function (container, options) {
-        var that = fluid.initView("fluid.tableOfContents", container, options);
-
-        // TODO: need better name for tocNode. and node, while you're at it. 
-        //       also, should the DOM be exposed in this way? Is there a better way to handle this?
-        that.events.afterRender.addListener(function (node) {
-            that.tocNode = $(node);
-        });
-
-        buildTOC(that.container, that.locate("headings"), that.options.levels, that.options.templateUrl, that.events.afterRender);
-
-        // TODO: is it weird to have hide and show on a component? 
-        that.hide = function () {
-            if (that.tocNode) {
-                that.tocNode.hide();
-            }
-        };
-        
-        that.show = function () {
-            if (that.tocNode) {
-                that.tocNode.show();
-            }
-        };
-
-        return that;
-    };
-    
-    fluid.defaults("fluid.tableOfContents", {  
-        selectors: {
-            headings: ":header"
-        },
-        events: {
-            afterRender: null
-        },
-        templateUrl: "../html/TableOfContents.html",
-        levels: ["H1", "H2", "H3", "H4", "H5", "H6"]
-    });
-
-})(jQuery, fluid_1_4);
-/*
-Copyright 2008-2009 University of Cambridge
-Copyright 2008-2009 University of Toronto
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global fluid_1_4:true, jQuery*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {
-
-    /****************
-     * UI Enhancer  *
-     ****************/
-
-    /**
-     * Searches within the container for things that match the selector and then replaces the classes 
-     * that are matched by the regular expression with the new value. 
-     * 
-     * @param {Object} container
-     * @param {Object} selector
-     * @param {Object} regExp
-     * @param {Object} newVal
-     */
-    var replaceClass = function (container, selector, regExp, newVal) {
-        newVal = newVal || "";
-        $(selector, container).andSelf().each(function (i) {
-            var attr = ($.browser.msie === false) ? 'class' : 'className'; // TODO: does this need to happen inside the loop?
-            if (this.getAttribute(attr)) {
-                // The regular expression was required for speed
-                this.setAttribute(attr, this.getAttribute(attr).replace(regExp, newVal));
-            }
-        });
-        
-    };
-    
-    /**
-     * Adds the class related to the setting to the element
-     * @param {jQuery} element
-     * @param {String} settingName
-     * @param {String} value
-     * @param {Object} classnameMap
-     */
-    var addClassForSetting = function (element, settingName, value, classnameMap) {
-        var settingValues = classnameMap[settingName] || {}; 
-        var className = settingValues[value];
-        if (className) {
-            element.addClass(className);
-        }
-    };
-
-    /**
-     * Returns true if the value is true or the string "true", false otherwise
-     * @param {Object} val
-     */
-    var isTrue = function (val) {
-        return val && (val === true || val === "true");
-    };
-    
-    /**
-     * Shows the table of contents when tocSetting is "On". Hides the table of contents otherwise.
-     * @param {Object} that
-     * @param {Object} tocSetting
-     */
-    var setToc = function (that, tocSetting) {
-        if (isTrue(tocSetting)) {
-            if (that.tableOfContents) {
-                that.tableOfContents.show();
-            } else {
-                that.tableOfContents = fluid.initSubcomponent(that, "tableOfContents", 
-                        [that.container, fluid.COMPONENT_OPTIONS]);
-            }
-        } else {
-            if (that.tableOfContents) {
-                that.tableOfContents.hide();
-            }
-        }        
-    };
-    
-    /**
-     * Sets the line spacing on the container.  
-     * @param {Object} container
-     * @param {Object} spacing
-     */
-    var setLineSpacing = function (container, spacing) {
-        spacing = spacing && spacing > 0 ? spacing : 1; 
-        container.css("line-height", spacing + "em");
-    };
-
-    /**
-     * Sets the font size on the container. Removes all fss classes that decrease font size. 
-     * @param {Object} container
-     * @param {Object} size
-     */
-    var setMinSize = function (container, size) {
-        // TODO: fss font size class prefix is hardcoded here
-        if (size && size > 0) {
-            container.css("font-size", size + "pt");
-            replaceClass(container, "[class*=fl-font-size-]", /\bfl-font-size-[0-9]{1,2}\s+/g, 'fl-font-size-100');
-        } else {
-            container.css("font-size", ""); // empty is same effect as not being set
-        }
-    };
-
-    /**
-     * Styles the container based on the settings passed in
-     * 
-     * @param {Object} container
-     * @param {Object} settings
-     * @param {Object} classnameMap
-     */
-    var addStyles = function (container, settings, classnameMap) {
-        addClassForSetting(container, "textFont", settings.textFont, classnameMap);
-        addClassForSetting(container, "textSpacing", settings.textSpacing, classnameMap);
-        addClassForSetting(container, "theme", settings.theme, classnameMap);
-        addClassForSetting(container, "layout", settings.layout, classnameMap);
-    };
-    
-    /**
-     * Adds or removes the classname to/from the elements based upon the setting.
-     * @param {Object} elements
-     * @param {Object} setting
-     * @param {Object} classname
-     */
-    var styleElements = function (elements, setting, classname) {
-        if (setting) {
-            elements.addClass(classname);
-        } else {
-            elements.removeClass(classname);
-        }        
-    };
-    
-    /**
-     * Style links in the container according to the settings
-     * @param {Object} container
-     * @param {Object} settings
-     * @param {Object} classnameMap
-     */
-    var styleLinks = function (container, settings, classnameMap) {
-        var links = $("a", container);
-        // TODO: collect up the classnames and add or remove them all at once. 
-        styleElements(links, settings.linksUnderline, classnameMap.linksUnderline);
-        styleElements(links, settings.linksBold, classnameMap.linksBold);
-        styleElements(links, settings.linksLarger, classnameMap.linksLarger);
-    };
-
-    /**
-     * Style inputs in the container according to the settings
-     * @param {Object} container
-     * @param {Object} settings
-     * @param {Object} classnameMap
-     */
-    var styleInputs = function (container, settings, classnameMap) {
-        styleElements($("input", container), settings.inputsLarger, classnameMap.inputsLarger);
-    };
-     
-    /**
-     * Initialize the model first looking at options.savedSettings, then in the settingsStore and finally in the options.defaultSiteSettings
-     * @param {Object} that
-     */
-    var initModel = function (that) {
-        // First check for settings in the options
-        if (that.options.savedSettings) {
-            that.model = that.options.savedSettings;
-            return;
-        }
-  
-        // Use the settingsStore or the defaultSiteSettings if there are no settings
-        that.model = that.settingsStore.fetch() || fluid.copy(that.defaultSiteSettings);        
-    };
-
-    /**
-     * Clears FSS classes from within the container that may clash with the current settings.
-     * These are the classes from the classnameMap for settings where we work on the container rather
-     * then on individual elements.
-     * @param {Object} that
-     * @return {String} the classnames that were removed separated by spaces
-     */
-    var clearClashingClasses = function (container, classnameMap) {
-        var settingsWhichMayClash = ["textFont", "textSpacing", "theme", "layout"];  // + no background images
-        var classesToRemove =  "fl-noBackgroundImages";
-        var selector = ".fl-noBackgroundImages";
-        
-        for (var i = 0; i < settingsWhichMayClash.length; i++) {
-            var settingValues = classnameMap[settingsWhichMayClash[i]];
-            for (var val in settingValues) {
-                var classname = settingValues[val];
-                if (classname) {
-                    classesToRemove = classesToRemove + " " + classname;
-                    selector = selector + ",." + classname;
-                }
-            }
-        }
-        
-        $(selector, container).removeClass(classesToRemove);
-        return classesToRemove;
-    };
-    
-    var setupUIEnhancer = function (that) {
-        that.settingsStore = fluid.initSubcomponent(that, "settingsStore", [fluid.COMPONENT_OPTIONS]); 
-        initModel(that);
-        that.refreshView();        
-    };
-      
-    /**
-     * Component that works in conjunction with FSS to transform the interface based on settings. 
-     * @param {Object} doc
-     * @param {Object} options
-     */
-    fluid.uiEnhancer = function (doc, options) {
-        doc = doc || document;
-        var that = fluid.initView("fluid.uiEnhancer", doc, options);
-        $(doc).data("uiEnhancer", that);
-        that.container = $("body", doc);
-        that.defaultSiteSettings = that.options.defaultSiteSettings;
-        
-        var clashingClassnames;
-        
-        /**
-         * Transforms the interface based on the settings in that.model
-         */
-        that.refreshView = function () {
-            that.container.removeClass(clashingClassnames);
-            addStyles(that.container, that.model, that.options.classnameMap);
-            styleElements(that.container, !isTrue(that.model.backgroundImages), that.options.classnameMap.noBackgroundImages);
-            setMinSize(that.container, that.model.textSize);
-            setLineSpacing(that.container, that.model.lineSpacing);
-            setToc(that, that.model.toc);
-            styleLinks(that.container, that.model, that.options.classnameMap);
-            styleInputs(that.container, that.model, that.options.classnameMap);
-        };
-        
-        /**
-         * Stores the new settings, refreshes the view to reflect the new settings and fires modelChanged.
-         * @param {Object} newModel
-         * @param {Object} source
-         */
-        that.updateModel = function (newModel, source) {
-            that.events.modelChanged.fire(newModel, that.model, source);
-            fluid.clear(that.model);
-            fluid.model.copyModel(that.model, newModel);
-            that.settingsStore.save(that.model);
-            that.refreshView();
-        };
-
-        clashingClassnames = clearClashingClasses(that.container, that.options.classnameMap);
-        setupUIEnhancer(that);
-        return that;
-    };
-
-    fluid.defaults("fluid.uiEnhancer", {
-        tableOfContents: {
-            type: "fluid.tableOfContents",
-            options: {
-                templateUrl: "../../tableOfContents/html/TableOfContents.html"
-            }
-        },
-        
-        settingsStore: {
-            type: "fluid.uiEnhancer.cookieStore"
-        },
-        
-        events: {
-            modelChanged: null
-        },
-        
-        classnameMap: {
-            "textFont": {
-                "serif": "fl-font-serif",
-                "sansSerif": "fl-font-sans",
-                "arial": "fl-font-arial",
-                "verdana": "fl-font-verdana",
-                "monospace": "fl-font-monospace",
-                "courier": "fl-font-courier",
-                "times": "fl-font-times"
-            },
-            "textSpacing": {
-                "default": "",
-                "wide0": "fl-font-spacing-0",
-                "wide1": "fl-font-spacing-1",
-                "wide2": "fl-font-spacing-2",
-                "wide3": "fl-font-spacing-3",
-                "wide4": "fl-font-spacing-4",
-                "wide5": "fl-font-spacing-5",
-                "wide6": "fl-font-spacing-6"
-            },
-            "theme": {
-                "mist": "fl-theme-mist",
-                "rust": "fl-theme-rust",
-                "highContrast": "fl-theme-hc",
-                "highContrastInverted": "fl-theme-hci",
-                "lowContrast": "fl-theme-slate",
-                "mediumContrast": "fl-theme-coal",
-                "default": ""
-            },
-            "layout": {
-                "simple": "fl-layout-linear",
-                "default": ""
-            },
-            "noBackgroundImages": "fl-noBackgroundImages",
-            "linksUnderline": "fl-text-underline", 
-            "linksBold": "fl-text-bold", 
-            "linksLarger": "fl-text-larger", 
-            "inputsLarger": "fl-text-larger"
-        },
-        defaultSiteSettings: {
-            textFont: "",                 // key from classname map
-            textSpacing: "",              // key from classname map
-            theme: "default",             // key from classname map
-            layout: "default",            // key from classname map
-            textSize: "",                 // in points
-            lineSpacing: "",              // in ems
-            backgroundImages: true,       // boolean
-            toc: false,                   // boolean
-            linksUnderline: false,        // boolean
-            linksBold: false,             // boolean
-            linksLarger: false,           // boolean
-            inputsLarger: false           // boolean
-        }
-    });
-    
-    /****************
-     * Cookie Store *
-     ****************/
-     
-    /**
-     * SettingsStore Subcomponent that uses a cookie for persistence.
-     * @param {Object} options
-     */
-    fluid.uiEnhancer.cookieStore = function (options) {
-        var that = fluid.initLittleComponent("fluid.uiEnhancer.cookieStore", options);
-        
-        /**
-         * Retrieve and return the value of the cookie
-         */
-        that.fetch = function () {
-            var cookie = document.cookie;
-            var cookiePrefix = that.options.cookieName + "=";
-            var retObj, startIndex, endIndex;
-            
-            if (cookie.length > 0) {
-                startIndex = cookie.indexOf(cookiePrefix);
-                if (startIndex > -1) { 
-                    startIndex = startIndex + cookiePrefix.length; 
-                    endIndex = cookie.indexOf(";", startIndex);
-                    if (endIndex < startIndex) {
-                        endIndex = cookie.length;
-                    }
-                    retObj = JSON.parse(decodeURIComponent(cookie.substring(startIndex, endIndex)));
-                } 
-            }
-            
-            return retObj;
-        };
-
-        /**
-         * Saves the settings into a cookie
-         * @param {Object} settings
-         */
-        that.save = function (settings) {
-            document.cookie = that.options.cookieName + "=" +  encodeURIComponent(JSON.stringify(settings));
-        };
-    
-        return that;
-    };
-    
-    fluid.defaults("fluid.uiEnhancer.cookieStore", {
-        cookieName: "fluid-ui-settings"
-    });
-
-    /**************
-     * Temp Store *
-     **************/
-
-    /**
-     * SettingsStore Subcomponent that doesn't do persistence.
-     * @param {Object} options
-     */
-    fluid.uiEnhancer.tempStore = function (options) {
-        var that = {};
-        that.model = null;
-         
-        that.fetch = function () {
-            return that.model;
-        };
-
-        that.save = function (settings) {
-            that.model = settings;
-        };
-    
-        return that;
-    };
-
-})(jQuery, fluid_1_4);
-/*
-Copyright 2008-2009 University of Cambridge
-Copyright 2008-2009 University of Toronto
-Copyright 2010 OCAD University
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global fluid_1_4:true, jQuery*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-
-/******************
- * Textfield Slider *
- ******************/
-
-(function ($, fluid) {
-    
-    // This will be removed once the jQuery UI slider has built in ARIA 
-    var initSliderAria = function (thumb, opts) {
-        var ariaDefaults = {
-            role: 'slider',
-            "aria-valuenow": opts.value,
-            "aria-valuemin": opts.min, 
-            "aria-valuemax": opts.max    
-        };
-        thumb.attr(ariaDefaults);        
-    };
-    
-    var initSlider = function (that) {
-        var sliderOptions = that.options.sliderOptions;
-        sliderOptions.value = that.model;
-        sliderOptions.min = that.min;
-        sliderOptions.max = that.max;
-        
-        var slider = that.locate("slider").slider(sliderOptions);
-        initSliderAria(that.locate("thumb"), sliderOptions); 
-
-        return slider;           
-    };
-    
-    var bindSliderHandlers = function (that, textfield, slider) {
-        slider.bind("slide", function (e, ui) {
-            textfield.val(ui.value);
-            that.updateModel(ui.value, slider);
-        });       
-    };
-    
-    var initTextfield = function (that, slider) {
-        var textfield = that.locate("textfield");
-        textfield.val(that.model);
-        return textfield;
-    };
-    
-    var bindTextfieldHandlers = function (that, textfield, slider) {
-        textfield.change(function () {
-            if (that.isValid(this.value)) {
-                if (!that.isInRange(this.value)) {
-                    this.value = (this.value < that.min) ? that.min : that.max;
-                }
-                slider.slider("value", this.value);
-                that.updateModel(this.value, this);
-            } else {
-                // handle invalid entry
-                this.value = that.model;
-            }
-        });
-        
-        textfield.keypress(function (evt) {
-            if (evt.keyCode !== $.ui.keyCode.ENTER) {
-                return true;
-            } else {
-                $(evt.target).change();
-                $(fluid.findForm(evt.target)).submit();
-                return false;
-            }
-        });
-        
-    };
-    
-    var initTextfieldSlider = function (that) {
-        var slider = initSlider(that);
-        var textfield = initTextfield(that, slider);        
-
-        bindSliderHandlers(that, textfield, slider);
-        bindTextfieldHandlers(that, textfield, slider);
-    };
-    
-    /**
-     * A component that relates a textfield and a jQuery UI slider
-     * @param {Object} container
-     * @param {Object} options
-     */
-    fluid.textfieldSlider = function (container, options) {
-        var that = fluid.initView("fluid.textfieldSlider", container, options);
-        that.model = that.options.value || that.locate("textfield").val();
-        that.min = that.options.min;
-        that.max = that.options.max;
-                
-        /**
-         * Tests if a value is within the min and max of the textfield slider
-         * @param {Object} value
-         */
-        that.isInRange = function (value) {
-            return (value >= that.min && value <= that.max);
-        };
-
-        /**
-         * Tests if a value is a valid number.
-         * @param {Object} value
-         */
-        that.isValid = function (value) {
-            return !(isNaN(parseInt(value, 10)) || isNaN(value));
-        };
-        
-        /**
-         * Updates the model if it is in range. Fires model changed
-         * @param {Object} model
-         * @param {Object} source
-         */
-        that.updateModel = function (model, source) {
-            if (that.isInRange(model)) {
-                that.events.modelChanged.fire(model, that.model, source);
-                that.model = model;
-                that.locate("thumb").attr("aria-valuenow", that.model);                
-            }
-        };
-
-        initTextfieldSlider(that);
-        
-        return that;
-    };
-
-    fluid.defaults("fluid.textfieldSlider", {
-        selectors: {
-            textfield: ".flc-textfieldSlider-field",
-            slider: ".flc-textfieldSlider-slider", 
-            thumb: ".ui-slider-handle"
-        },
-        events: {
-            modelChanged: null
-        },
-        sliderOptions: {
-            orientation: "horizontal"
-        }, 
-        min: 0,
-        max: 100,
-        value: null       
-    });
-    
-})(jQuery, fluid_1_4);
-
-
-/**************
- * UI Options *
- **************/
-
-(function ($, fluid) {
-
-//    TODO
-//    - move the general renderer tree generation functions to the renderer
-//    - add the min font size textfieldSlider to the renderer tree
-//    - pull the strings out of the template and put them into the component?
-//    - should the accordian be part of the component by default?
-
-    var createSelectNode = function (id, selection, list, names) {
-        return {
-            ID: id,
-            selection: {
-                valuebinding: selection
-            },
-            optionlist: {
-                valuebinding: list
-            },
-            optionnames: {
-                valuebinding: names
-            }
-        };
-    };
-        
-    var createSimpleBindingNode = function (id, binding) {
-        return {
-            ID: id,
-            valuebinding: binding
-        };
-    };
-    
-    var generateTree = function (that, rendererModel) {
-        var children = [];
-        children.push(createSelectNode("text-font", "selections.textFont", "labelMap.textFont.values", "labelMap.textFont.names"));
-        children.push(createSelectNode("text-spacing", "selections.textSpacing", "labelMap.textSpacing.values", "labelMap.textSpacing.names"));
-        children.push(createSelectNode("theme", "selections.theme", "labelMap.theme.values", "labelMap.theme.names"));
-
-        var bgiExplodeOpts = {
-            selectID: "background-images",
-            rowID: "background-images-row:",
-            inputID: "background-images-choice",
-            labelID: "background-images-label"
-        };        
-        children.push(createSelectNode("background-images", "selections.backgroundImages", "labelMap.backgroundImages.values", "labelMap.backgroundImages.names"));
-        children = children.concat(fluid.explodeSelectionToInputs(that.options.controlValues.backgroundImages, bgiExplodeOpts));
-        
-        var layoutExplodeOpts = {
-            selectID: "layout",
-            rowID: "layout-row:",
-            inputID: "layout-choice",
-            labelID: "layout-label"
-        };        
-        children.push(createSelectNode("layout", "selections.layout", "labelMap.layout.values", "labelMap.layout.names"));
-        children = children.concat(fluid.explodeSelectionToInputs(that.options.controlValues.layout, layoutExplodeOpts));
-
-        var tocExplodeOpts = {
-            selectID: "toc",
-            rowID: "toc-row:",
-            inputID: "toc-choice",
-            labelID: "toc-label"
-        };        
-        children.push(createSelectNode("toc", "selections.toc", "labelMap.toc.values", "labelMap.toc.names"));
-        children = children.concat(fluid.explodeSelectionToInputs(that.options.controlValues.layout, tocExplodeOpts));
-
-        children.push(createSimpleBindingNode("links-underline", "selections.linksUnderline"));
-        children.push(createSimpleBindingNode("links-bold", "selections.linksBold"));
-        children.push(createSimpleBindingNode("links-larger", "selections.linksLarger"));
-        children.push(createSimpleBindingNode("inputs-larger", "selections.inputsLarger"));
-        
-        return {
-            children: children
-        };
-    };
-    
-    var bindHandlers = function (that) {
-        var saveButton = that.locate("save");
-        saveButton.click(that.save);
-        that.locate("reset").click(that.reset);
-        that.locate("cancel").click(that.cancel);
-        var form = fluid.findForm(saveButton);
-        $(form).submit(function () {
-            that.save();
-        });
-    };
-        
-    var createLabelMap = function (options) {
-        var labelMap = {};
-        
-        for (var item in options.controlValues) {
-            labelMap[item] = {
-                names: options.strings[item],
-                values: options.controlValues[item]
-            };
-        }
-        
-        return labelMap;
-    };
-
-    var createRenderOptions = function (that) {
-        // Turn the boolean select values into strings so they can be properly bound and rendered
-        that.model.toc = String(that.model.toc);
-        that.model.backgroundImages = String(that.model.backgroundImages);
-        
-        var aggregateModel = fluid.assembleModel({
-            selections: {
-                model: that.model,
-                applier: that.applier
-            },
-            labelMap: {model: createLabelMap(that.options)}
-        });
-        
-        return {
-            model: aggregateModel.model,
-            applier: aggregateModel.applier,
-            autoBind: true
-        };
-    };
-    
-    var initSliders = function (that) {
-        var createOptions = function (settingName) {
-            return {
-                listeners: {
-                    modelChanged: function (value) {
-                        that.applier.requestChange(settingName, value);
-                    }
-                },
-                value: that.model[settingName]
-            };    
-        };
-        
-        var options = createOptions("textSize");
-        fluid.merge(null, options, that.options.textMinSize.options);
-        fluid.initSubcomponents(that, "textMinSize", [that.options.selectors.textMinSizeCtrl, options]);
-
-        options = createOptions("lineSpacing");
-        fluid.merge(null, options, that.options.lineSpacing.options);
-        fluid.initSubcomponents(that, "lineSpacing", [that.options.selectors.lineSpacingCtrl, options]);
-        
-    };
-        
-    var mergeSiteDefaults = function (options, siteDefaults) {
-        for (var settingName in options.controlValues) {
-            var setting = String(siteDefaults[settingName]);
-            var settingValues = options.controlValues[settingName];
-            
-            if (setting) {
-                var index = $.inArray(setting, settingValues);
-                if (index === -1) {
-                    var defaultIndex = $.inArray("default", settingValues);
-                    if (defaultIndex === -1) {
-                        settingValues.push(setting);
-                    } else {
-                        settingValues[defaultIndex] = setting;
-                    }
-                }
-            }
-        }
-    };
-    
-    var firstRender = function (that) {
-        var rendererOptions = createRenderOptions(that);
-        var tree = generateTree(that, rendererOptions.model);
-        var source = {node: that.locate("controls")};
-        
-        that.templates = fluid.render(source, that.locate("controls"), tree, rendererOptions);
-        that.events.afterRender.fire();
-        that.events.onReady.fire();
-    };
-    
-    var setupUIOptions = function (that) {
-        fluid.initDependents(that);
-        that.applier.modelChanged.addListener("*",
-            function (newModel, oldModel, changeRequest) {
-                that.events.modelChanged.fire(newModel, oldModel, changeRequest.source);
-            }
-        );
-            
-        mergeSiteDefaults(that.options, that.uiEnhancer.defaultSiteSettings);
-        
-        // TODO: This stuff should already be in the renderer tree
-        that.events.afterRender.addListener(function () {
-            initSliders(that);
-            bindHandlers(that);
-        });
-        
-        if (!that.options.templateUrl) {
-            firstRender(that);
-        } else {
-            // Fetch UI Options' template and parse it on arrival.
-            fluid.fetchResources({
-                uiOptions: {
-                    href: that.options.templateUrl
-                }
-            }, function (spec) {
-                that.container.append(spec.uiOptions.resourceText);
-                firstRender(that);
-            });
-        }
-    };
-    
-    /**
-     * A component that works in conjunction with the UI Enhancer component and the Fluid Skinning System (FSS) 
-     * to allow users to set personal user interface preferences. The UI Options component provides a user 
-     * interface for setting and saving personal preferences, and the UI Enhancer component carries out the 
-     * work of applying those preferences to the user interface.
-     * 
-     * @param {Object} container
-     * @param {Object} options
-     */
-    fluid.uiOptions = function (container, options) {
-        var that = fluid.initView("fluid.uiOptions", container, options);
-        that.uiEnhancer = $(document).data("uiEnhancer");
-        that.model = fluid.copy(that.uiEnhancer.model);
-        that.applier = fluid.makeChangeApplier(that.model);
-
-        // TODO: we shouldn't need the savedModel and should use the uiEnhancer.model instead
-        var savedModel = that.uiEnhancer.model;
- 
-        /**
-         * Saves the current model and fires onSave
-         */ 
-        that.save = function () {
-            that.events.onSave.fire(that.model);
-            savedModel = fluid.copy(that.model); 
-            that.uiEnhancer.updateModel(savedModel);
-        };
-
-        /**
-         * Resets the selections to the integrator's defaults and fires onReset
-         */
-        that.reset = function () {
-            that.events.onReset.fire();
-            that.updateModel(fluid.copy(that.uiEnhancer.defaultSiteSettings), that);
-            that.refreshView();
-        };
-        
-        /**
-         * Resets the selections to the last saved selections and fires onCancel
-         */
-        that.cancel = function () {
-            that.events.onCancel.fire();
-            that.updateModel(fluid.copy(savedModel), that);
-            that.refreshView();            
-        };
-        
-        /**
-         * Rerenders the UI and fires afterRender
-         */
-        that.refreshView = function () {
-            var rendererOptions = createRenderOptions(that);
-            fluid.reRender(that.templates, that.locate("controls"), generateTree(that, rendererOptions.model), rendererOptions);
-            that.events.afterRender.fire();
-        };
-        
-        /**
-         * Updates the model and fires modelChanged
-         * 
-         * @param {Object} newModel
-         * @param {Object} source
-         */
-        that.updateModel = function (newModel, source) {
-            that.events.modelChanged.fire(newModel, that.model, source);
-            fluid.clear(that.model);
-            fluid.model.copyModel(that.model, newModel);
-        };
-        
-        setupUIOptions(that);
-
-        return that;   
-    };
-
-    fluid.defaults("fluid.uiOptions", {
-        gradeNames: ["fluid.viewComponent"], 
-        components: {
-            preview: {
-                type: "fluid.uiOptions.preview",
-                createOnEvent: "onReady"
-            }
-        },
-        textMinSize: {
-            type: "fluid.textfieldSlider",
-            options: {
-                min: 6,
-                max: 30
-            }
-        },
-        lineSpacing: {
-            type: "fluid.textfieldSlider",
-            options: {
-                min: 1,
-                max: 10
-            }
-        },
-        selectors: {
-            controls: ".flc-uiOptions-controls",
-            textMinSizeCtrl: ".flc-uiOptions-min-text-size",
-            lineSpacingCtrl: ".flc-uiOptions-line-spacing",
-            cancel: ".flc-uiOptions-cancel",
-            reset: ".flc-uiOptions-reset",
-            save: ".flc-uiOptions-save",
-            previewFrame : ".flc-uiOptions-preview-frame"
-        },
-        events: {
-            onReady: null,
-            afterRender: null,
-            modelChanged: null,
-            onSave: null,
-            onCancel: null,
-            onReset: null
-        },
-        strings: {
-            textFont: ["Serif", "Sans-Serif", "Arial", "Verdana", "Courier", "Times"],
-            textSpacing: ["Regular", "Wide", "Wider", "Widest"],
-            theme: ["Low Contrast", "Medium Contrast", "Medium Contrast Grey Scale", "High Contrast", "High Contrast Inverted"],
-            backgroundImages: ["Yes", "No"],
-            layout: ["Yes", "No"],
-            toc: ["Yes", "No"]
-        },
-        controlValues: { 
-            textFont: ["serif", "sansSerif", "arial", "verdana", "courier", "times"],
-            textSpacing: ["default", "wide1", "wide2", "wide3"],
-            theme: ["lowContrast", "default", "mediumContrast", "highContrast", "highContrastInverted"],
-            backgroundImages: ["true", "false"],
-            layout: ["simple", "default"],
-            toc: ["true", "false"]
-        },
-        templateUrl: "UIOptions.html"
-    });
-
-    /**********************
-     * UI Options Preview *
-     **********************/
-
-    var setupPreview = function (that) {
-        fluid.initDependents(that);
-        // TODO: Break out iFrame assumptions from Preview.
-        that.container.attr("src", that.options.templateUrl);        
-
-        that.container.load(function () {
-            that.previewFrameContents = that.container.contents();
-            that.events.onReady.fire();
-        });
-        
-    };
-    
-    fluid.uiOptions.preview = function (container, options) {
-        var that = fluid.initView("fluid.uiOptions.preview", container, options);
-        
-        that.updateModel = function (model) {
-            /**
-             * Setimeout is temp fix for http://issues.fluidproject.org/browse/FLUID-2248
-             */
-            setTimeout(function () {
-                if (that.enhancer) {
-                    that.enhancer.updateModel(model);
-                }
-            }, 0);
-        };
-        
-        setupPreview(that);
-        return that;
-    };
-    
-    fluid.defaults("fluid.uiOptions.preview", {
-        gradeNames: ["fluid.viewComponent"], 
-        components: {
-            enhancer: {
-                type: "fluid.uiEnhancer",
-                createOnEvent: "onReady",
-                options: {
-                    savedSettings: "{uiOptions}.model",
-                    tableOfContents: "{uiOptions}.uiEnhancer.options.tableOfContents", // TODO: Tidy this up when the page's UI Enhancer is IoC-visible.
-                    settingsStore: {
-                        type: "fluid.uiEnhancer.tempStore"
-                    }
-                }
-            },
-            eventBinder: {
-                type: "fluid.uiOptions.preview.eventBinder",
-                createOnEvent: "onReady"
-            }
-        },
-        
-        events: {
-            onReady: null
-        },
-        
-        templateUrl: "UIOptionsPreview.html"
-    });
-    
-    fluid.demands("fluid.uiOptions.preview", "fluid.uiOptions", {
-        args: [
-            "{uiOptions}.dom.previewFrame",
-            "{options}"
-        ]
-    });
-    
-    fluid.demands("fluid.uiEnhancer", "fluid.uiOptions.preview", {
-        funcName: "fluid.uiEnhancer",
-        args: [
-            "{preview}.previewFrameContents",
-            "{options}"
-        ]
-    });
-    
-    /***
-     * Event binder binds events between UI Options and the Preview
-     */
-    fluid.defaults("fluid.uiOptions.preview.eventBinder", {
-        gradeNames: ["fluid.eventedComponent", "autoInit"]
-    });
-    
-    fluid.demands("fluid.uiOptions.preview.eventBinder", ["fluid.uiOptions.preview", "fluid.uiOptions"], {
-        options: {
-            listeners: {
-                "{uiOptions}.events.modelChanged": "{preview}.updateModel"
-            }
-        }
-    });
-})(jQuery, fluid_1_4);
-/**
- * jQuery.ScrollTo
- * Copyright (c) 2007-2009 Ariel Flesler - aflesler(at)gmail(dot)com | http://flesler.blogspot.com
- * Dual licensed under MIT and GPL.
- * Date: 5/25/2009
- *
- * @projectDescription Easy element scrolling using jQuery.
- * http://flesler.blogspot.com/2007/10/jqueryscrollto.html
- * Works with jQuery +1.2.6. Tested on FF 2/3, IE 6/7/8, Opera 9.5/6, Safari 3, Chrome 1 on WinXP.
- *
- * @author Ariel Flesler
- * @version 1.4.2
- *
- * @id jQuery.scrollTo
- * @id jQuery.fn.scrollTo
- * @param {String, Number, DOMElement, jQuery, Object} target Where to scroll the matched elements.
- *	  The different options for target are:
- *		- A number position (will be applied to all axes).
- *		- A string position ('44', '100px', '+=90', etc ) will be applied to all axes
- *		- A jQuery/DOM element ( logically, child of the element to scroll )
- *		- A string selector, that will be relative to the element to scroll ( 'li:eq(2)', etc )
- *		- A hash { top:x, left:y }, x and y can be any kind of number/string like above.
-*		- A percentage of the container's dimension/s, for example: 50% to go to the middle.
- *		- The string 'max' for go-to-end. 
- * @param {Number} duration The OVERALL length of the animation, this argument can be the settings object instead.
- * @param {Object,Function} settings Optional set of settings or the onAfter callback.
- *	 @option {String} axis Which axis must be scrolled, use 'x', 'y', 'xy' or 'yx'.
- *	 @option {Number} duration The OVERALL length of the animation.
- *	 @option {String} easing The easing method for the animation.
- *	 @option {Boolean} margin If true, the margin of the target element will be deducted from the final position.
- *	 @option {Object, Number} offset Add/deduct from the end position. One number for both axes or { top:x, left:y }.
- *	 @option {Object, Number} over Add/deduct the height/width multiplied by 'over', can be { top:x, left:y } when using both axes.
- *	 @option {Boolean} queue If true, and both axis are given, the 2nd axis will only be animated after the first one ends.
- *	 @option {Function} onAfter Function to be called after the scrolling ends. 
- *	 @option {Function} onAfterFirst If queuing is activated, this function will be called after the first scrolling ends.
- * @return {jQuery} Returns the same jQuery object, for chaining.
- *
- * @desc Scroll to a fixed position
- * @example $('div').scrollTo( 340 );
- *
- * @desc Scroll relatively to the actual position
- * @example $('div').scrollTo( '+=340px', { axis:'y' } );
- *
- * @dec Scroll using a selector (relative to the scrolled element)
- * @example $('div').scrollTo( 'p.paragraph:eq(2)', 500, { easing:'swing', queue:true, axis:'xy' } );
- *
- * @ Scroll to a DOM element (same for jQuery object)
- * @example var second_child = document.getElementById('container').firstChild.nextSibling;
- *			$('#container').scrollTo( second_child, { duration:500, axis:'x', onAfter:function(){
- *				alert('scrolled!!');																   
- *			}});
- *
- * @desc Scroll on both axes, to different values
- * @example $('div').scrollTo( { top: 300, left:'+=200' }, { axis:'xy', offset:-20 } );
- */
-;(function( $ ){
-	
-	var $scrollTo = $.scrollTo = function( target, duration, settings ){
-		$(window).scrollTo( target, duration, settings );
-	};
-
-	$scrollTo.defaults = {
-		axis:'xy',
-		duration: parseFloat($.fn.jquery) >= 1.3 ? 0 : 1
-	};
-
-	// Returns the element that needs to be animated to scroll the window.
-	// Kept for backwards compatibility (specially for localScroll & serialScroll)
-	$scrollTo.window = function( scope ){
-		return $(window)._scrollable();
-	};
-
-	// Hack, hack, hack :)
-	// Returns the real elements to scroll (supports window/iframes, documents and regular nodes)
-	$.fn._scrollable = function(){
-		return this.map(function(){
-			var elem = this,
-				isWin = !elem.nodeName || $.inArray( elem.nodeName.toLowerCase(), ['iframe','#document','html','body'] ) != -1;
-
-				if( !isWin )
-					return elem;
-
-			var doc = (elem.contentWindow || elem).document || elem.ownerDocument || elem;
-			
-			return $.browser.safari || doc.compatMode == 'BackCompat' ?
-				doc.body : 
-				doc.documentElement;
-		});
-	};
-
-	$.fn.scrollTo = function( target, duration, settings ){
-		if( typeof duration == 'object' ){
-			settings = duration;
-			duration = 0;
-		}
-		if( typeof settings == 'function' )
-			settings = { onAfter:settings };
-			
-		if( target == 'max' )
-			target = 9e9;
-			
-		settings = $.extend( {}, $scrollTo.defaults, settings );
-		// Speed is still recognized for backwards compatibility
-		duration = duration || settings.speed || settings.duration;
-		// Make sure the settings are given right
-		settings.queue = settings.queue && settings.axis.length > 1;
-		
-		if( settings.queue )
-			// Let's keep the overall duration
-			duration /= 2;
-		settings.offset = both( settings.offset );
-		settings.over = both( settings.over );
-
-		return this._scrollable().each(function(){
-			var elem = this,
-				$elem = $(elem),
-				targ = target, toff, attr = {},
-				win = $elem.is('html,body');
-
-			switch( typeof targ ){
-				// A number will pass the regex
-				case 'number':
-				case 'string':
-					if( /^([+-]=)?\d+(\.\d+)?(px|%)?$/.test(targ) ){
-						targ = both( targ );
-						// We are done
-						break;
-					}
-					// Relative selector, no break!
-					targ = $(targ,this);
-				case 'object':
-					// DOMElement / jQuery
-					if( targ.is || targ.style )
-						// Get the real position of the target 
-						toff = (targ = $(targ)).offset();
-			}
-			$.each( settings.axis.split(''), function( i, axis ){
-				var Pos	= axis == 'x' ? 'Left' : 'Top',
-					pos = Pos.toLowerCase(),
-					key = 'scroll' + Pos,
-					old = elem[key],
-					max = $scrollTo.max(elem, axis);
-
-				if( toff ){// jQuery / DOMElement
-					attr[key] = toff[pos] + ( win ? 0 : old - $elem.offset()[pos] );
-
-					// If it's a dom element, reduce the margin
-					if( settings.margin ){
-						attr[key] -= parseInt(targ.css('margin'+Pos)) || 0;
-						attr[key] -= parseInt(targ.css('border'+Pos+'Width')) || 0;
-					}
-					
-					attr[key] += settings.offset[pos] || 0;
-					
-					if( settings.over[pos] )
-						// Scroll to a fraction of its width/height
-						attr[key] += targ[axis=='x'?'width':'height']() * settings.over[pos];
-				}else{ 
-					var val = targ[pos];
-					// Handle percentage values
-					attr[key] = val.slice && val.slice(-1) == '%' ? 
-						parseFloat(val) / 100 * max
-						: val;
-				}
-
-				// Number or 'number'
-				if( /^\d+$/.test(attr[key]) )
-					// Check the limits
-					attr[key] = attr[key] <= 0 ? 0 : Math.min( attr[key], max );
-
-				// Queueing axes
-				if( !i && settings.queue ){
-					// Don't waste time animating, if there's no need.
-					if( old != attr[key] )
-						// Intermediate animation
-						animate( settings.onAfterFirst );
-					// Don't animate this axis again in the next iteration.
-					delete attr[key];
-				}
-			});
-
-			animate( settings.onAfter );			
-
-			function animate( callback ){
-				$elem.animate( attr, duration, settings.easing, callback && function(){
-					callback.call(this, target, settings);
-				});
-			};
-
-		}).end();
-	};
-	
-	// Max scrolling position, works on quirks mode
-	// It only fails (not too badly) on IE, quirks mode.
-	$scrollTo.max = function( elem, axis ){
-		var Dim = axis == 'x' ? 'Width' : 'Height',
-			scroll = 'scroll'+Dim;
-		
-		if( !$(elem).is('html,body') )
-			return elem[scroll] - $(elem)[Dim.toLowerCase()]();
-		
-		var size = 'client' + Dim,
-			html = elem.ownerDocument.documentElement,
-			body = elem.ownerDocument.body;
-
-		return Math.max( html[scroll], body[scroll] ) 
-			 - Math.min( html[size]  , body[size]   );
-			
-	};
-
-	function both( val ){
-		return typeof val == 'object' ? val : { top:val, left:val };
-	};
-
-})( jQuery );/*!	SWFObject v2.2 <http://code.google.com/p/swfobject/> 
-	is released under the MIT License <http://www.opensource.org/licenses/mit-license.php> 
-*/
-
-var swfobject = function() {
-	
-	var UNDEF = "undefined",
-		OBJECT = "object",
-		SHOCKWAVE_FLASH = "Shockwave Flash",
-		SHOCKWAVE_FLASH_AX = "ShockwaveFlash.ShockwaveFlash",
-		FLASH_MIME_TYPE = "application/x-shockwave-flash",
-		EXPRESS_INSTALL_ID = "SWFObjectExprInst",
-		ON_READY_STATE_CHANGE = "onreadystatechange",
-		
-		win = window,
-		doc = document,
-		nav = navigator,
-		
-		plugin = false,
-		domLoadFnArr = [main],
-		regObjArr = [],
-		objIdArr = [],
-		listenersArr = [],
-		storedAltContent,
-		storedAltContentId,
-		storedCallbackFn,
-		storedCallbackObj,
-		isDomLoaded = false,
-		isExpressInstallActive = false,
-		dynamicStylesheet,
-		dynamicStylesheetMedia,
-		autoHideShow = true,
-	
-	/* Centralized function for browser feature detection
-		- User agent string detection is only used when no good alternative is possible
-		- Is executed directly for optimal performance
-	*/	
-	ua = function() {
-		var w3cdom = typeof doc.getElementById != UNDEF && typeof doc.getElementsByTagName != UNDEF && typeof doc.createElement != UNDEF,
-			u = nav.userAgent.toLowerCase(),
-			p = nav.platform.toLowerCase(),
-			windows = p ? /win/.test(p) : /win/.test(u),
-			mac = p ? /mac/.test(p) : /mac/.test(u),
-			webkit = /webkit/.test(u) ? parseFloat(u.replace(/^.*webkit\/(\d+(\.\d+)?).*$/, "$1")) : false, // returns either the webkit version or false if not webkit
-			ie = !+"\v1", // feature detection based on Andrea Giammarchi's solution: http://webreflection.blogspot.com/2009/01/32-bytes-to-know-if-your-browser-is-ie.html
-			playerVersion = [0,0,0],
-			d = null;
-		if (typeof nav.plugins != UNDEF && typeof nav.plugins[SHOCKWAVE_FLASH] == OBJECT) {
-			d = nav.plugins[SHOCKWAVE_FLASH].description;
-			if (d && !(typeof nav.mimeTypes != UNDEF && nav.mimeTypes[FLASH_MIME_TYPE] && !nav.mimeTypes[FLASH_MIME_TYPE].enabledPlugin)) { // navigator.mimeTypes["application/x-shockwave-flash"].enabledPlugin indicates whether plug-ins are enabled or disabled in Safari 3+
-				plugin = true;
-				ie = false; // cascaded feature detection for Internet Explorer
-				d = d.replace(/^.*\s+(\S+\s+\S+$)/, "$1");
-				playerVersion[0] = parseInt(d.replace(/^(.*)\..*$/, "$1"), 10);
-				playerVersion[1] = parseInt(d.replace(/^.*\.(.*)\s.*$/, "$1"), 10);
-				playerVersion[2] = /[a-zA-Z]/.test(d) ? parseInt(d.replace(/^.*[a-zA-Z]+(.*)$/, "$1"), 10) : 0;
-			}
-		}
-		else if (typeof win.ActiveXObject != UNDEF) {
-			try {
-				var a = new ActiveXObject(SHOCKWAVE_FLASH_AX);
-				if (a) { // a will return null when ActiveX is disabled
-					d = a.GetVariable("$version");
-					if (d) {
-						ie = true; // cascaded feature detection for Internet Explorer
-						d = d.split(" ")[1].split(",");
-						playerVersion = [parseInt(d[0], 10), parseInt(d[1], 10), parseInt(d[2], 10)];
-					}
-				}
-			}
-			catch(e) {}
-		}
-		return { w3:w3cdom, pv:playerVersion, wk:webkit, ie:ie, win:windows, mac:mac };
-	}(),
-	
-	/* Cross-browser onDomLoad
-		- Will fire an event as soon as the DOM of a web page is loaded
-		- Internet Explorer workaround based on Diego Perini's solution: http://javascript.nwbox.com/IEContentLoaded/
-		- Regular onload serves as fallback
-	*/ 
-	onDomLoad = function() {
-		if (!ua.w3) { return; }
-		if ((typeof doc.readyState != UNDEF && doc.readyState == "complete") || (typeof doc.readyState == UNDEF && (doc.getElementsByTagName("body")[0] || doc.body))) { // function is fired after onload, e.g. when script is inserted dynamically 
-			callDomLoadFunctions();
-		}
-		if (!isDomLoaded) {
-			if (typeof doc.addEventListener != UNDEF) {
-				doc.addEventListener("DOMContentLoaded", callDomLoadFunctions, false);
-			}		
-			if (ua.ie && ua.win) {
-				doc.attachEvent(ON_READY_STATE_CHANGE, function() {
-					if (doc.readyState == "complete") {
-						doc.detachEvent(ON_READY_STATE_CHANGE, arguments.callee);
-						callDomLoadFunctions();
-					}
-				});
-				if (win == top) { // if not inside an iframe
-					(function(){
-						if (isDomLoaded) { return; }
-						try {
-							doc.documentElement.doScroll("left");
-						}
-						catch(e) {
-							setTimeout(arguments.callee, 0);
-							return;
-						}
-						callDomLoadFunctions();
-					})();
-				}
-			}
-			if (ua.wk) {
-				(function(){
-					if (isDomLoaded) { return; }
-					if (!/loaded|complete/.test(doc.readyState)) {
-						setTimeout(arguments.callee, 0);
-						return;
-					}
-					callDomLoadFunctions();
-				})();
-			}
-			addLoadEvent(callDomLoadFunctions);
-		}
-	}();
-	
-	function callDomLoadFunctions() {
-		if (isDomLoaded) { return; }
-		try { // test if we can really add/remove elements to/from the DOM; we don't want to fire it too early
-			var t = doc.getElementsByTagName("body")[0].appendChild(createElement("span"));
-			t.parentNode.removeChild(t);
-		}
-		catch (e) { return; }
-		isDomLoaded = true;
-		var dl = domLoadFnArr.length;
-		for (var i = 0; i < dl; i++) {
-			domLoadFnArr[i]();
-		}
-	}
-	
-	function addDomLoadEvent(fn) {
-		if (isDomLoaded) {
-			fn();
-		}
-		else { 
-			domLoadFnArr[domLoadFnArr.length] = fn; // Array.push() is only available in IE5.5+
-		}
-	}
-	
-	/* Cross-browser onload
-		- Based on James Edwards' solution: http://brothercake.com/site/resources/scripts/onload/
-		- Will fire an event as soon as a web page including all of its assets are loaded 
-	 */
-	function addLoadEvent(fn) {
-		if (typeof win.addEventListener != UNDEF) {
-			win.addEventListener("load", fn, false);
-		}
-		else if (typeof doc.addEventListener != UNDEF) {
-			doc.addEventListener("load", fn, false);
-		}
-		else if (typeof win.attachEvent != UNDEF) {
-			addListener(win, "onload", fn);
-		}
-		else if (typeof win.onload == "function") {
-			var fnOld = win.onload;
-			win.onload = function() {
-				fnOld();
-				fn();
-			};
-		}
-		else {
-			win.onload = fn;
-		}
-	}
-	
-	/* Main function
-		- Will preferably execute onDomLoad, otherwise onload (as a fallback)
-	*/
-	function main() { 
-		if (plugin) {
-			testPlayerVersion();
-		}
-		else {
-			matchVersions();
-		}
-	}
-	
-	/* Detect the Flash Player version for non-Internet Explorer browsers
-		- Detecting the plug-in version via the object element is more precise than using the plugins collection item's description:
-		  a. Both release and build numbers can be detected
-		  b. Avoid wrong descriptions by corrupt installers provided by Adobe
-		  c. Avoid wrong descriptions by multiple Flash Player entries in the plugin Array, caused by incorrect browser imports
-		- Disadvantage of this method is that it depends on the availability of the DOM, while the plugins collection is immediately available
-	*/
-	function testPlayerVersion() {
-		var b = doc.getElementsByTagName("body")[0];
-		var o = createElement(OBJECT);
-		o.setAttribute("type", FLASH_MIME_TYPE);
-		var t = b.appendChild(o);
-		if (t) {
-			var counter = 0;
-			(function(){
-				if (typeof t.GetVariable != UNDEF) {
-					var d = t.GetVariable("$version");
-					if (d) {
-						d = d.split(" ")[1].split(",");
-						ua.pv = [parseInt(d[0], 10), parseInt(d[1], 10), parseInt(d[2], 10)];
-					}
-				}
-				else if (counter < 10) {
-					counter++;
-					setTimeout(arguments.callee, 10);
-					return;
-				}
-				b.removeChild(o);
-				t = null;
-				matchVersions();
-			})();
-		}
-		else {
-			matchVersions();
-		}
-	}
-	
-	/* Perform Flash Player and SWF version matching; static publishing only
-	*/
-	function matchVersions() {
-		var rl = regObjArr.length;
-		if (rl > 0) {
-			for (var i = 0; i < rl; i++) { // for each registered object element
-				var id = regObjArr[i].id;
-				var cb = regObjArr[i].callbackFn;
-				var cbObj = {success:false, id:id};
-				if (ua.pv[0] > 0) {
-					var obj = getElementById(id);
-					if (obj) {
-						if (hasPlayerVersion(regObjArr[i].swfVersion) && !(ua.wk && ua.wk < 312)) { // Flash Player version >= published SWF version: Houston, we have a match!
-							setVisibility(id, true);
-							if (cb) {
-								cbObj.success = true;
-								cbObj.ref = getObjectById(id);
-								cb(cbObj);
-							}
-						}
-						else if (regObjArr[i].expressInstall && canExpressInstall()) { // show the Adobe Express Install dialog if set by the web page author and if supported
-							var att = {};
-							att.data = regObjArr[i].expressInstall;
-							att.width = obj.getAttribute("width") || "0";
-							att.height = obj.getAttribute("height") || "0";
-							if (obj.getAttribute("class")) { att.styleclass = obj.getAttribute("class"); }
-							if (obj.getAttribute("align")) { att.align = obj.getAttribute("align"); }
-							// parse HTML object param element's name-value pairs
-							var par = {};
-							var p = obj.getElementsByTagName("param");
-							var pl = p.length;
-							for (var j = 0; j < pl; j++) {
-								if (p[j].getAttribute("name").toLowerCase() != "movie") {
-									par[p[j].getAttribute("name")] = p[j].getAttribute("value");
-								}
-							}
-							showExpressInstall(att, par, id, cb);
-						}
-						else { // Flash Player and SWF version mismatch or an older Webkit engine that ignores the HTML object element's nested param elements: display alternative content instead of SWF
-							displayAltContent(obj);
-							if (cb) { cb(cbObj); }
-						}
-					}
-				}
-				else {	// if no Flash Player is installed or the fp version cannot be detected we let the HTML object element do its job (either show a SWF or alternative content)
-					setVisibility(id, true);
-					if (cb) {
-						var o = getObjectById(id); // test whether there is an HTML object element or not
-						if (o && typeof o.SetVariable != UNDEF) { 
-							cbObj.success = true;
-							cbObj.ref = o;
-						}
-						cb(cbObj);
-					}
-				}
-			}
-		}
-	}
-	
-	function getObjectById(objectIdStr) {
-		var r = null;
-		var o = getElementById(objectIdStr);
-		if (o && o.nodeName == "OBJECT") {
-			if (typeof o.SetVariable != UNDEF) {
-				r = o;
-			}
-			else {
-				var n = o.getElementsByTagName(OBJECT)[0];
-				if (n) {
-					r = n;
-				}
-			}
-		}
-		return r;
-	}
-	
-	/* Requirements for Adobe Express Install
-		- only one instance can be active at a time
-		- fp 6.0.65 or higher
-		- Win/Mac OS only
-		- no Webkit engines older than version 312
-	*/
-	function canExpressInstall() {
-		return !isExpressInstallActive && hasPlayerVersion("6.0.65") && (ua.win || ua.mac) && !(ua.wk && ua.wk < 312);
-	}
-	
-	/* Show the Adobe Express Install dialog
-		- Reference: http://www.adobe.com/cfusion/knowledgebase/index.cfm?id=6a253b75
-	*/
-	function showExpressInstall(att, par, replaceElemIdStr, callbackFn) {
-		isExpressInstallActive = true;
-		storedCallbackFn = callbackFn || null;
-		storedCallbackObj = {success:false, id:replaceElemIdStr};
-		var obj = getElementById(replaceElemIdStr);
-		if (obj) {
-			if (obj.nodeName == "OBJECT") { // static publishing
-				storedAltContent = abstractAltContent(obj);
-				storedAltContentId = null;
-			}
-			else { // dynamic publishing
-				storedAltContent = obj;
-				storedAltContentId = replaceElemIdStr;
-			}
-			att.id = EXPRESS_INSTALL_ID;
-			if (typeof att.width == UNDEF || (!/%$/.test(att.width) && parseInt(att.width, 10) < 310)) { att.width = "310"; }
-			if (typeof att.height == UNDEF || (!/%$/.test(att.height) && parseInt(att.height, 10) < 137)) { att.height = "137"; }
-			doc.title = doc.title.slice(0, 47) + " - Flash Player Installation";
-			var pt = ua.ie && ua.win ? "ActiveX" : "PlugIn",
-				fv = "MMredirectURL=" + win.location.toString().replace(/&/g,"%26") + "&MMplayerType=" + pt + "&MMdoctitle=" + doc.title;
-			if (typeof par.flashvars != UNDEF) {
-				par.flashvars += "&" + fv;
-			}
-			else {
-				par.flashvars = fv;
-			}
-			// IE only: when a SWF is loading (AND: not available in cache) wait for the readyState of the object element to become 4 before removing it,
-			// because you cannot properly cancel a loading SWF file without breaking browser load references, also obj.onreadystatechange doesn't work
-			if (ua.ie && ua.win && obj.readyState != 4) {
-				var newObj = createElement("div");
-				replaceElemIdStr += "SWFObjectNew";
-				newObj.setAttribute("id", replaceElemIdStr);
-				obj.parentNode.insertBefore(newObj, obj); // insert placeholder div that will be replaced by the object element that loads expressinstall.swf
-				obj.style.display = "none";
-				(function(){
-					if (obj.readyState == 4) {
-						obj.parentNode.removeChild(obj);
-					}
-					else {
-						setTimeout(arguments.callee, 10);
-					}
-				})();
-			}
-			createSWF(att, par, replaceElemIdStr);
-		}
-	}
-	
-	/* Functions to abstract and display alternative content
-	*/
-	function displayAltContent(obj) {
-		if (ua.ie && ua.win && obj.readyState != 4) {
-			// IE only: when a SWF is loading (AND: not available in cache) wait for the readyState of the object element to become 4 before removing it,
-			// because you cannot properly cancel a loading SWF file without breaking browser load references, also obj.onreadystatechange doesn't work
-			var el = createElement("div");
-			obj.parentNode.insertBefore(el, obj); // insert placeholder div that will be replaced by the alternative content
-			el.parentNode.replaceChild(abstractAltContent(obj), el);
-			obj.style.display = "none";
-			(function(){
-				if (obj.readyState == 4) {
-					obj.parentNode.removeChild(obj);
-				}
-				else {
-					setTimeout(arguments.callee, 10);
-				}
-			})();
-		}
-		else {
-			obj.parentNode.replaceChild(abstractAltContent(obj), obj);
-		}
-	} 
-
-	function abstractAltContent(obj) {
-		var ac = createElement("div");
-		if (ua.win && ua.ie) {
-			ac.innerHTML = obj.innerHTML;
-		}
-		else {
-			var nestedObj = obj.getElementsByTagName(OBJECT)[0];
-			if (nestedObj) {
-				var c = nestedObj.childNodes;
-				if (c) {
-					var cl = c.length;
-					for (var i = 0; i < cl; i++) {
-						if (!(c[i].nodeType == 1 && c[i].nodeName == "PARAM") && !(c[i].nodeType == 8)) {
-							ac.appendChild(c[i].cloneNode(true));
-						}
-					}
-				}
-			}
-		}
-		return ac;
-	}
-	
-	/* Cross-browser dynamic SWF creation
-	*/
-	function createSWF(attObj, parObj, id) {
-		var r, el = getElementById(id);
-		if (ua.wk && ua.wk < 312) { return r; }
-		if (el) {
-			if (typeof attObj.id == UNDEF) { // if no 'id' is defined for the object element, it will inherit the 'id' from the alternative content
-				attObj.id = id;
-			}
-			if (ua.ie && ua.win) { // Internet Explorer + the HTML object element + W3C DOM methods do not combine: fall back to outerHTML
-				var att = "";
-				for (var i in attObj) {
-					if (attObj[i] != Object.prototype[i]) { // filter out prototype additions from other potential libraries
-						if (i.toLowerCase() == "data") {
-							parObj.movie = attObj[i];
-						}
-						else if (i.toLowerCase() == "styleclass") { // 'class' is an ECMA4 reserved keyword
-							att += ' class="' + attObj[i] + '"';
-						}
-						else if (i.toLowerCase() != "classid") {
-							att += ' ' + i + '="' + attObj[i] + '"';
-						}
-					}
-				}
-				var par = "";
-				for (var j in parObj) {
-					if (parObj[j] != Object.prototype[j]) { // filter out prototype additions from other potential libraries
-						par += '<param name="' + j + '" value="' + parObj[j] + '" />';
-					}
-				}
-				el.outerHTML = '<object classid="clsid:D27CDB6E-AE6D-11cf-96B8-444553540000"' + att + '>' + par + '</object>';
-				objIdArr[objIdArr.length] = attObj.id; // stored to fix object 'leaks' on unload (dynamic publishing only)
-				r = getElementById(attObj.id);	
-			}
-			else { // well-behaving browsers
-				var o = createElement(OBJECT);
-				o.setAttribute("type", FLASH_MIME_TYPE);
-				for (var m in attObj) {
-					if (attObj[m] != Object.prototype[m]) { // filter out prototype additions from other potential libraries
-						if (m.toLowerCase() == "styleclass") { // 'class' is an ECMA4 reserved keyword
-							o.setAttribute("class", attObj[m]);
-						}
-						else if (m.toLowerCase() != "classid") { // filter out IE specific attribute
-							o.setAttribute(m, attObj[m]);
-						}
-					}
-				}
-				for (var n in parObj) {
-					if (parObj[n] != Object.prototype[n] && n.toLowerCase() != "movie") { // filter out prototype additions from other potential libraries and IE specific param element
-						createObjParam(o, n, parObj[n]);
-					}
-				}
-				el.parentNode.replaceChild(o, el);
-				r = o;
-			}
-		}
-		return r;
-	}
-	
-	function createObjParam(el, pName, pValue) {
-		var p = createElement("param");
-		p.setAttribute("name", pName);	
-		p.setAttribute("value", pValue);
-		el.appendChild(p);
-	}
-	
-	/* Cross-browser SWF removal
-		- Especially needed to safely and completely remove a SWF in Internet Explorer
-	*/
-	function removeSWF(id) {
-		var obj = getElementById(id);
-		if (obj && obj.nodeName == "OBJECT") {
-			if (ua.ie && ua.win) {
-				obj.style.display = "none";
-				(function(){
-					if (obj.readyState == 4) {
-						removeObjectInIE(id);
-					}
-					else {
-						setTimeout(arguments.callee, 10);
-					}
-				})();
-			}
-			else {
-				obj.parentNode.removeChild(obj);
-			}
-		}
-	}
-	
-	function removeObjectInIE(id) {
-		var obj = getElementById(id);
-		if (obj) {
-			for (var i in obj) {
-				if (typeof obj[i] == "function") {
-					obj[i] = null;
-				}
-			}
-			obj.parentNode.removeChild(obj);
-		}
-	}
-	
-	/* Functions to optimize JavaScript compression
-	*/
-	function getElementById(id) {
-		var el = null;
-		try {
-			el = doc.getElementById(id);
-		}
-		catch (e) {}
-		return el;
-	}
-	
-	function createElement(el) {
-		return doc.createElement(el);
-	}
-	
-	/* Updated attachEvent function for Internet Explorer
-		- Stores attachEvent information in an Array, so on unload the detachEvent functions can be called to avoid memory leaks
-	*/	
-	function addListener(target, eventType, fn) {
-		target.attachEvent(eventType, fn);
-		listenersArr[listenersArr.length] = [target, eventType, fn];
-	}
-	
-	/* Flash Player and SWF content version matching
-	*/
-	function hasPlayerVersion(rv) {
-		var pv = ua.pv, v = rv.split(".");
-		v[0] = parseInt(v[0], 10);
-		v[1] = parseInt(v[1], 10) || 0; // supports short notation, e.g. "9" instead of "9.0.0"
-		v[2] = parseInt(v[2], 10) || 0;
-		return (pv[0] > v[0] || (pv[0] == v[0] && pv[1] > v[1]) || (pv[0] == v[0] && pv[1] == v[1] && pv[2] >= v[2])) ? true : false;
-	}
-	
-	/* Cross-browser dynamic CSS creation
-		- Based on Bobby van der Sluis' solution: http://www.bobbyvandersluis.com/articles/dynamicCSS.php
-	*/	
-	function createCSS(sel, decl, media, newStyle) {
-		if (ua.ie && ua.mac) { return; }
-		var h = doc.getElementsByTagName("head")[0];
-		if (!h) { return; } // to also support badly authored HTML pages that lack a head element
-		var m = (media && typeof media == "string") ? media : "screen";
-		if (newStyle) {
-			dynamicStylesheet = null;
-			dynamicStylesheetMedia = null;
-		}
-		if (!dynamicStylesheet || dynamicStylesheetMedia != m) { 
-			// create dynamic stylesheet + get a global reference to it
-			var s = createElement("style");
-			s.setAttribute("type", "text/css");
-			s.setAttribute("media", m);
-			dynamicStylesheet = h.appendChild(s);
-			if (ua.ie && ua.win && typeof doc.styleSheets != UNDEF && doc.styleSheets.length > 0) {
-				dynamicStylesheet = doc.styleSheets[doc.styleSheets.length - 1];
-			}
-			dynamicStylesheetMedia = m;
-		}
-		// add style rule
-		if (ua.ie && ua.win) {
-			if (dynamicStylesheet && typeof dynamicStylesheet.addRule == OBJECT) {
-				dynamicStylesheet.addRule(sel, decl);
-			}
-		}
-		else {
-			if (dynamicStylesheet && typeof doc.createTextNode != UNDEF) {
-				dynamicStylesheet.appendChild(doc.createTextNode(sel + " {" + decl + "}"));
-			}
-		}
-	}
-	
-	function setVisibility(id, isVisible) {
-		if (!autoHideShow) { return; }
-		var v = isVisible ? "visible" : "hidden";
-		if (isDomLoaded && getElementById(id)) {
-			getElementById(id).style.visibility = v;
-		}
-		else {
-			createCSS("#" + id, "visibility:" + v);
-		}
-	}
-
-	/* Filter to avoid XSS attacks
-	*/
-	function urlEncodeIfNecessary(s) {
-		var regex = /[\\\"<>\.;]/;
-		var hasBadChars = regex.exec(s) != null;
-		return hasBadChars && typeof encodeURIComponent != UNDEF ? encodeURIComponent(s) : s;
-	}
-	
-	/* Release memory to avoid memory leaks caused by closures, fix hanging audio/video threads and force open sockets/NetConnections to disconnect (Internet Explorer only)
-	*/
-	var cleanup = function() {
-		if (ua.ie && ua.win) {
-			window.attachEvent("onunload", function() {
-				// remove listeners to avoid memory leaks
-				var ll = listenersArr.length;
-				for (var i = 0; i < ll; i++) {
-					listenersArr[i][0].detachEvent(listenersArr[i][1], listenersArr[i][2]);
-				}
-				// cleanup dynamically embedded objects to fix audio/video threads and force open sockets and NetConnections to disconnect
-				var il = objIdArr.length;
-				for (var j = 0; j < il; j++) {
-					removeSWF(objIdArr[j]);
-				}
-				// cleanup library's main closures to avoid memory leaks
-				for (var k in ua) {
-					ua[k] = null;
-				}
-				ua = null;
-				for (var l in swfobject) {
-					swfobject[l] = null;
-				}
-				swfobject = null;
-			});
-		}
-	}();
-	
-	return {
-		/* Public API
-			- Reference: http://code.google.com/p/swfobject/wiki/documentation
-		*/ 
-		registerObject: function(objectIdStr, swfVersionStr, xiSwfUrlStr, callbackFn) {
-			if (ua.w3 && objectIdStr && swfVersionStr) {
-				var regObj = {};
-				regObj.id = objectIdStr;
-				regObj.swfVersion = swfVersionStr;
-				regObj.expressInstall = xiSwfUrlStr;
-				regObj.callbackFn = callbackFn;
-				regObjArr[regObjArr.length] = regObj;
-				setVisibility(objectIdStr, false);
-			}
-			else if (callbackFn) {
-				callbackFn({success:false, id:objectIdStr});
-			}
-		},
-		
-		getObjectById: function(objectIdStr) {
-			if (ua.w3) {
-				return getObjectById(objectIdStr);
-			}
-		},
-		
-		embedSWF: function(swfUrlStr, replaceElemIdStr, widthStr, heightStr, swfVersionStr, xiSwfUrlStr, flashvarsObj, parObj, attObj, callbackFn) {
-			var callbackObj = {success:false, id:replaceElemIdStr};
-			if (ua.w3 && !(ua.wk && ua.wk < 312) && swfUrlStr && replaceElemIdStr && widthStr && heightStr && swfVersionStr) {
-				setVisibility(replaceElemIdStr, false);
-				addDomLoadEvent(function() {
-					widthStr += ""; // auto-convert to string
-					heightStr += "";
-					var att = {};
-					if (attObj && typeof attObj === OBJECT) {
-						for (var i in attObj) { // copy object to avoid the use of references, because web authors often reuse attObj for multiple SWFs
-							att[i] = attObj[i];
-						}
-					}
-					att.data = swfUrlStr;
-					att.width = widthStr;
-					att.height = heightStr;
-					var par = {}; 
-					if (parObj && typeof parObj === OBJECT) {
-						for (var j in parObj) { // copy object to avoid the use of references, because web authors often reuse parObj for multiple SWFs
-							par[j] = parObj[j];
-						}
-					}
-					if (flashvarsObj && typeof flashvarsObj === OBJECT) {
-						for (var k in flashvarsObj) { // copy object to avoid the use of references, because web authors often reuse flashvarsObj for multiple SWFs
-							if (typeof par.flashvars != UNDEF) {
-								par.flashvars += "&" + k + "=" + flashvarsObj[k];
-							}
-							else {
-								par.flashvars = k + "=" + flashvarsObj[k];
-							}
-						}
-					}
-					if (hasPlayerVersion(swfVersionStr)) { // create SWF
-						var obj = createSWF(att, par, replaceElemIdStr);
-						if (att.id == replaceElemIdStr) {
-							setVisibility(replaceElemIdStr, true);
-						}
-						callbackObj.success = true;
-						callbackObj.ref = obj;
-					}
-					else if (xiSwfUrlStr && canExpressInstall()) { // show Adobe Express Install
-						att.data = xiSwfUrlStr;
-						showExpressInstall(att, par, replaceElemIdStr, callbackFn);
-						return;
-					}
-					else { // show alternative content
-						setVisibility(replaceElemIdStr, true);
-					}
-					if (callbackFn) { callbackFn(callbackObj); }
-				});
-			}
-			else if (callbackFn) { callbackFn(callbackObj);	}
-		},
-		
-		switchOffAutoHideShow: function() {
-			autoHideShow = false;
-		},
-		
-		ua: ua,
-		
-		getFlashPlayerVersion: function() {
-			return { major:ua.pv[0], minor:ua.pv[1], release:ua.pv[2] };
-		},
-		
-		hasFlashPlayerVersion: hasPlayerVersion,
-		
-		createSWF: function(attObj, parObj, replaceElemIdStr) {
-			if (ua.w3) {
-				return createSWF(attObj, parObj, replaceElemIdStr);
-			}
-			else {
-				return undefined;
-			}
-		},
-		
-		showExpressInstall: function(att, par, replaceElemIdStr, callbackFn) {
-			if (ua.w3 && canExpressInstall()) {
-				showExpressInstall(att, par, replaceElemIdStr, callbackFn);
-			}
-		},
-		
-		removeSWF: function(objElemIdStr) {
-			if (ua.w3) {
-				removeSWF(objElemIdStr);
-			}
-		},
-		
-		createCSS: function(selStr, declStr, mediaStr, newStyleBoolean) {
-			if (ua.w3) {
-				createCSS(selStr, declStr, mediaStr, newStyleBoolean);
-			}
-		},
-		
-		addDomLoadEvent: addDomLoadEvent,
-		
-		addLoadEvent: addLoadEvent,
-		
-		getQueryParamValue: function(param) {
-			var q = doc.location.search || doc.location.hash;
-			if (q) {
-				if (/\?/.test(q)) { q = q.split("?")[1]; } // strip question mark
-				if (param == null) {
-					return urlEncodeIfNecessary(q);
-				}
-				var pairs = q.split("&");
-				for (var i = 0; i < pairs.length; i++) {
-					if (pairs[i].substring(0, pairs[i].indexOf("=")) == param) {
-						return urlEncodeIfNecessary(pairs[i].substring((pairs[i].indexOf("=") + 1)));
-					}
-				}
-			}
-			return "";
-		},
-		
-		// For internal usage only
-		expressInstallCallback: function() {
-			if (isExpressInstallActive) {
-				var obj = getElementById(EXPRESS_INSTALL_ID);
-				if (obj && storedAltContent) {
-					obj.parentNode.replaceChild(storedAltContent, obj);
-					if (storedAltContentId) {
-						setVisibility(storedAltContentId, true);
-						if (ua.ie && ua.win) { storedAltContent.style.display = "block"; }
-					}
-					if (storedCallbackFn) { storedCallbackFn(storedCallbackObj); }
-				}
-				isExpressInstallActive = false;
-			} 
-		}
-	};
-}();
-/**
- * SWFUpload: http://www.swfupload.org, http://swfupload.googlecode.com
- *
- * mmSWFUpload 1.0: Flash upload dialog - http://profandesign.se/swfupload/,  http://www.vinterwebb.se/
- *
- * SWFUpload is (c) 2006-2007 Lars Huring, Olov Nilz�n and Mammon Media and is released under the MIT License:
- * http://www.opensource.org/licenses/mit-license.php
- *
- * SWFUpload 2 is (c) 2007-2008 Jake Roberts and is released under the MIT License:
- * http://www.opensource.org/licenses/mit-license.php
- *
- */
-
-
-/* ******************* */
-/* Constructor & Init  */
-/* ******************* */
-var SWFUpload;
-
-if (SWFUpload == undefined) {
-	SWFUpload = function (settings) {
-		this.initSWFUpload(settings);
-	};
-}
-
-SWFUpload.prototype.initSWFUpload = function (settings) {
-	try {
-		this.customSettings = {};	// A container where developers can place their own settings associated with this instance.
-		this.settings = settings;
-		this.eventQueue = [];
-		this.movieName = "SWFUpload_" + SWFUpload.movieCount++;
-		this.movieElement = null;
-
-
-		// Setup global control tracking
-		SWFUpload.instances[this.movieName] = this;
-
-		// Load the settings.  Load the Flash movie.
-		this.initSettings();
-		this.loadFlash();
-		this.displayDebugInfo();
-	} catch (ex) {
-		delete SWFUpload.instances[this.movieName];
-		throw ex;
-	}
-};
-
-/* *************** */
-/* Static Members  */
-/* *************** */
-SWFUpload.instances = {};
-SWFUpload.movieCount = 0;
-SWFUpload.version = "2.2.0 2009-03-25";
-SWFUpload.QUEUE_ERROR = {
-	QUEUE_LIMIT_EXCEEDED	  		: -100,
-	FILE_EXCEEDS_SIZE_LIMIT  		: -110,
-	ZERO_BYTE_FILE			  		: -120,
-	INVALID_FILETYPE		  		: -130
-};
-SWFUpload.UPLOAD_ERROR = {
-	HTTP_ERROR				  		: -200,
-	MISSING_UPLOAD_URL	      		: -210,
-	IO_ERROR				  		: -220,
-	SECURITY_ERROR			  		: -230,
-	UPLOAD_LIMIT_EXCEEDED	  		: -240,
-	UPLOAD_FAILED			  		: -250,
-	SPECIFIED_FILE_ID_NOT_FOUND		: -260,
-	FILE_VALIDATION_FAILED	  		: -270,
-	FILE_CANCELLED			  		: -280,
-	UPLOAD_STOPPED					: -290
-};
-SWFUpload.FILE_STATUS = {
-	QUEUED		 : -1,
-	IN_PROGRESS	 : -2,
-	ERROR		 : -3,
-	COMPLETE	 : -4,
-	CANCELLED	 : -5
-};
-SWFUpload.BUTTON_ACTION = {
-	SELECT_FILE  : -100,
-	SELECT_FILES : -110,
-	START_UPLOAD : -120
-};
-SWFUpload.CURSOR = {
-	ARROW : -1,
-	HAND : -2
-};
-SWFUpload.WINDOW_MODE = {
-	WINDOW : "window",
-	TRANSPARENT : "transparent",
-	OPAQUE : "opaque"
-};
-
-// Private: takes a URL, determines if it is relative and converts to an absolute URL
-// using the current site. Only processes the URL if it can, otherwise returns the URL untouched
-SWFUpload.completeURL = function(url) {
-	if (typeof(url) !== "string" || url.match(/^https?:\/\//i) || url.match(/^\//)) {
-		return url;
-	}
-	
-	var currentURL = window.location.protocol + "//" + window.location.hostname + (window.location.port ? ":" + window.location.port : "");
-	
-	var indexSlash = window.location.pathname.lastIndexOf("/");
-	if (indexSlash <= 0) {
-		path = "/";
-	} else {
-		path = window.location.pathname.substr(0, indexSlash) + "/";
-	}
-	
-	return /*currentURL +*/ path + url;
-	
-};
-
-
-/* ******************** */
-/* Instance Members  */
-/* ******************** */
-
-// Private: initSettings ensures that all the
-// settings are set, getting a default value if one was not assigned.
-SWFUpload.prototype.initSettings = function () {
-	this.ensureDefault = function (settingName, defaultValue) {
-		this.settings[settingName] = (this.settings[settingName] == undefined) ? defaultValue : this.settings[settingName];
-	};
-	
-	// Upload backend settings
-	this.ensureDefault("upload_url", "");
-	this.ensureDefault("preserve_relative_urls", false);
-	this.ensureDefault("file_post_name", "Filedata");
-	this.ensureDefault("post_params", {});
-	this.ensureDefault("use_query_string", false);
-	this.ensureDefault("requeue_on_error", false);
-	this.ensureDefault("http_success", []);
-	this.ensureDefault("assume_success_timeout", 0);
-	
-	// File Settings
-	this.ensureDefault("file_types", "*.*");
-	this.ensureDefault("file_types_description", "All Files");
-	this.ensureDefault("file_size_limit", 0);	// Default zero means "unlimited"
-	this.ensureDefault("file_upload_limit", 0);
-	this.ensureDefault("file_queue_limit", 0);
-
-	// Flash Settings
-	this.ensureDefault("flash_url", "swfupload.swf");
-	this.ensureDefault("prevent_swf_caching", true);
-	
-	// Button Settings
-	this.ensureDefault("button_image_url", "");
-	this.ensureDefault("button_width", 1);
-	this.ensureDefault("button_height", 1);
-	this.ensureDefault("button_text", "");
-	this.ensureDefault("button_text_style", "color: #000000; font-size: 16pt;");
-	this.ensureDefault("button_text_top_padding", 0);
-	this.ensureDefault("button_text_left_padding", 0);
-	this.ensureDefault("button_action", SWFUpload.BUTTON_ACTION.SELECT_FILES);
-	this.ensureDefault("button_disabled", false);
-	this.ensureDefault("button_placeholder_id", "");
-	this.ensureDefault("button_placeholder", null);
-	this.ensureDefault("button_cursor", SWFUpload.CURSOR.ARROW);
-	this.ensureDefault("button_window_mode", SWFUpload.WINDOW_MODE.WINDOW);
-	
-	// Debug Settings
-	this.ensureDefault("debug", false);
-	this.settings.debug_enabled = this.settings.debug;	// Here to maintain v2 API
-	
-	// Event Handlers
-	this.settings.return_upload_start_handler = this.returnUploadStart;
-	this.ensureDefault("swfupload_loaded_handler", null);
-	this.ensureDefault("file_dialog_start_handler", null);
-	this.ensureDefault("file_queued_handler", null);
-	this.ensureDefault("file_queue_error_handler", null);
-	this.ensureDefault("file_dialog_complete_handler", null);
-	
-	this.ensureDefault("upload_start_handler", null);
-	this.ensureDefault("upload_progress_handler", null);
-	this.ensureDefault("upload_error_handler", null);
-	this.ensureDefault("upload_success_handler", null);
-	this.ensureDefault("upload_complete_handler", null);
-	
-	this.ensureDefault("debug_handler", this.debugMessage);
-
-	this.ensureDefault("custom_settings", {});
-
-	// Other settings
-	this.customSettings = this.settings.custom_settings;
-	
-	// Update the flash url if needed
-	if (!!this.settings.prevent_swf_caching) {
-		this.settings.flash_url = this.settings.flash_url + (this.settings.flash_url.indexOf("?") < 0 ? "?" : "&") + "preventswfcaching=" + new Date().getTime();
-	}
-	
-	if (!this.settings.preserve_relative_urls) {
-		//this.settings.flash_url = SWFUpload.completeURL(this.settings.flash_url);	// Don't need to do this one since flash doesn't look at it
-		this.settings.upload_url = SWFUpload.completeURL(this.settings.upload_url);
-		this.settings.button_image_url = SWFUpload.completeURL(this.settings.button_image_url);
-	}
-	
-	delete this.ensureDefault;
-};
-
-// Private: loadFlash replaces the button_placeholder element with the flash movie.
-SWFUpload.prototype.loadFlash = function () {
-	var targetElement, tempParent;
-
-	// Make sure an element with the ID we are going to use doesn't already exist
-	if (document.getElementById(this.movieName) !== null) {
-		throw "ID " + this.movieName + " is already in use. The Flash Object could not be added";
-	}
-
-	// Get the element where we will be placing the flash movie
-	targetElement = document.getElementById(this.settings.button_placeholder_id) || this.settings.button_placeholder;
-
-	if (targetElement == undefined) {
-		throw "Could not find the placeholder element: " + this.settings.button_placeholder_id;
-	}
-
-	// Append the container and load the flash
-	tempParent = document.createElement("div");
-	tempParent.innerHTML = this.getFlashHTML();	// Using innerHTML is non-standard but the only sensible way to dynamically add Flash in IE (and maybe other browsers)
-	targetElement.parentNode.replaceChild(tempParent.firstChild, targetElement);
-
-	// Fix IE Flash/Form bug
-	if (window[this.movieName] == undefined) {
-		window[this.movieName] = this.getMovieElement();
-	}
-	
-};
-
-// Private: getFlashHTML generates the object tag needed to embed the flash in to the document
-SWFUpload.prototype.getFlashHTML = function () {
-	// Flash Satay object syntax: http://www.alistapart.com/articles/flashsatay
-	return ['<object id="', this.movieName, '" type="application/x-shockwave-flash" data="', this.settings.flash_url, '" width="', this.settings.button_width, '" height="', this.settings.button_height, '" class="swfupload">',
-				'<param name="wmode" value="', this.settings.button_window_mode, '" />',
-				'<param name="movie" value="', this.settings.flash_url, '" />',
-				'<param name="quality" value="high" />',
-				'<param name="menu" value="false" />',
-				'<param name="allowScriptAccess" value="always" />',
-				'<param name="flashvars" value="' + this.getFlashVars() + '" />',
-				'</object>'].join("");
-};
-
-// Private: getFlashVars builds the parameter string that will be passed
-// to flash in the flashvars param.
-SWFUpload.prototype.getFlashVars = function () {
-	// Build a string from the post param object
-	var paramString = this.buildParamString();
-	var httpSuccessString = this.settings.http_success.join(",");
-	
-	// Build the parameter string
-	return ["movieName=", encodeURIComponent(this.movieName),
-			"&amp;uploadURL=", encodeURIComponent(this.settings.upload_url),
-			"&amp;useQueryString=", encodeURIComponent(this.settings.use_query_string),
-			"&amp;requeueOnError=", encodeURIComponent(this.settings.requeue_on_error),
-			"&amp;httpSuccess=", encodeURIComponent(httpSuccessString),
-			"&amp;assumeSuccessTimeout=", encodeURIComponent(this.settings.assume_success_timeout),
-			"&amp;params=", encodeURIComponent(paramString),
-			"&amp;filePostName=", encodeURIComponent(this.settings.file_post_name),
-			"&amp;fileTypes=", encodeURIComponent(this.settings.file_types),
-			"&amp;fileTypesDescription=", encodeURIComponent(this.settings.file_types_description),
-			"&amp;fileSizeLimit=", encodeURIComponent(this.settings.file_size_limit),
-			"&amp;fileUploadLimit=", encodeURIComponent(this.settings.file_upload_limit),
-			"&amp;fileQueueLimit=", encodeURIComponent(this.settings.file_queue_limit),
-			"&amp;debugEnabled=", encodeURIComponent(this.settings.debug_enabled),
-			"&amp;buttonImageURL=", encodeURIComponent(this.settings.button_image_url),
-			"&amp;buttonWidth=", encodeURIComponent(this.settings.button_width),
-			"&amp;buttonHeight=", encodeURIComponent(this.settings.button_height),
-			"&amp;buttonText=", encodeURIComponent(this.settings.button_text),
-			"&amp;buttonTextTopPadding=", encodeURIComponent(this.settings.button_text_top_padding),
-			"&amp;buttonTextLeftPadding=", encodeURIComponent(this.settings.button_text_left_padding),
-			"&amp;buttonTextStyle=", encodeURIComponent(this.settings.button_text_style),
-			"&amp;buttonAction=", encodeURIComponent(this.settings.button_action),
-			"&amp;buttonDisabled=", encodeURIComponent(this.settings.button_disabled),
-			"&amp;buttonCursor=", encodeURIComponent(this.settings.button_cursor)
-		].join("");
-};
-
-// Public: getMovieElement retrieves the DOM reference to the Flash element added by SWFUpload
-// The element is cached after the first lookup
-SWFUpload.prototype.getMovieElement = function () {
-	if (this.movieElement == undefined) {
-		this.movieElement = document.getElementById(this.movieName);
-	}
-
-	if (this.movieElement === null) {
-		throw "Could not find Flash element";
-	}
-	
-	return this.movieElement;
-};
-
-// Private: buildParamString takes the name/value pairs in the post_params setting object
-// and joins them up in to a string formatted "name=value&amp;name=value"
-SWFUpload.prototype.buildParamString = function () {
-	var postParams = this.settings.post_params; 
-	var paramStringPairs = [];
-
-	if (typeof(postParams) === "object") {
-		for (var name in postParams) {
-			if (postParams.hasOwnProperty(name)) {
-				paramStringPairs.push(encodeURIComponent(name.toString()) + "=" + encodeURIComponent(postParams[name].toString()));
-			}
-		}
-	}
-
-	return paramStringPairs.join("&amp;");
-};
-
-// Public: Used to remove a SWFUpload instance from the page. This method strives to remove
-// all references to the SWF, and other objects so memory is properly freed.
-// Returns true if everything was destroyed. Returns a false if a failure occurs leaving SWFUpload in an inconsistant state.
-// Credits: Major improvements provided by steffen
-SWFUpload.prototype.destroy = function () {
-	try {
-		// Make sure Flash is done before we try to remove it
-		this.cancelUpload(null, false);
-		
-
-		// Remove the SWFUpload DOM nodes
-		var movieElement = null;
-		movieElement = this.getMovieElement();
-		
-		if (movieElement && typeof(movieElement.CallFunction) === "unknown") { // We only want to do this in IE
-			// Loop through all the movie's properties and remove all function references (DOM/JS IE 6/7 memory leak workaround)
-			for (var i in movieElement) {
-				try {
-					if (typeof(movieElement[i]) === "function") {
-						movieElement[i] = null;
-					}
-				} catch (ex1) {}
-			}
-
-			// Remove the Movie Element from the page
-			try {
-				movieElement.parentNode.removeChild(movieElement);
-			} catch (ex) {}
-		}
-		
-		// Remove IE form fix reference
-		window[this.movieName] = null;
-
-		// Destroy other references
-		SWFUpload.instances[this.movieName] = null;
-		delete SWFUpload.instances[this.movieName];
-
-		this.movieElement = null;
-		this.settings = null;
-		this.customSettings = null;
-		this.eventQueue = null;
-		this.movieName = null;
-		
-		
-		return true;
-	} catch (ex2) {
-		return false;
-	}
-};
-
-
-// Public: displayDebugInfo prints out settings and configuration
-// information about this SWFUpload instance.
-// This function (and any references to it) can be deleted when placing
-// SWFUpload in production.
-SWFUpload.prototype.displayDebugInfo = function () {
-	this.debug(
-		[
-			"---SWFUpload Instance Info---\n",
-			"Version: ", SWFUpload.version, "\n",
-			"Movie Name: ", this.movieName, "\n",
-			"Settings:\n",
-			"\t", "upload_url:               ", this.settings.upload_url, "\n",
-			"\t", "flash_url:                ", this.settings.flash_url, "\n",
-			"\t", "use_query_string:         ", this.settings.use_query_string.toString(), "\n",
-			"\t", "requeue_on_error:         ", this.settings.requeue_on_error.toString(), "\n",
-			"\t", "http_success:             ", this.settings.http_success.join(", "), "\n",
-			"\t", "assume_success_timeout:   ", this.settings.assume_success_timeout, "\n",
-			"\t", "file_post_name:           ", this.settings.file_post_name, "\n",
-			"\t", "post_params:              ", this.settings.post_params.toString(), "\n",
-			"\t", "file_types:               ", this.settings.file_types, "\n",
-			"\t", "file_types_description:   ", this.settings.file_types_description, "\n",
-			"\t", "file_size_limit:          ", this.settings.file_size_limit, "\n",
-			"\t", "file_upload_limit:        ", this.settings.file_upload_limit, "\n",
-			"\t", "file_queue_limit:         ", this.settings.file_queue_limit, "\n",
-			"\t", "debug:                    ", this.settings.debug.toString(), "\n",
-
-			"\t", "prevent_swf_caching:      ", this.settings.prevent_swf_caching.toString(), "\n",
-
-			"\t", "button_placeholder_id:    ", this.settings.button_placeholder_id.toString(), "\n",
-			"\t", "button_placeholder:       ", (this.settings.button_placeholder ? "Set" : "Not Set"), "\n",
-			"\t", "button_image_url:         ", this.settings.button_image_url.toString(), "\n",
-			"\t", "button_width:             ", this.settings.button_width.toString(), "\n",
-			"\t", "button_height:            ", this.settings.button_height.toString(), "\n",
-			"\t", "button_text:              ", this.settings.button_text.toString(), "\n",
-			"\t", "button_text_style:        ", this.settings.button_text_style.toString(), "\n",
-			"\t", "button_text_top_padding:  ", this.settings.button_text_top_padding.toString(), "\n",
-			"\t", "button_text_left_padding: ", this.settings.button_text_left_padding.toString(), "\n",
-			"\t", "button_action:            ", this.settings.button_action.toString(), "\n",
-			"\t", "button_disabled:          ", this.settings.button_disabled.toString(), "\n",
-
-			"\t", "custom_settings:          ", this.settings.custom_settings.toString(), "\n",
-			"Event Handlers:\n",
-			"\t", "swfupload_loaded_handler assigned:  ", (typeof this.settings.swfupload_loaded_handler === "function").toString(), "\n",
-			"\t", "file_dialog_start_handler assigned: ", (typeof this.settings.file_dialog_start_handler === "function").toString(), "\n",
-			"\t", "file_queued_handler assigned:       ", (typeof this.settings.file_queued_handler === "function").toString(), "\n",
-			"\t", "file_queue_error_handler assigned:  ", (typeof this.settings.file_queue_error_handler === "function").toString(), "\n",
-			"\t", "upload_start_handler assigned:      ", (typeof this.settings.upload_start_handler === "function").toString(), "\n",
-			"\t", "upload_progress_handler assigned:   ", (typeof this.settings.upload_progress_handler === "function").toString(), "\n",
-			"\t", "upload_error_handler assigned:      ", (typeof this.settings.upload_error_handler === "function").toString(), "\n",
-			"\t", "upload_success_handler assigned:    ", (typeof this.settings.upload_success_handler === "function").toString(), "\n",
-			"\t", "upload_complete_handler assigned:   ", (typeof this.settings.upload_complete_handler === "function").toString(), "\n",
-			"\t", "debug_handler assigned:             ", (typeof this.settings.debug_handler === "function").toString(), "\n"
-		].join("")
-	);
-};
-
-/* Note: addSetting and getSetting are no longer used by SWFUpload but are included
-	the maintain v2 API compatibility
-*/
-// Public: (Deprecated) addSetting adds a setting value. If the value given is undefined or null then the default_value is used.
-SWFUpload.prototype.addSetting = function (name, value, default_value) {
-    if (value == undefined) {
-        return (this.settings[name] = default_value);
-    } else {
-        return (this.settings[name] = value);
-	}
-};
-
-// Public: (Deprecated) getSetting gets a setting. Returns an empty string if the setting was not found.
-SWFUpload.prototype.getSetting = function (name) {
-    if (this.settings[name] != undefined) {
-        return this.settings[name];
-	}
-
-    return "";
-};
-
-
-
-// Private: callFlash handles function calls made to the Flash element.
-// Calls are made with a setTimeout for some functions to work around
-// bugs in the ExternalInterface library.
-SWFUpload.prototype.callFlash = function (functionName, argumentArray) {
-	argumentArray = argumentArray || [];
-	
-	var movieElement = this.getMovieElement();
-	var returnValue, returnString;
-
-	// Flash's method if calling ExternalInterface methods (code adapted from MooTools).
-	try {
-		returnString = movieElement.CallFunction('<invoke name="' + functionName + '" returntype="javascript">' + __flash__argumentsToXML(argumentArray, 0) + '</invoke>');
-		returnValue = eval(returnString);
-	} catch (ex) {
-		throw "Call to " + functionName + " failed";
-	}
-	
-	// Unescape file post param values
-	if (returnValue != undefined && typeof returnValue.post === "object") {
-		returnValue = this.unescapeFilePostParams(returnValue);
-	}
-
-	return returnValue;
-};
-
-/* *****************************
-	-- Flash control methods --
-	Your UI should use these
-	to operate SWFUpload
-   ***************************** */
-
-// WARNING: this function does not work in Flash Player 10
-// Public: selectFile causes a File Selection Dialog window to appear.  This
-// dialog only allows 1 file to be selected.
-SWFUpload.prototype.selectFile = function () {
-	this.callFlash("SelectFile");
-};
-
-// WARNING: this function does not work in Flash Player 10
-// Public: selectFiles causes a File Selection Dialog window to appear/ This
-// dialog allows the user to select any number of files
-// Flash Bug Warning: Flash limits the number of selectable files based on the combined length of the file names.
-// If the selection name length is too long the dialog will fail in an unpredictable manner.  There is no work-around
-// for this bug.
-SWFUpload.prototype.selectFiles = function () {
-	this.callFlash("SelectFiles");
-};
-
-
-// Public: startUpload starts uploading the first file in the queue unless
-// the optional parameter 'fileID' specifies the ID 
-SWFUpload.prototype.startUpload = function (fileID) {
-	this.callFlash("StartUpload", [fileID]);
-};
-
-// Public: cancelUpload cancels any queued file.  The fileID parameter may be the file ID or index.
-// If you do not specify a fileID the current uploading file or first file in the queue is cancelled.
-// If you do not want the uploadError event to trigger you can specify false for the triggerErrorEvent parameter.
-SWFUpload.prototype.cancelUpload = function (fileID, triggerErrorEvent) {
-	if (triggerErrorEvent !== false) {
-		triggerErrorEvent = true;
-	}
-	this.callFlash("CancelUpload", [fileID, triggerErrorEvent]);
-};
-
-// Public: stopUpload stops the current upload and requeues the file at the beginning of the queue.
-// If nothing is currently uploading then nothing happens.
-SWFUpload.prototype.stopUpload = function () {
-	this.callFlash("StopUpload");
-};
-
-/* ************************
- * Settings methods
- *   These methods change the SWFUpload settings.
- *   SWFUpload settings should not be changed directly on the settings object
- *   since many of the settings need to be passed to Flash in order to take
- *   effect.
- * *********************** */
-
-// Public: getStats gets the file statistics object.
-SWFUpload.prototype.getStats = function () {
-	return this.callFlash("GetStats");
-};
-
-// Public: setStats changes the SWFUpload statistics.  You shouldn't need to 
-// change the statistics but you can.  Changing the statistics does not
-// affect SWFUpload accept for the successful_uploads count which is used
-// by the upload_limit setting to determine how many files the user may upload.
-SWFUpload.prototype.setStats = function (statsObject) {
-	this.callFlash("SetStats", [statsObject]);
-};
-
-// Public: getFile retrieves a File object by ID or Index.  If the file is
-// not found then 'null' is returned.
-SWFUpload.prototype.getFile = function (fileID) {
-	if (typeof(fileID) === "number") {
-		return this.callFlash("GetFileByIndex", [fileID]);
-	} else {
-		return this.callFlash("GetFile", [fileID]);
-	}
-};
-
-// Public: addFileParam sets a name/value pair that will be posted with the
-// file specified by the Files ID.  If the name already exists then the
-// exiting value will be overwritten.
-SWFUpload.prototype.addFileParam = function (fileID, name, value) {
-	return this.callFlash("AddFileParam", [fileID, name, value]);
-};
-
-// Public: removeFileParam removes a previously set (by addFileParam) name/value
-// pair from the specified file.
-SWFUpload.prototype.removeFileParam = function (fileID, name) {
-	this.callFlash("RemoveFileParam", [fileID, name]);
-};
-
-// Public: setUploadUrl changes the upload_url setting.
-SWFUpload.prototype.setUploadURL = function (url) {
-	this.settings.upload_url = url.toString();
-	this.callFlash("SetUploadURL", [url]);
-};
-
-// Public: setPostParams changes the post_params setting
-SWFUpload.prototype.setPostParams = function (paramsObject) {
-	this.settings.post_params = paramsObject;
-	this.callFlash("SetPostParams", [paramsObject]);
-};
-
-// Public: addPostParam adds post name/value pair.  Each name can have only one value.
-SWFUpload.prototype.addPostParam = function (name, value) {
-	this.settings.post_params[name] = value;
-	this.callFlash("SetPostParams", [this.settings.post_params]);
-};
-
-// Public: removePostParam deletes post name/value pair.
-SWFUpload.prototype.removePostParam = function (name) {
-	delete this.settings.post_params[name];
-	this.callFlash("SetPostParams", [this.settings.post_params]);
-};
-
-// Public: setFileTypes changes the file_types setting and the file_types_description setting
-SWFUpload.prototype.setFileTypes = function (types, description) {
-	this.settings.file_types = types;
-	this.settings.file_types_description = description;
-	this.callFlash("SetFileTypes", [types, description]);
-};
-
-// Public: setFileSizeLimit changes the file_size_limit setting
-SWFUpload.prototype.setFileSizeLimit = function (fileSizeLimit) {
-	this.settings.file_size_limit = fileSizeLimit;
-	this.callFlash("SetFileSizeLimit", [fileSizeLimit]);
-};
-
-// Public: setFileUploadLimit changes the file_upload_limit setting
-SWFUpload.prototype.setFileUploadLimit = function (fileUploadLimit) {
-	this.settings.file_upload_limit = fileUploadLimit;
-	this.callFlash("SetFileUploadLimit", [fileUploadLimit]);
-};
-
-// Public: setFileQueueLimit changes the file_queue_limit setting
-SWFUpload.prototype.setFileQueueLimit = function (fileQueueLimit) {
-	this.settings.file_queue_limit = fileQueueLimit;
-	this.callFlash("SetFileQueueLimit", [fileQueueLimit]);
-};
-
-// Public: setFilePostName changes the file_post_name setting
-SWFUpload.prototype.setFilePostName = function (filePostName) {
-	this.settings.file_post_name = filePostName;
-	this.callFlash("SetFilePostName", [filePostName]);
-};
-
-// Public: setUseQueryString changes the use_query_string setting
-SWFUpload.prototype.setUseQueryString = function (useQueryString) {
-	this.settings.use_query_string = useQueryString;
-	this.callFlash("SetUseQueryString", [useQueryString]);
-};
-
-// Public: setRequeueOnError changes the requeue_on_error setting
-SWFUpload.prototype.setRequeueOnError = function (requeueOnError) {
-	this.settings.requeue_on_error = requeueOnError;
-	this.callFlash("SetRequeueOnError", [requeueOnError]);
-};
-
-// Public: setHTTPSuccess changes the http_success setting
-SWFUpload.prototype.setHTTPSuccess = function (http_status_codes) {
-	if (typeof http_status_codes === "string") {
-		http_status_codes = http_status_codes.replace(" ", "").split(",");
-	}
-	
-	this.settings.http_success = http_status_codes;
-	this.callFlash("SetHTTPSuccess", [http_status_codes]);
-};
-
-// Public: setHTTPSuccess changes the http_success setting
-SWFUpload.prototype.setAssumeSuccessTimeout = function (timeout_seconds) {
-	this.settings.assume_success_timeout = timeout_seconds;
-	this.callFlash("SetAssumeSuccessTimeout", [timeout_seconds]);
-};
-
-// Public: setDebugEnabled changes the debug_enabled setting
-SWFUpload.prototype.setDebugEnabled = function (debugEnabled) {
-	this.settings.debug_enabled = debugEnabled;
-	this.callFlash("SetDebugEnabled", [debugEnabled]);
-};
-
-// Public: setButtonImageURL loads a button image sprite
-SWFUpload.prototype.setButtonImageURL = function (buttonImageURL) {
-	if (buttonImageURL == undefined) {
-		buttonImageURL = "";
-	}
-	
-	this.settings.button_image_url = buttonImageURL;
-	this.callFlash("SetButtonImageURL", [buttonImageURL]);
-};
-
-// Public: setButtonDimensions resizes the Flash Movie and button
-SWFUpload.prototype.setButtonDimensions = function (width, height) {
-	this.settings.button_width = width;
-	this.settings.button_height = height;
-	
-	var movie = this.getMovieElement();
-	if (movie != undefined) {
-		movie.style.width = width + "px";
-		movie.style.height = height + "px";
-	}
-	
-	this.callFlash("SetButtonDimensions", [width, height]);
-};
-// Public: setButtonText Changes the text overlaid on the button
-SWFUpload.prototype.setButtonText = function (html) {
-	this.settings.button_text = html;
-	this.callFlash("SetButtonText", [html]);
-};
-// Public: setButtonTextPadding changes the top and left padding of the text overlay
-SWFUpload.prototype.setButtonTextPadding = function (left, top) {
-	this.settings.button_text_top_padding = top;
-	this.settings.button_text_left_padding = left;
-	this.callFlash("SetButtonTextPadding", [left, top]);
-};
-
-// Public: setButtonTextStyle changes the CSS used to style the HTML/Text overlaid on the button
-SWFUpload.prototype.setButtonTextStyle = function (css) {
-	this.settings.button_text_style = css;
-	this.callFlash("SetButtonTextStyle", [css]);
-};
-// Public: setButtonDisabled disables/enables the button
-SWFUpload.prototype.setButtonDisabled = function (isDisabled) {
-	this.settings.button_disabled = isDisabled;
-	this.callFlash("SetButtonDisabled", [isDisabled]);
-};
-// Public: setButtonAction sets the action that occurs when the button is clicked
-SWFUpload.prototype.setButtonAction = function (buttonAction) {
-	this.settings.button_action = buttonAction;
-	this.callFlash("SetButtonAction", [buttonAction]);
-};
-
-// Public: setButtonCursor changes the mouse cursor displayed when hovering over the button
-SWFUpload.prototype.setButtonCursor = function (cursor) {
-	this.settings.button_cursor = cursor;
-	this.callFlash("SetButtonCursor", [cursor]);
-};
-
-/* *******************************
-	Flash Event Interfaces
-	These functions are used by Flash to trigger the various
-	events.
-	
-	All these functions a Private.
-	
-	Because the ExternalInterface library is buggy the event calls
-	are added to a queue and the queue then executed by a setTimeout.
-	This ensures that events are executed in a determinate order and that
-	the ExternalInterface bugs are avoided.
-******************************* */
-
-SWFUpload.prototype.queueEvent = function (handlerName, argumentArray) {
-	// Warning: Don't call this.debug inside here or you'll create an infinite loop
-	
-	if (argumentArray == undefined) {
-		argumentArray = [];
-	} else if (!(argumentArray instanceof Array)) {
-		argumentArray = [argumentArray];
-	}
-	
-	var self = this;
-	if (typeof this.settings[handlerName] === "function") {
-		// Queue the event
-		this.eventQueue.push(function () {
-			this.settings[handlerName].apply(this, argumentArray);
-		});
-		
-		// Execute the next queued event
-		setTimeout(function () {
-			self.executeNextEvent();
-		}, 0);
-		
-	} else if (this.settings[handlerName] !== null) {
-		throw "Event handler " + handlerName + " is unknown or is not a function";
-	}
-};
-
-// Private: Causes the next event in the queue to be executed.  Since events are queued using a setTimeout
-// we must queue them in order to garentee that they are executed in order.
-SWFUpload.prototype.executeNextEvent = function () {
-	// Warning: Don't call this.debug inside here or you'll create an infinite loop
-
-	var  f = this.eventQueue ? this.eventQueue.shift() : null;
-	if (typeof(f) === "function") {
-		f.apply(this);
-	}
-};
-
-// Private: unescapeFileParams is part of a workaround for a flash bug where objects passed through ExternalInterface cannot have
-// properties that contain characters that are not valid for JavaScript identifiers. To work around this
-// the Flash Component escapes the parameter names and we must unescape again before passing them along.
-SWFUpload.prototype.unescapeFilePostParams = function (file) {
-	var reg = /[$]([0-9a-f]{4})/i;
-	var unescapedPost = {};
-	var uk;
-
-	if (file != undefined) {
-		for (var k in file.post) {
-			if (file.post.hasOwnProperty(k)) {
-				uk = k;
-				var match;
-				while ((match = reg.exec(uk)) !== null) {
-					uk = uk.replace(match[0], String.fromCharCode(parseInt("0x" + match[1], 16)));
-				}
-				unescapedPost[uk] = file.post[k];
-			}
-		}
-
-		file.post = unescapedPost;
-	}
-
-	return file;
-};
-
-// Private: Called by Flash to see if JS can call in to Flash (test if External Interface is working)
-SWFUpload.prototype.testExternalInterface = function () {
-	try {
-		return this.callFlash("TestExternalInterface");
-	} catch (ex) {
-		return false;
-	}
-};
-
-// Private: This event is called by Flash when it has finished loading. Don't modify this.
-// Use the swfupload_loaded_handler event setting to execute custom code when SWFUpload has loaded.
-SWFUpload.prototype.flashReady = function () {
-	// Check that the movie element is loaded correctly with its ExternalInterface methods defined
-	var movieElement = this.getMovieElement();
-
-	if (!movieElement) {
-		this.debug("Flash called back ready but the flash movie can't be found.");
-		return;
-	}
-
-	this.cleanUp(movieElement);
-	
-	this.queueEvent("swfupload_loaded_handler");
-};
-
-// Private: removes Flash added fuctions to the DOM node to prevent memory leaks in IE.
-// This function is called by Flash each time the ExternalInterface functions are created.
-SWFUpload.prototype.cleanUp = function (movieElement) {
-	// Pro-actively unhook all the Flash functions
-	try {
-		if (this.movieElement && typeof(movieElement.CallFunction) === "unknown") { // We only want to do this in IE
-			this.debug("Removing Flash functions hooks (this should only run in IE and should prevent memory leaks)");
-			for (var key in movieElement) {
-				try {
-					if (typeof(movieElement[key]) === "function") {
-						movieElement[key] = null;
-					}
-				} catch (ex) {
-				}
-			}
-		}
-	} catch (ex1) {
-	
-	}
-
-	// Fix Flashes own cleanup code so if the SWFMovie was removed from the page
-	// it doesn't display errors.
-	window["__flash__removeCallback"] = function (instance, name) {
-		try {
-			if (instance) {
-				instance[name] = null;
-			}
-		} catch (flashEx) {
-		
-		}
-	};
-
-};
-
-
-/* This is a chance to do something before the browse window opens */
-SWFUpload.prototype.fileDialogStart = function () {
-	this.queueEvent("file_dialog_start_handler");
-};
-
-
-/* Called when a file is successfully added to the queue. */
-SWFUpload.prototype.fileQueued = function (file) {
-	file = this.unescapeFilePostParams(file);
-	this.queueEvent("file_queued_handler", file);
-};
-
-
-/* Handle errors that occur when an attempt to queue a file fails. */
-SWFUpload.prototype.fileQueueError = function (file, errorCode, message) {
-	file = this.unescapeFilePostParams(file);
-	this.queueEvent("file_queue_error_handler", [file, errorCode, message]);
-};
-
-/* Called after the file dialog has closed and the selected files have been queued.
-	You could call startUpload here if you want the queued files to begin uploading immediately. */
-SWFUpload.prototype.fileDialogComplete = function (numFilesSelected, numFilesQueued, numFilesInQueue) {
-	this.queueEvent("file_dialog_complete_handler", [numFilesSelected, numFilesQueued, numFilesInQueue]);
-};
-
-SWFUpload.prototype.uploadStart = function (file) {
-	file = this.unescapeFilePostParams(file);
-	this.queueEvent("return_upload_start_handler", file);
-};
-
-SWFUpload.prototype.returnUploadStart = function (file) {
-	var returnValue;
-	if (typeof this.settings.upload_start_handler === "function") {
-		file = this.unescapeFilePostParams(file);
-		returnValue = this.settings.upload_start_handler.call(this, file);
-	} else if (this.settings.upload_start_handler != undefined) {
-		throw "upload_start_handler must be a function";
-	}
-
-	// Convert undefined to true so if nothing is returned from the upload_start_handler it is
-	// interpretted as 'true'.
-	if (returnValue === undefined) {
-		returnValue = true;
-	}
-	
-	returnValue = !!returnValue;
-	
-	this.callFlash("ReturnUploadStart", [returnValue]);
-};
-
-
-
-SWFUpload.prototype.uploadProgress = function (file, bytesComplete, bytesTotal) {
-	file = this.unescapeFilePostParams(file);
-	this.queueEvent("upload_progress_handler", [file, bytesComplete, bytesTotal]);
-};
-
-SWFUpload.prototype.uploadError = function (file, errorCode, message) {
-	file = this.unescapeFilePostParams(file);
-	this.queueEvent("upload_error_handler", [file, errorCode, message]);
-};
-
-SWFUpload.prototype.uploadSuccess = function (file, serverData, responseReceived) {
-	file = this.unescapeFilePostParams(file);
-	this.queueEvent("upload_success_handler", [file, serverData, responseReceived]);
-};
-
-SWFUpload.prototype.uploadComplete = function (file) {
-	file = this.unescapeFilePostParams(file);
-	this.queueEvent("upload_complete_handler", file);
-};
-
-/* Called by SWFUpload JavaScript and Flash functions when debug is enabled. By default it writes messages to the
-   internal debug console.  You can override this event and have messages written where you want. */
-SWFUpload.prototype.debug = function (message) {
-	this.queueEvent("debug_handler", message);
-};
-
-
-/* **********************************
-	Debug Console
-	The debug console is a self contained, in page location
-	for debug message to be sent.  The Debug Console adds
-	itself to the body if necessary.
-
-	The console is automatically scrolled as messages appear.
-	
-	If you are using your own debug handler or when you deploy to production and
-	have debug disabled you can remove these functions to reduce the file size
-	and complexity.
-********************************** */
-   
-// Private: debugMessage is the default debug_handler.  If you want to print debug messages
-// call the debug() function.  When overriding the function your own function should
-// check to see if the debug setting is true before outputting debug information.
-SWFUpload.prototype.debugMessage = function (message) {
-	if (this.settings.debug) {
-		var exceptionMessage, exceptionValues = [];
-
-		// Check for an exception object and print it nicely
-		if (typeof message === "object" && typeof message.name === "string" && typeof message.message === "string") {
-			for (var key in message) {
-				if (message.hasOwnProperty(key)) {
-					exceptionValues.push(key + ": " + message[key]);
-				}
-			}
-			exceptionMessage = exceptionValues.join("\n") || "";
-			exceptionValues = exceptionMessage.split("\n");
-			exceptionMessage = "EXCEPTION: " + exceptionValues.join("\nEXCEPTION: ");
-			SWFUpload.Console.writeLine(exceptionMessage);
-		} else {
-			SWFUpload.Console.writeLine(message);
-		}
-	}
-};
-
-SWFUpload.Console = {};
-SWFUpload.Console.writeLine = function (message) {
-	var console, documentForm;
-
-	try {
-		console = document.getElementById("SWFUpload_Console");
-
-		if (!console) {
-			documentForm = document.createElement("form");
-			document.getElementsByTagName("body")[0].appendChild(documentForm);
-
-			console = document.createElement("textarea");
-			console.id = "SWFUpload_Console";
-			console.style.fontFamily = "monospace";
-			console.setAttribute("wrap", "off");
-			console.wrap = "off";
-			console.style.overflow = "auto";
-			console.style.width = "700px";
-			console.style.height = "350px";
-			console.style.margin = "5px";
-			documentForm.appendChild(console);
-		}
-
-		console.value += message + "\n";
-
-		console.scrollTop = console.scrollHeight - console.clientHeight;
-	} catch (ex) {
-		alert("Exception: " + ex.name + " Message: " + ex.message);
-	}
-};
-/*
-Copyright 2008-2009 University of Toronto
-Copyright 2008-2009 University of California, Berkeley
-Copyright 2010-2011 OCAD University
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global window, fluid_1_4:true, jQuery*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-/************
- * Uploader *
- ************/
-
-(function ($, fluid) {
-    
-    fluid.setLogging(true);
-    
-    var fileOrFiles = function (that, numFiles) {
-        return (numFiles === 1) ? that.options.strings.progress.singleFile : 
-            that.options.strings.progress.pluralFiles;
-    };
-    
-    var enableElement = function (that, elm) {
-        elm.removeAttr("disabled");
-        elm.removeClass(that.options.styles.dim);
-    };
-    
-    var disableElement = function (that, elm) {
-        elm.attr("disabled", "disabled");
-        elm.addClass(that.options.styles.dim);
-    };
-    
-    var showElement = function (that, elm) {
-        elm.removeClass(that.options.styles.hidden);
-    };
-     
-    var hideElement = function (that, elm) {
-        elm.addClass(that.options.styles.hidden);
-    };
-    
-    var setTotalProgressStyle = function (that, didError) {
-        didError = didError || false;
-        var indicator = that.totalProgress.indicator;
-        indicator.toggleClass(that.options.styles.totalProgress, !didError);
-        indicator.toggleClass(that.options.styles.totalProgressError, didError);
-    };
-    
-    var setStateEmpty = function (that) {
-        disableElement(that, that.locate("uploadButton"));
-        
-        // If the queue is totally empty, treat it specially.
-        if (that.queue.files.length === 0) { 
-            that.locate("browseButtonText").text(that.options.strings.buttons.browse);
-            that.locate("browseButton").removeClass(that.options.styles.browseButton);
-            showElement(that, that.locate("instructions"));
-        }
-    };
-    
-    var setStateDone = function (that) {
-        disableElement(that, that.locate("uploadButton"));
-        enableElement(that, that.locate("browseButton"));
-        that.strategy.local.enableBrowseButton();
-        hideElement(that, that.locate("pauseButton"));
-        showElement(that, that.locate("uploadButton"));
-    };
-
-    var setStateLoaded = function (that) {
-        that.locate("browseButtonText").text(that.options.strings.buttons.addMore);
-        that.locate("browseButton").addClass(that.options.styles.browseButton);
-        hideElement(that, that.locate("pauseButton"));
-        showElement(that, that.locate("uploadButton"));
-        enableElement(that, that.locate("uploadButton"));
-        enableElement(that, that.locate("browseButton"));
-        that.strategy.local.enableBrowseButton();
-        hideElement(that, that.locate("instructions"));
-        that.totalProgress.hide();
-    };
-    
-    var setStateUploading = function (that) {
-        that.totalProgress.hide(false, false);
-        setTotalProgressStyle(that);
-        hideElement(that, that.locate("uploadButton"));
-        disableElement(that, that.locate("browseButton"));
-        that.strategy.local.disableBrowseButton();
-        enableElement(that, that.locate("pauseButton"));
-        showElement(that, that.locate("pauseButton"));
-        that.locate(that.options.focusWithEvent.afterUploadStart).focus();
-    };    
-    
-    var renderUploadTotalMessage = function (that) {
-        // Render template for the total file status message.
-        var numReadyFiles = that.queue.getReadyFiles().length;
-        var bytesReadyFiles = that.queue.sizeOfReadyFiles();
-        var fileLabelStr = fileOrFiles(that, numReadyFiles);
-                                                   
-        var totalStateStr = fluid.stringTemplate(that.options.strings.progress.toUploadLabel, {
-            fileCount: numReadyFiles, 
-            fileLabel: fileLabelStr, 
-            totalBytes: fluid.uploader.formatFileSize(bytesReadyFiles)
-        });
-        that.locate("totalFileStatusText").html(totalStateStr);
-    };
-        
-    var updateTotalProgress = function (that) {
-        var batch = that.queue.currentBatch;
-        var totalPercent = fluid.uploader.derivePercent(batch.totalBytesUploaded, batch.totalBytes);
-        var numFilesInBatch = batch.files.length;
-        var fileLabelStr = fileOrFiles(that, numFilesInBatch);
-        
-        var totalProgressStr = fluid.stringTemplate(that.options.strings.progress.totalProgressLabel, {
-            curFileN: batch.fileIdx, 
-            totalFilesN: numFilesInBatch, 
-            fileLabel: fileLabelStr,
-            currBytes: fluid.uploader.formatFileSize(batch.totalBytesUploaded), 
-            totalBytes: fluid.uploader.formatFileSize(batch.totalBytes)
-        });  
-        that.totalProgress.update(totalPercent, totalProgressStr);
-    };
-    
-    var updateTotalAtCompletion = function (that) {
-        var numErroredFiles = that.queue.getErroredFiles().length;
-        var numTotalFiles = that.queue.files.length;
-        var fileLabelStr = fileOrFiles(that, numTotalFiles);
-        
-        var errorStr = "";
-        
-        // if there are errors then change the total progress bar
-        // and set up the errorStr so that we can use it in the totalProgressStr
-        if (numErroredFiles > 0) {
-            var errorLabelString = (numErroredFiles === 1) ? that.options.strings.progress.singleError : 
-                                                             that.options.strings.progress.pluralErrors;
-            setTotalProgressStyle(that, true);
-            errorStr = fluid.stringTemplate(that.options.strings.progress.numberOfErrors, {
-                errorsN: numErroredFiles,
-                errorLabel: errorLabelString
-            });
-        }
-        
-        var totalProgressStr = fluid.stringTemplate(that.options.strings.progress.completedLabel, {
-            curFileN: that.queue.getUploadedFiles().length, 
-            totalFilesN: numTotalFiles,
-            errorString: errorStr,
-            fileLabel: fileLabelStr,
-            totalCurrBytes: fluid.uploader.formatFileSize(that.queue.sizeOfUploadedFiles())
-        });
-        
-        that.totalProgress.update(100, totalProgressStr);
-    };
-
-    /*
-     * Summarizes the status of all the files in the file queue.  
-     */
-    var updateQueueSummaryText = function (that) {
-        var fileQueueTable = that.locate("fileQueue");
-        
-        if (that.queue.files.length === 0) {
-            fileQueueTable.attr("summary", that.options.strings.queue.emptyQueue);
-        } else {
-            var queueSummary = fluid.stringTemplate(that.options.strings.queue.queueSummary, {
-                totalUploaded: that.queue.getUploadedFiles().length, 
-                totalInUploadQueue: that.queue.files.length - that.queue.getUploadedFiles().length
-            });        
-            
-            fileQueueTable.attr("summary", queueSummary);
-        }
-    };
-    
-    var bindDOMEvents = function (that) {
-        that.locate("uploadButton").click(function () {
-            that.start();
-        });
-
-        that.locate("pauseButton").click(function () {
-            that.stop();
-        });
-    };
-
-    var updateStateAfterFileDialog = function (that) {
-        if (that.queue.getReadyFiles().length > 0) {
-            setStateLoaded(that);
-            renderUploadTotalMessage(that);
-            that.locate(that.options.focusWithEvent.afterFileDialog).focus();
-            updateQueueSummaryText(that);
-        }
-    };
-    
-    var updateStateAfterFileRemoval = function (that) {
-        if (that.queue.getReadyFiles().length === 0) {
-            setStateEmpty(that);
-        }
-        renderUploadTotalMessage(that);
-        updateQueueSummaryText(that);
-    };
-    
-    var updateStateAfterCompletion = function (that) {
-        if (that.queue.getReadyFiles().length === 0) {
-            setStateDone(that);
-        } else {
-            setStateLoaded(that);
-        }
-        updateTotalAtCompletion(that);
-        updateQueueSummaryText(that);
-    }; 
-    
-    var bindEvents = function (that) {       
-        that.events.afterFileDialog.addListener(function () {
-            updateStateAfterFileDialog(that);
-        });
-        
-        that.events.afterFileQueued.addListener(function (file) {
-            that.queue.addFile(file); 
-        });
-        
-        that.events.onFileRemoved.addListener(function (file) {
-            that.removeFile(file);
-        });
-        
-        that.events.afterFileRemoved.addListener(function () {
-            updateStateAfterFileRemoval(that);
-        });
-        
-        that.events.onUploadStart.addListener(function () {
-            setStateUploading(that);
-        });
-        
-        that.events.onUploadStop.addListener(function () {
-            that.locate(that.options.focusWithEvent.onUploadStop).focus();
-        });
-        
-        that.events.onFileStart.addListener(function (file) {
-            file.filestatus = fluid.uploader.fileStatusConstants.IN_PROGRESS;
-            that.queue.startFile();
-        });
-        
-        that.events.onFileProgress.addListener(function (file, currentBytes, totalBytes) {
-            that.queue.updateBatchStatus(currentBytes);
-            updateTotalProgress(that); 
-        });
-        
-        that.events.onFileComplete.addListener(function (file) {
-            that.queue.finishFile(file);
-            that.events.afterFileComplete.fire(file); 
-            
-            if (that.queue.shouldUploadNextFile()) {
-                that.strategy.remote.uploadNextFile();
-            } else {
-                that.events.afterUploadComplete.fire(that.queue.currentBatch.files);
-                that.queue.clearCurrentBatch();
-            }
-        });
-        
-        that.events.onFileSuccess.addListener(function (file) {
-            file.filestatus = fluid.uploader.fileStatusConstants.COMPLETE;
-            if (that.queue.currentBatch.bytesUploadedForFile === 0) {
-                that.queue.currentBatch.totalBytesUploaded += file.size;
-            }
-            
-            updateTotalProgress(that); 
-        });
-        
-        that.events.onFileError.addListener(function (file, error) {
-            if (error === fluid.uploader.errorConstants.UPLOAD_STOPPED) {
-                file.filestatus = fluid.uploader.fileStatusConstants.CANCELLED;
-                return;
-            } else {
-                file.filestatus = fluid.uploader.fileStatusConstants.ERROR;
-                if (that.queue.isUploading) {
-                    that.queue.currentBatch.totalBytesUploaded += file.size;
-                    that.queue.currentBatch.numFilesErrored++;
-                }
-            }
-        });
-
-        that.events.afterUploadComplete.addListener(function () {
-            that.queue.isUploading = false;
-            updateStateAfterCompletion(that);
-        });
-    };
-    
-    var setupUploader = function (that) {
-        that.demo = fluid.typeTag(that.options.demo? "fluid.uploader.demo" : "fluid.uploader.live");
-        
-        fluid.initDependents(that);                 
-
-        // Upload button should not be enabled until there are files to upload
-        disableElement(that, that.locate("uploadButton"));
-        bindDOMEvents(that);
-        bindEvents(that);
-        
-        updateQueueSummaryText(that);
-        that.statusUpdater();
-        
-        // Uploader uses application-style keyboard conventions, so give it a suitable role.
-        that.container.attr("role", "application");
-    };
-    
-    /**
-     * Instantiates a new Uploader component.
-     * 
-     * @param {Object} container the DOM element in which the Uploader lives
-     * @param {Object} options configuration options for the component.
-     */
-    fluid.uploader = function (container, uploaderOptions) {
-      // Do not try to expand uploaderOptions here or else our subcomponents will end up
-      // nested inside uploaderImpl
-        var that = fluid.initView("fluid.uploader", container);
-        that.uploaderOptions = uploaderOptions;
-        fluid.initDependents(that);
-        return that.uploaderImpl;
-    };
-    
-    fluid.uploaderImpl = function () {
-        fluid.fail("Error creating uploader component - please make sure that a progressiveCheckerForComponent for \"fluid.uploader\" is registered either in the "
-          + "static environment or else is visible in the current component tree");
-    };
-    
-    fluid.defaults("fluid.uploader", {
-        gradeNames: ["fluid.viewComponent"],
-        components: {
-            uploaderContext: {
-                type: "fluid.progressiveCheckerForComponent",
-                options: {componentName: "fluid.uploader"}
-            },
-            uploaderImpl: {
-                type: "fluid.uploaderImpl",
-                container: "{uploader}.container",
-                options: "{uploader}.uploaderOptions"
-            }
-        },
-        progressiveCheckerOptions: {
-            checks: [
-                {
-                    feature: "{fluid.browser.supportsBinaryXHR}",
-                    contextName: "fluid.uploader.html5"
-                },
-                {
-                    feature: "{fluid.browser.supportsFlash}",
-                    contextName: "fluid.uploader.swfUpload"
-                }
-            ],
-            defaultContextName: "fluid.uploader.singleFile"
-        }
-    });
-    
-    // Ensure that for all uploaders created via IoC, we bypass the wrapper and directly create the concrete uploader
-    fluid.alias("fluid.uploader", "fluid.uploaderImpl");
-    
-    // This method has been deprecated as of Infusion 1.3. Use fluid.uploader() instead, 
-    // which now includes built-in support for progressive enhancement.
-    fluid.progressiveEnhanceableUploader = function (container, enhanceable, options) {
-        return fluid.uploader(container, options);
-    };
-
-    /**
-     * Multiple file Uploader implementation. Use fluid.uploader() for IoC-resolved, progressively
-     * enhanceable Uploader, or call this directly if you don't want support for old-style single uploads
-     *
-     * @param {jQueryable} container the component's container
-     * @param {Object} options configuration options
-     */
-    fluid.uploader.multiFileUploader = function (container, options) {
-        var that = fluid.initView("fluid.uploader.multiFileUploader", container, options);
-        that.queue = fluid.uploader.fileQueue();
-        
-        /**
-         * Opens the native OS browse file dialog.
-         */
-        that.browse = function () {
-            if (!that.queue.isUploading) {
-                that.strategy.local.browse();
-            }
-        };
-        
-        /**
-         * Removes the specified file from the upload queue.
-         * 
-         * @param {File} file the file to remove
-         */
-        that.removeFile = function (file) {
-            that.queue.removeFile(file);
-            that.strategy.local.removeFile(file);
-            that.events.afterFileRemoved.fire(file);
-        };
-        
-        /**
-         * Starts uploading all queued files to the server.
-         */
-        that.start = function () {
-            that.queue.start();
-            that.events.onUploadStart.fire(that.queue.currentBatch.files); 
-            that.strategy.remote.uploadNextFile();
-        };
-        
-        /**
-         * Cancels an in-progress upload.
-         */
-        that.stop = function () {
-            that.events.onUploadStop.fire();
-            that.strategy.remote.stop();
-        };
-        
-        setupUploader(that);
-        return that;  
-    };
-    
-    fluid.defaults("fluid.uploader.multiFileUploader", {
-        gradeNames: "fluid.viewComponent",
-        components: {
-            strategy: {
-                type: "fluid.uploader.progressiveStrategy"
-            },
-            
-            fileQueueView: {
-                type: "fluid.uploader.fileQueueView",
-                options: {
-                    model: "{multiFileUploader}.queue.files",
-                    uploaderContainer: "{multiFileUploader}.container"
-                }
-            },
-            
-            totalProgress: {
-                type: "fluid.uploader.totalProgressBar",
-                options: {
-                    selectors: {
-                        progressBar: ".flc-uploader-queue-footer",
-                        displayElement: ".flc-uploader-total-progress", 
-                        label: ".flc-uploader-total-progress-text",
-                        indicator: ".flc-uploader-total-progress",
-                        ariaElement: ".flc-uploader-total-progress"
-                    }
-                }
-            }
-        },
-        
-        invokers: {
-            statusUpdater: "fluid.uploader.ariaLiveRegionUpdater"
-        },
-        
-        queueSettings: {
-            uploadURL: "",
-            postParams: {},
-            fileSizeLimit: "20480",
-            fileTypes: "*",
-            fileTypesDescription: null,
-            fileUploadLimit: 0,
-            fileQueueLimit: 0
-        },
-
-        demo: false,
-        
-        selectors: {
-            fileQueue: ".flc-uploader-queue",
-            browseButton: ".flc-uploader-button-browse",
-            browseButtonText: ".flc-uploader-button-browse-text",
-            uploadButton: ".flc-uploader-button-upload",
-            pauseButton: ".flc-uploader-button-pause",
-            totalFileStatusText: ".flc-uploader-total-progress-text",
-            instructions: ".flc-uploader-browse-instructions",
-            statusRegion: ".flc-uploader-status-region"
-        },
-
-        // Specifies a selector name to move keyboard focus to when a particular event fires.
-        // Event listeners must already be implemented to use these options.
-        focusWithEvent: {
-            afterFileDialog: "uploadButton",
-            afterUploadStart: "pauseButton",
-            onUploadStop: "uploadButton"
-        },
-        
-        styles: {
-            disabled: "fl-uploader-disabled",
-            hidden: "fl-uploader-hidden",
-            dim: "fl-uploader-dim",
-            totalProgress: "fl-uploader-total-progress-okay",
-            totalProgressError: "fl-uploader-total-progress-errored",
-            browseButton: "fl-uploader-browseMore"
-        },
-        
-        events: {
-            afterReady: null,
-            onFileDialog: null,
-            afterFileQueued: null,
-            onFileRemoved: null,
-            afterFileRemoved: null,
-            onQueueError: null,
-            afterFileDialog: null,
-            onUploadStart: null,
-            onUploadStop: null,
-            onFileStart: null,
-            onFileProgress: null,
-            onFileError: null,
-            onFileSuccess: null,
-            onFileComplete: null,
-            afterFileComplete: null,
-            afterUploadComplete: null
-        },
-
-        strings: {
-            progress: {
-                toUploadLabel: "To upload: %fileCount %fileLabel (%totalBytes)", 
-                totalProgressLabel: "Uploading: %curFileN of %totalFilesN %fileLabel (%currBytes of %totalBytes)", 
-                completedLabel: "Uploaded: %curFileN of %totalFilesN %fileLabel (%totalCurrBytes)%errorString",
-                numberOfErrors: ", %errorsN %errorLabel",
-                singleFile: "file",
-                pluralFiles: "files",
-                singleError: "error",
-                pluralErrors: "errors"
-            },
-            buttons: {
-                browse: "Browse Files",
-                addMore: "Add More",
-                stopUpload: "Stop Upload",
-                cancelRemaning: "Cancel remaining Uploads",
-                resumeUpload: "Resume Upload"
-            },
-            queue: {
-                emptyQueue: "File list: No files waiting to be uploaded.",
-                queueSummary: "File list:  %totalUploaded files uploaded, %totalInUploadQueue file waiting to be uploaded." 
-            }
-        },
-        
-        mergePolicy: {
-            "fileQueueView.options.model": "preserve"
-        }
-    });
-    
-    fluid.demands("fluid.uploader.totalProgressBar", "fluid.uploader.multiFileUploader", {
-        funcName: "fluid.progress",
-        container: "{multiFileUploader}.container"
-    });
-    
-    /** Demands blocks for binding to fileQueueView **/
-            
-    fluid.demands("fluid.uploader.fileQueueView", "fluid.uploader.multiFileUploader", {
-        container: "{multiFileUploader}.dom.fileQueue",
-        options: {
-            events: {
-                onFileRemoved: "{multiFileUploader}.events.onFileRemoved"
-            }
-        }
-    });
-        
-    fluid.demands("fluid.uploader.fileQueueView.eventBinder", [
-        "fluid.uploader.multiFileUploader",
-        "fluid.uploader.fileQueueView"
-    ], {
-        options: {
-            listeners: {
-                "{multiFileUploader}.events.afterFileQueued": "{fileQueueView}.addFile",
-                "{multiFileUploader}.events.onUploadStart": "{fileQueueView}.prepareForUpload",
-                "{multiFileUploader}.events.onFileStart": "{fileQueueView}.showFileProgress",
-                "{multiFileUploader}.events.onFileProgress": "{fileQueueView}.updateFileProgress",
-                "{multiFileUploader}.events.onFileSuccess": "{fileQueueView}.markFileComplete",
-                "{multiFileUploader}.events.onFileError": "{fileQueueView}.showErrorForFile",
-                "{multiFileUploader}.events.afterFileComplete": "{fileQueueView}.hideFileProgress",
-                "{multiFileUploader}.events.afterUploadComplete": "{fileQueueView}.refreshAfterUpload"
-            }
-        }
-    });
-        
-   /**
-    * Pretty prints a file's size, converting from bytes to kilobytes or megabytes.
-    * 
-    * @param {Number} bytes the files size, specified as in number bytes.
-    */
-    fluid.uploader.formatFileSize = function (bytes) {
-        if (typeof (bytes) === "number") {
-            if (bytes === 0) {
-                return "0.0 KB";
-            } else if (bytes > 0) {
-                if (bytes < 1048576) {
-                    return (Math.ceil(bytes / 1024 * 10) / 10).toFixed(1) + " KB";
-                } else {
-                    return (Math.ceil(bytes / 1048576 * 10) / 10).toFixed(1) + " MB";
-                }
-            }
-        }
-        return "";
-    };
-
-    fluid.uploader.derivePercent = function (num, total) {
-        return Math.round((num * 100) / total);
-    };
-     
-    // TODO: Refactor this to be a general ARIA utility
-    fluid.uploader.ariaLiveRegionUpdater = function (statusRegion, totalFileStatusText, events) {
-        statusRegion.attr("role", "log");     
-        statusRegion.attr("aria-live", "assertive");
-        statusRegion.attr("aria-relevant", "text");
-        statusRegion.attr("aria-atomic", "true");
-
-        var regionUpdater = function () {
-            statusRegion.text(totalFileStatusText.text());
-        };
-
-        events.afterFileDialog.addListener(regionUpdater);
-        events.afterFileRemoved.addListener(regionUpdater);
-        events.afterUploadComplete.addListener(regionUpdater);
-    };
-    
-    fluid.demands("fluid.uploader.ariaLiveRegionUpdater", "fluid.uploader.multiFileUploader", {
-        funcName: "fluid.uploader.ariaLiveRegionUpdater",
-        args: [
-            "{multiFileUploader}.dom.statusRegion",
-            "{multiFileUploader}.dom.totalFileStatusText",
-            "{multiFileUploader}.events"
-        ]
-    });
-
-    
-    /**************************************************
-     * Error constants for the Uploader               *
-     * TODO: These are SWFUpload-specific error codes *
-     **************************************************/
-     
-    fluid.uploader.errorConstants = {
-        HTTP_ERROR: -200,
-        MISSING_UPLOAD_URL: -210,
-        IO_ERROR: -220,
-        SECURITY_ERROR: -230,
-        UPLOAD_LIMIT_EXCEEDED: -240,
-        UPLOAD_FAILED: -250,
-        SPECIFIED_FILE_ID_NOT_FOUND: -260,
-        FILE_VALIDATION_FAILED: -270,
-        FILE_CANCELLED: -280,
-        UPLOAD_STOPPED: -290
-    };
-    
-    fluid.uploader.fileStatusConstants = {
-        QUEUED: -1,
-        IN_PROGRESS: -2,
-        ERROR: -3,
-        COMPLETE: -4,
-        CANCELLED: -5
-    };
-
-
-    var toggleVisibility = function (toShow, toHide) {
-        // For FLUID-2789: hide() doesn't work in Opera
-        if (window.opera) { 
-            toShow.show().removeClass("hideUploaderForOpera");
-            toHide.show().addClass("hideUploaderForOpera");
-        } else {
-            toShow.show();
-            toHide.hide();
-        }
-    };
-
-    /**
-     * Single file Uploader implementation. Use fluid.uploader() for IoC-resolved, progressively
-     * enhanceable Uploader, or call this directly if you only want a standard single file uploader.
-     * But why would you want that?
-     *
-     * @param {jQueryable} container the component's container
-     * @param {Object} options configuration options
-     */
-    fluid.uploader.singleFileUploader = function (container, options) {
-        var that = fluid.initView("fluid.uploader.singleFileUploader", container, options);
-        // TODO: direct DOM fascism that will fail with multiple uploaders on a single page.
-        toggleVisibility($(that.options.selectors.basicUpload), that.container);
-        return that;
-    };
-
-    fluid.defaults("fluid.uploader.singleFileUploader", {
-        gradeNames: "fluid.viewComponent",
-        selectors: {
-            basicUpload: ".fl-progEnhance-basic"
-        }
-    });
-
-    fluid.demands("fluid.uploaderImpl", "fluid.uploader.singleFile", {
-        funcName: "fluid.uploader.singleFileUploader"
-    });
-    
-})(jQuery, fluid_1_4);
-/*
-Copyright 2008-2009 University of Toronto
-Copyright 2008-2009 University of California, Berkeley
-Copyright 2010-2011 OCAD University
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global fluid_1_4:true, jQuery, SWFUpload*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {
-    
-    fluid.uploader = fluid.uploader || {};
-    
-    var filterFiles = function (files, filterFn) {
-        var filteredFiles = [];
-        for (var i = 0; i < files.length; i++) {
-            var file = files[i];
-            if (filterFn(file) === true) {
-                filteredFiles.push(file);
-            }
-        }
-        
-        return filteredFiles;
-    };
-     
-    fluid.uploader.fileQueue = function () {
-        var that = {};
-        that.files = [];
-        that.isUploading = false;
-        
-        /********************
-         * Queue Operations *
-         ********************/
-         
-        that.start = function () {
-            that.setupCurrentBatch();
-            that.isUploading = true;
-            that.shouldStop = false;
-        };
-        
-        that.startFile = function () {
-            that.currentBatch.fileIdx++;
-            that.currentBatch.bytesUploadedForFile = 0;
-            that.currentBatch.previousBytesUploadedForFile = 0; 
-        };
-                
-        that.finishFile = function (file) {
-            that.currentBatch.numFilesCompleted++;
-        };
-        
-        that.shouldUploadNextFile = function () {
-            return !that.shouldStop && 
-                that.isUploading && 
-                that.currentBatch.numFilesCompleted < that.currentBatch.files.length;
-        };
-        
-        /*****************************
-         * File manipulation methods *
-         *****************************/
-         
-        that.addFile = function (file) {
-            that.files.push(file);    
-        };
-        
-        that.removeFile = function (file) {
-            var idx = $.inArray(file, that.files);
-            that.files.splice(idx, 1);        
-        };
-        
-        /**********************
-         * Queue Info Methods *
-         **********************/
-         
-        that.totalBytes = function () {
-            return fluid.uploader.fileQueue.sizeOfFiles(that.files);
-        };
-
-        that.getReadyFiles = function () {
-            return filterFiles(that.files, function (file) {
-                return (file.filestatus === fluid.uploader.fileStatusConstants.QUEUED || file.filestatus === fluid.uploader.fileStatusConstants.CANCELLED);
-            });        
-        };
-        
-        that.getErroredFiles = function () {
-            return filterFiles(that.files, function (file) {
-                return (file.filestatus === fluid.uploader.fileStatusConstants.ERROR);
-            });        
-        };
-        
-        that.sizeOfReadyFiles = function () {
-            return fluid.uploader.fileQueue.sizeOfFiles(that.getReadyFiles());
-        };
-        
-        that.getUploadedFiles = function () {
-            return filterFiles(that.files, function (file) {
-                return (file.filestatus === fluid.uploader.fileStatusConstants.COMPLETE);
-            });        
-        };
-
-        that.sizeOfUploadedFiles = function () {
-            return fluid.uploader.fileQueue.sizeOfFiles(that.getUploadedFiles());
-        };
-
-        /*****************
-         * Batch Methods *
-         *****************/
-         
-        that.setupCurrentBatch = function () {
-            that.clearCurrentBatch();
-            that.updateCurrentBatch();
-        };
-        
-        that.clearCurrentBatch = function () {
-            that.currentBatch = {
-                fileIdx: 0,
-                files: [],
-                totalBytes: 0,
-                numFilesCompleted: 0,
-                numFilesErrored: 0,
-                bytesUploadedForFile: 0,
-                previousBytesUploadedForFile: 0,
-                totalBytesUploaded: 0
-            };
-        };
-        
-        that.updateCurrentBatch = function () {
-            var readyFiles = that.getReadyFiles();
-            that.currentBatch.files = readyFiles;
-            that.currentBatch.totalBytes = fluid.uploader.fileQueue.sizeOfFiles(readyFiles);
-        };
-        
-        that.updateBatchStatus = function (currentBytes) {
-            var byteIncrement = currentBytes - that.currentBatch.previousBytesUploadedForFile;
-            that.currentBatch.totalBytesUploaded += byteIncrement;
-            that.currentBatch.bytesUploadedForFile += byteIncrement;
-            that.currentBatch.previousBytesUploadedForFile = currentBytes;
-        };
-                
-        return that;
-    };
-    
-    fluid.uploader.fileQueue.sizeOfFiles = function (files) {
-        var totalBytes = 0;
-        for (var i = 0; i < files.length; i++) {
-            var file = files[i];
-            totalBytes += file.size;
-        }        
-        return totalBytes;
-    };
-          
-})(jQuery, fluid_1_4);
-/*
-Copyright 2008-2009 University of Toronto
-Copyright 2008-2009 University of California, Berkeley
-Copyright 2008-2009 University of Cambridge
-Copyright 2010-2011 OCAD University
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global fluid_1_4:true, jQuery*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-/*******************
- * File Queue View *
- *******************/
-
-(function ($, fluid) {
-    
-    // Real data binding would be nice to replace these two pairs.
-    var rowForFile = function (that, file) {
-        return that.locate("fileQueue").find("#" + file.id);
-    };
-    
-    var errorRowForFile = function (that, file) {
-        return $("#" + file.id + "_error", that.container);
-    };
-    
-    var fileForRow = function (that, row) {
-        var files = that.model;
-        var i;
-        for (i = 0; i < files.length; i++) {
-            var file = files[i];
-            if (file.id.toString() === row.attr("id")) {
-                return file;
-            }
-        }
-        return null;
-    };
-    
-    var progressorForFile = function (that, file) {
-        var progressId = file.id + "_progress";
-        return that.fileProgressors[progressId];
-    };
-    
-    var startFileProgress = function (that, file) {
-        var fileRowElm = rowForFile(that, file);
-        that.scroller.scrollTo(fileRowElm);
-               
-        // update the progressor and make sure that it's in position
-        var fileProgressor = progressorForFile(that, file);
-        fileProgressor.refreshView();
-        fileProgressor.show();
-    };
-        
-    var updateFileProgress = function (that, file, fileBytesComplete, fileTotalBytes) {
-        var filePercent = fluid.uploader.derivePercent(fileBytesComplete, fileTotalBytes);
-        var filePercentStr = filePercent + "%";    
-        progressorForFile(that, file).update(filePercent, filePercentStr);
-    };
-    
-    var hideFileProgress = function (that, file) {
-        var fileRowElm = rowForFile(that, file);
-        progressorForFile(that, file).hide();
-        if (file.filestatus === fluid.uploader.fileStatusConstants.COMPLETE) {
-            that.locate("fileIconBtn", fileRowElm).removeClass(that.options.styles.dim);
-        } 
-    };
-    
-    var removeFileProgress = function (that, file) {
-        var fileProgressor = progressorForFile(that, file);
-        if (!fileProgressor) {
-            return;
-        }
-        var rowProgressor = fileProgressor.displayElement;
-        rowProgressor.remove();
-    };
- 
-    var animateRowRemoval = function (that, row) {
-        row.fadeOut("fast", function () {
-            row.remove();  
-            that.refreshView();
-        });
-    };
-    
-    var removeFileErrorRow = function (that, file) {
-        if (file.filestatus === fluid.uploader.fileStatusConstants.ERROR) {
-            animateRowRemoval(that, errorRowForFile(that, file));
-        }
-    };
-   
-    var removeFileAndRow = function (that, file, row) {
-        // Clean up the stuff associated with a file row.
-        removeFileProgress(that, file);
-        removeFileErrorRow(that, file);
-        
-        // Remove the file itself.
-        that.events.onFileRemoved.fire(file);
-        animateRowRemoval(that, row);
-    };
-    
-    var removeFileForRow = function (that, row) {
-        var file = fileForRow(that, row);
-        if (!file || file.filestatus === fluid.uploader.fileStatusConstants.COMPLETE) {
-            return;
-        }
-        removeFileAndRow(that, file, row);
-    };
-    
-    var removeRowForFile = function (that, file) {
-        var row = rowForFile(that, file);
-        removeFileAndRow(that, file, row);
-    };
-    
-    var bindHover = function (row, styles) {
-        var over = function () {
-            if (row.hasClass(styles.ready) && !row.hasClass(styles.uploading)) {
-                row.addClass(styles.hover);
-            }
-        };
-        
-        var out = function () {
-            if (row.hasClass(styles.ready) && !row.hasClass(styles.uploading)) {
-                row.removeClass(styles.hover);
-            }   
-        };
-        row.hover(over, out);
-    };
-    
-    var bindDeleteKey = function (that, row) {
-        var deleteHandler = function () {
-            removeFileForRow(that, row);
-        };
-       
-        fluid.activatable(row, null, {
-            additionalBindings: [{
-                key: $.ui.keyCode.DELETE, 
-                activateHandler: deleteHandler
-            }]
-        });
-    };
-    
-    var bindRowHandlers = function (that, row) {
-        if ($.browser.msie && $.browser.version < 7) {
-            bindHover(row, that.options.styles);
-        }
-        
-        that.locate("fileIconBtn", row).click(function () {
-            removeFileForRow(that, row);
-        });
-        
-        bindDeleteKey(that, row);
-    };
-    
-    var renderRowFromTemplate = function (that, file) {
-        var row = that.rowTemplate.clone(),
-            fileName = file.name,
-            fileSize = fluid.uploader.formatFileSize(file.size);
-        
-        row.removeClass(that.options.styles.hiddenTemplate);
-        that.locate("fileName", row).text(fileName);
-        that.locate("fileSize", row).text(fileSize);
-        that.locate("fileIconBtn", row).addClass(that.options.styles.remove);
-        row.attr("id", file.id);
-        row.addClass(that.options.styles.ready);
-        bindRowHandlers(that, row);
-        fluid.updateAriaLabel(row, fileName + " " + fileSize);
-        return row;    
-    };
-    
-    var createProgressorFromTemplate = function (that, row) {
-        // create a new progress bar for the row and position it
-        var rowProgressor = that.rowProgressorTemplate.clone();
-        var rowId = row.attr("id");
-        var progressId = rowId + "_progress";
-        rowProgressor.attr("id", progressId);
-        rowProgressor.css("top", row.position().top);
-        rowProgressor.height(row.height()).width(5);
-        that.container.after(rowProgressor);
-       
-        that.fileProgressors[progressId] = fluid.progress(that.options.uploaderContainer, {
-            selectors: {
-                progressBar: "#" + rowId,
-                displayElement: "#" + progressId,
-                label: "#" + progressId + " .fl-uploader-file-progress-text",
-                indicator: "#" + progressId
-            }
-        });
-    };
-    
-    var addFile = function (that, file) {
-        var row = renderRowFromTemplate(that, file);
-        /* FLUID-2720 - do not hide the row under IE8 */
-        if (!($.browser.msie && ($.browser.version >= 8))) {
-            row.hide();
-        }
-        that.container.append(row);
-        row.attr("title", that.options.strings.status.remove);
-        row.fadeIn("slow");
-        createProgressorFromTemplate(that, row);
-        that.refreshView();
-        that.scroller.scrollTo("100%");
-    };
-    
-    // Toggle keyboard row handlers on and off depending on the uploader state
-    var enableRows = function (rows, state) {
-        var i;
-        for (i = 0; i < rows.length; i++) {
-            fluid.enabled(rows[i], state);  
-        }               
-    };
-    
-    var prepareForUpload = function (that) {
-        var rowButtons = that.locate("fileIconBtn", that.locate("fileRows"));
-        rowButtons.attr("disabled", "disabled");
-        rowButtons.addClass(that.options.styles.dim);
-        enableRows(that.locate("fileRows"), false);
-    };
-
-    var refreshAfterUpload = function (that) {
-        var rowButtons = that.locate("fileIconBtn", that.locate("fileRows"));
-        rowButtons.removeAttr("disabled");
-        rowButtons.removeClass(that.options.styles.dim);
-        enableRows(that.locate("fileRows"), true);        
-    };
-        
-    var changeRowState = function (that, row, newState) {
-        row.removeClass(that.options.styles.ready).removeClass(that.options.styles.error).addClass(newState);
-    };
-    
-    var markRowAsComplete = function (that, file) {
-        // update styles and keyboard bindings for the file row
-        var row = rowForFile(that, file);
-        changeRowState(that, row, that.options.styles.uploaded);
-        row.attr("title", that.options.strings.status.success);
-        fluid.enabled(row, false);
-        
-        // update the click event and the styling for the file delete button
-        var removeRowBtn = that.locate("fileIconBtn", row);
-        removeRowBtn.unbind("click");
-        removeRowBtn.removeClass(that.options.styles.remove);
-        removeRowBtn.attr("title", that.options.strings.status.success); 
-    };
-    
-    var renderErrorInfoRowFromTemplate = function (that, fileRow, error) {
-        // Render the row by cloning the template and binding its id to the file.
-        var errorRow = that.errorInfoRowTemplate.clone();
-        errorRow.attr("id", fileRow.attr("id") + "_error");
-        
-        // Look up the error message and render it.
-        var errorType = fluid.keyForValue(fluid.uploader.errorConstants, error);
-        var errorMsg = that.options.strings.errors[errorType];
-        that.locate("errorText", errorRow).text(errorMsg);
-        fileRow.after(errorRow);
-        that.scroller.scrollTo(errorRow);
-    };
-    
-    var showErrorForFile = function (that, file, error) {
-        hideFileProgress(that, file);
-        if (file.filestatus === fluid.uploader.fileStatusConstants.ERROR) {
-            var fileRowElm = rowForFile(that, file);
-            changeRowState(that, fileRowElm, that.options.styles.error);
-            renderErrorInfoRowFromTemplate(that, fileRowElm, error);
-        }
-    };
-    
-    var addKeyboardNavigation = function (that) {
-        fluid.tabbable(that.container);
-        that.selectableContext = fluid.selectable(that.container, {
-            selectableSelector: that.options.selectors.fileRows,
-            onSelect: function (itemToSelect) {
-                $(itemToSelect).addClass(that.options.styles.selected);
-            },
-            onUnselect: function (selectedItem) {
-                $(selectedItem).removeClass(that.options.styles.selected);
-            }
-        });
-    };
-    
-    var prepareTemplateElements = function (that) {
-        // Grab our template elements out of the DOM.  
-        that.rowTemplate = that.locate("rowTemplate").remove();
-        that.errorInfoRowTemplate = that.locate("errorInfoRowTemplate").remove();
-        that.errorInfoRowTemplate.removeClass(that.options.styles.hiddenTemplate);
-        that.rowProgressorTemplate = that.locate("rowProgressorTemplate", that.options.uploaderContainer).remove();
-    };
-    
-    fluid.registerNamespace("fluid.uploader.fileQueueView");
-    
-    
-    fluid.uploader.fileQueueView.finalInit = function (that) {
-        prepareTemplateElements(that);         
-        addKeyboardNavigation(that);
-    };
-    
-    /**
-     * Creates a new File Queue view.
-     * 
-     * @param {jQuery|selector} container the file queue's container DOM element
-     * @param {fileQueue} queue a file queue model instance
-     * @param {Object} options configuration options for the view
-     */
-    fluid.uploader.fileQueueView.preInit = function (that) {
-        that.fileProgressors = {};
-
-        that.addFile = function (file) {
-            addFile(that, file);
-        };
-        
-        that.removeFile = function (file) {
-            removeRowForFile(that, file);
-        };
-        
-        that.prepareForUpload = function () {
-            prepareForUpload(that);
-        };
-        
-        that.refreshAfterUpload = function () {
-            refreshAfterUpload(that);
-        };
-
-        that.showFileProgress = function (file) {
-            startFileProgress(that, file);
-        };
-        
-        that.updateFileProgress = function (file, fileBytesComplete, fileTotalBytes) {
-            updateFileProgress(that, file, fileBytesComplete, fileTotalBytes); 
-        };
-        
-        that.markFileComplete = function (file) {
-            progressorForFile(that, file).update(100, "100%");
-            markRowAsComplete(that, file);
-        };
-        
-        that.showErrorForFile = function (file, error) {
-            showErrorForFile(that, file, error);
-        };
-        
-        that.hideFileProgress = function (file) {
-            hideFileProgress(that, file);
-        };
-        
-        that.refreshView = function () {
-            that.selectableContext.refresh();
-            that.scroller.refreshView();
-        };
-    };
-    
-    fluid.defaults("fluid.uploader.fileQueueView", {
-        gradeNames: ["fluid.viewComponent", "autoInit"],
-        preInitFunction:   "fluid.uploader.fileQueueView.preInit",
-        finalInitFunction: "fluid.uploader.fileQueueView.finalInit",
-        
-        components: {
-            scroller: {
-                type: "fluid.scrollableTable"
-            },
-            
-            eventBinder: {
-                type: "fluid.uploader.fileQueueView.eventBinder"
-            }
-        },
-        
-        selectors: {
-            fileRows: ".flc-uploader-file",
-            fileName: ".flc-uploader-file-name",
-            fileSize: ".flc-uploader-file-size",
-            fileIconBtn: ".flc-uploader-file-action",      
-            errorText: ".flc-uploader-file-error",
-            
-            rowTemplate: ".flc-uploader-file-tmplt",
-            errorInfoRowTemplate: ".flc-uploader-file-error-tmplt",
-            rowProgressorTemplate: ".flc-uploader-file-progressor-tmplt"
-        },
-        
-        styles: {
-            hover: "fl-uploader-file-hover",
-            selected: "fl-uploader-file-focus",
-            ready: "fl-uploader-file-state-ready",
-            uploading: "fl-uploader-file-state-uploading",
-            uploaded: "fl-uploader-file-state-uploaded",
-            error: "fl-uploader-file-state-error",
-            remove: "fl-uploader-file-action-remove",
-            dim: "fl-uploader-dim",
-            hiddenTemplate: "fl-uploader-hidden-templates"
-        },
-        
-        strings: {
-            progress: {
-                toUploadLabel: "To upload: %fileCount %fileLabel (%totalBytes)", 
-                singleFile: "file",
-                pluralFiles: "files"
-            },
-            status: {
-                success: "File Uploaded",
-                error: "File Upload Error",
-                remove: "Press Delete key to remove file"
-            }, 
-            errors: {
-                HTTP_ERROR: "File upload error: a network error occured or the file was rejected (reason unknown).",
-                IO_ERROR: "File upload error: a network error occured.",
-                UPLOAD_LIMIT_EXCEEDED: "File upload error: you have uploaded as many files as you are allowed during this session",
-                UPLOAD_FAILED: "File upload error: the upload failed for an unknown reason.",
-                QUEUE_LIMIT_EXCEEDED: "You have as many files in the queue as can be added at one time. Removing files from the queue may allow you to add different files.",
-                FILE_EXCEEDS_SIZE_LIMIT: "One or more of the files that you attempted to add to the queue exceeded the limit of %fileSizeLimit.",
-                ZERO_BYTE_FILE: "One or more of the files that you attempted to add contained no data.",
-                INVALID_FILETYPE: "One or more files were not added to the queue because they were of the wrong type."
-            }
-        },
-        events: {
-            onFileRemoved: null
-        },
-        
-        mergePolicy: {
-            model: "preserve"
-        }
-    });
-    
-    /**
-     * EventBinder declaratively binds FileQueueView's methods as listeners to Uploader events using IoC.
-     */
-    fluid.defaults("fluid.uploader.fileQueueView.eventBinder", {
-        gradeNames: ["fluid.eventedComponent", "autoInit"]
-    });
-    
-    fluid.demands("fluid.uploader.fileQueueView.eventBinder", [], {} 
-    );
-    /**************
-     * Scrollable *
-     **************/
-     
-    /**
-     * Simple component cover for the jQuery scrollTo plugin. Provides roughly equivalent
-     * functionality to Uploader's old Scroller plugin.
-     *
-     * @param {jQueryable} element the element to make scrollable
-     * @param {Object} options for the component
-     * @return the scrollable component
-     */
-    fluid.scrollable = function (element, options) {
-        var that = fluid.initView("fluid.scrollable", element, options);
-        that.scrollable = that.options.makeScrollableFn(that.container, that.options);
-        that.maxHeight = that.scrollable.css("max-height");
-
-        /**
-         * Programmatically scrolls this scrollable element to the region specified.
-         * This method is directly compatible with the underlying jQuery.scrollTo plugin.
-         */
-        that.scrollTo = function () {
-            that.scrollable.scrollTo.apply(that.scrollable, arguments);
-        };
-
-        /* 
-         * Updates the view of the scrollable region. This should be called when the content of the scrollable region is changed. 
-         */
-        that.refreshView = function () {
-            if ($.browser.msie && $.browser.version === "6.0") {    
-                that.scrollable.css("height", "");
-
-                // Set height, if max-height is reached, to allow scrolling in IE6.
-                if (that.scrollable.height() >= parseInt(that.maxHeight, 10)) {
-                    that.scrollable.css("height", that.maxHeight);           
-                }
-            }
-        };          
-
-        that.refreshView();
-
-        return that;
-    };
-
-    fluid.scrollable.makeSimple = function (element, options) {
-        return fluid.container(element);
-    };
-
-    fluid.scrollable.makeTable =  function (table, options) {
-        table.wrap(options.wrapperMarkup);
-        return table.closest(".fl-scrollable-scroller");
-    };
-
-    fluid.defaults("fluid.scrollable", {
-        makeScrollableFn: fluid.scrollable.makeSimple
-    });
-
-    /** 
-     * Wraps a table in order to make it scrollable with the jQuery.scrollTo plugin.
-     * Container divs are injected to allow cross-browser support. 
-     *
-     * @param {jQueryable} table the table to make scrollable
-     * @param {Object} options configuration options
-     * @return the scrollable component
-     */
-    fluid.scrollableTable = function (table, options) {
-        options = $.extend({}, fluid.defaults("fluid.scrollableTable"), options);
-        return fluid.scrollable(table, options);
-    };
-
-    fluid.defaults("fluid.scrollableTable", {
-        gradeNames: "fluid.viewComponent",
-        makeScrollableFn: fluid.scrollable.makeTable,
-        wrapperMarkup: "<div class='fl-scrollable-scroller'><div class='fl-scrollable-inner'></div></div>"
-    });    
-    
-    fluid.demands("fluid.scrollableTable", "fluid.uploader.fileQueueView", {
-        funcName: "fluid.scrollableTable",
-        args: [
-            "{fileQueueView}.container"
-        ]
-    });
-   
-})(jQuery, fluid_1_4);
-/*
-Copyright 2008-2009 University of Toronto
-Copyright 2008-2009 University of California, Berkeley
-Copyright 2010-2011 OCAD University
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global fluid_1_4:true, jQuery, swfobject, SWFUpload */
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {
-
-    fluid.uploader = fluid.uploader || {};
-    
-    fluid.demands("fluid.uploaderImpl", "fluid.uploader.swfUpload", {
-        funcName: "fluid.uploader.multiFileUploader"
-    });
-    
-    /**********************
-     * uploader.swfUpload *
-     **********************/
-    
-    fluid.uploader.swfUploadStrategy = function (options) {
-        var that = fluid.initLittleComponent("fluid.uploader.swfUploadStrategy", options);
-        fluid.initDependents(that);
-        return that;
-    };
-    
-    fluid.defaults("fluid.uploader.swfUploadStrategy", {
-        components: {
-            engine: {
-                type: "fluid.uploader.swfUploadStrategy.engine",
-                options: {
-                    queueSettings: "{multiFileUploader}.options.queueSettings",
-                    flashMovieSettings: "{swfUploadStrategy}.options.flashMovieSettings"
-                }
-            },
-            
-            local: {
-                type: "fluid.uploader.local"
-            },
-            
-            remote: {
-                type: "fluid.uploader.remote"
-            }
-        },
-        
-        // TODO: Rename this to "flashSettings" and remove the "flash" prefix from each option
-        flashMovieSettings: {
-            flashURL: "../../../lib/swfupload/flash/swfupload.swf",
-            flashButtonPeerId: "",
-            flashButtonAlwaysVisible: false,
-            flashButtonTransparentEvenInIE: true,
-            flashButtonImageURL: "../images/browse.png", // Used only when the Flash movie is visible.
-            flashButtonCursorEffect: SWFUpload.CURSOR.HAND,
-            debug: false
-        },
-
-        styles: {
-            browseButtonOverlay: "fl-uploader-browse-overlay",
-            flash9Container: "fl-uploader-flash9-container",
-            uploaderWrapperFlash10: "fl-uploader-flash10-wrapper"
-        }
-    });
-    
-    fluid.demands("fluid.uploader.progressiveStrategy", "fluid.uploader.swfUpload", {
-        funcName: "fluid.uploader.swfUploadStrategy"
-    });
-    
-    
-    fluid.uploader.swfUploadStrategy.remote = function (swfUpload, queue, options) {
-        var that = fluid.initLittleComponent("fluid.uploader.swfUploadStrategy.remote", options);
-        that.swfUpload = swfUpload;
-        that.queue = queue;
-        
-        that.uploadNextFile = function () {
-            that.swfUpload.startUpload();
-        };
-        
-        that.stop = function () {
-            // FLUID-822: Instead of actually stopping SWFUpload right away, we wait until the current file 
-            // is finished and then don't bother to upload any new ones. This is due an issue where SWFUpload
-            // appears to hang while Uploading a file that was previously stopped. I have a lingering suspicion
-            // that this may actually be a bug in our Image Gallery demo, rather than in SWFUpload itself.
-            that.queue.shouldStop = true;
-        };
-        return that;
-    };
-    
-    fluid.demands("fluid.uploader.remote", "fluid.uploader.swfUploadStrategy", {
-        funcName: "fluid.uploader.swfUploadStrategy.remote",
-        args: [
-            "{engine}.swfUpload",
-            "{multiFileUploader}.queue",
-            "{options}"
-        ]
-    });
-
-    
-    fluid.uploader.swfUploadStrategy.local = function (swfUpload, options) {
-        var that = fluid.initLittleComponent("fluid.uploader.swfUploadStrategy.local", options);
-        that.swfUpload = swfUpload;
-        
-        that.browse = function () {
-            if (that.options.file_queue_limit === 1) {
-                that.swfUpload.selectFile();
-            } else {
-                that.swfUpload.selectFiles();
-            }    
-        };
-        
-        that.removeFile = function (file) {
-            that.swfUpload.cancelUpload(file.id);
-        };
-        
-        that.enableBrowseButton = function () {
-            that.swfUpload.setButtonDisabled(false);
-        };
-        
-        that.disableBrowseButton = function () {
-            that.swfUpload.setButtonDisabled(true);
-        };
-        
-        return that;
-    };
-    
-    fluid.demands("fluid.uploader.local", "fluid.uploader.swfUploadStrategy", {
-        funcName: "fluid.uploader.swfUploadStrategy.local",
-        args: [
-            "{engine}.swfUpload",
-            "{options}"
-        ]
-    });
-    
-    fluid.uploader.swfUploadStrategy.engine = function (options) {
-        var that = fluid.initLittleComponent("fluid.uploader.swfUploadStrategy.engine", options);
-        
-        // Get the Flash version from swfobject and setup a new context so that the appropriate
-        // Flash 9/10 strategies are selected.
-        var flashVersion = swfobject.getFlashPlayerVersion().major;
-        that.flashVersionContext = fluid.typeTag("fluid.uploader.flash." + flashVersion);
-        
-        // Merge Uploader's generic queue options with our Flash-specific options.
-        that.config = $.extend({}, that.options.queueSettings, that.options.flashMovieSettings);
-        
-        // Configure the SWFUpload subsystem.
-        fluid.initDependents(that);
-        that.flashContainer = that.setupDOM();
-        that.swfUploadConfig = that.setupConfig();
-        that.swfUpload = new SWFUpload(that.swfUploadConfig);
-        that.bindEvents();
-        
-        return that;
-    };
-    
-    fluid.defaults("fluid.uploader.swfUploadStrategy.engine", {
-        invokers: {
-            setupDOM: "fluid.uploader.swfUploadStrategy.setupDOM",
-            setupConfig: "fluid.uploader.swfUploadStrategy.setupConfig",
-            bindEvents: "fluid.uploader.swfUploadStrategy.eventBinder"
-        }
-    });
-    
-    fluid.demands("fluid.uploader.swfUploadStrategy.engine", "fluid.uploader.swfUploadStrategy", {
-        funcName: "fluid.uploader.swfUploadStrategy.engine",
-        args: [
-            fluid.COMPONENT_OPTIONS
-        ]
-    });
-    
-    
-    /**********************
-     * swfUpload.setupDOM *
-     **********************/
-    
-    fluid.uploader.swfUploadStrategy.flash10SetupDOM = function (uploaderContainer, browseButton, styles) {
-        // Wrap the whole uploader first.
-        uploaderContainer.wrap("<div class='" + styles.uploaderWrapperFlash10 + "'></div>");
-
-        // Then create a container and placeholder for the Flash movie as a sibling to the uploader.
-        var flashContainer = $("<div><span></span></div>");
-        flashContainer.addClass(styles.browseButtonOverlay);
-        uploaderContainer.after(flashContainer);
-        
-        browseButton.attr("tabindex", -1);        
-        return flashContainer;   
-    };
-    
-    fluid.demands("fluid.uploader.swfUploadStrategy.setupDOM", [
-        "fluid.uploader.swfUploadStrategy.engine",
-        "fluid.uploader.flash.10"
-    ], {
-        funcName: "fluid.uploader.swfUploadStrategy.flash10SetupDOM",
-        args: [
-            "{multiFileUploader}.container",
-            "{multiFileUploader}.dom.browseButton",
-            "{swfUploadStrategy}.options.styles"
-        ]
-    });
-     
-     
-    /*********************************
-     * swfUpload.setupConfig *
-     *********************************/
-      
-    // Maps SWFUpload's setting names to our component's setting names.
-    var swfUploadOptionsMap = {
-        uploadURL: "upload_url",
-        flashURL: "flash_url",
-        postParams: "post_params",
-        fileSizeLimit: "file_size_limit",
-        fileTypes: "file_types",
-        fileUploadLimit: "file_upload_limit",
-        fileQueueLimit: "file_queue_limit",
-        flashButtonPeerId: "button_placeholder_id",
-        flashButtonImageURL: "button_image_url",
-        flashButtonHeight: "button_height",
-        flashButtonWidth: "button_width",
-        flashButtonWindowMode: "button_window_mode",
-        flashButtonCursorEffect: "button_cursor",
-        debug: "debug"
-    };
-
-    // Maps SWFUpload's callback names to our component's callback names.
-    var swfUploadEventMap = {
-        afterReady: "swfupload_loaded_handler",
-        onFileDialog: "file_dialog_start_handler",
-        afterFileQueued: "file_queued_handler",
-        onQueueError: "file_queue_error_handler",
-        afterFileDialog: "file_dialog_complete_handler",
-        onFileStart: "upload_start_handler",
-        onFileProgress: "upload_progress_handler",
-        onFileComplete: "upload_complete_handler",
-        onFileError: "upload_error_handler",
-        onFileSuccess: "upload_success_handler"
-    };
-    
-    var mapNames = function (nameMap, source, target) {
-        var result = target || {};
-        for (var key in source) {
-            var mappedKey = nameMap[key];
-            if (mappedKey) {
-                result[mappedKey] = source[key];
-            }
-        }
-        
-        return result;
-    };
-    
-    // For each event type, hand the fire function to SWFUpload so it can fire the event at the right time for us.
-    // TODO: Refactor out duplication with mapNames()--should be able to use Engage's mapping tool
-    var mapSWFUploadEvents = function (nameMap, events, target) {
-        var result = target || {};
-        for (var eventType in events) {
-            var fireFn = events[eventType].fire;
-            var mappedName = nameMap[eventType];
-            if (mappedName) {
-                result[mappedName] = fireFn;
-            }   
-        }
-        return result;
-    };
-    
-    fluid.uploader.swfUploadStrategy.convertConfigForSWFUpload = function (flashContainer, config, events) {
-        config.flashButtonPeerId = fluid.allocateSimpleId(flashContainer.children().eq(0));
-        // Map the event and settings names to SWFUpload's expectations.
-        var convertedConfig = mapNames(swfUploadOptionsMap, config);
-        return mapSWFUploadEvents(swfUploadEventMap, events, convertedConfig);
-    };
-    
-    fluid.uploader.swfUploadStrategy.flash10SetupConfig = function (config, events, flashContainer, browseButton) {
-        var isTransparent = config.flashButtonAlwaysVisible ? false : (!$.browser.msie || config.flashButtonTransparentEvenInIE);
-        config.flashButtonImageURL = isTransparent ? undefined : config.flashButtonImageURL;
-        config.flashButtonHeight = config.flashButtonHeight || browseButton.outerHeight();
-        config.flashButtonWidth = config.flashButtonWidth || browseButton.outerWidth();
-        config.flashButtonWindowMode = isTransparent ? SWFUpload.WINDOW_MODE.TRANSPARENT : SWFUpload.WINDOW_MODE.OPAQUE;
-        return fluid.uploader.swfUploadStrategy.convertConfigForSWFUpload(flashContainer, config, events);
-    };
-    
-    fluid.demands("fluid.uploader.swfUploadStrategy.setupConfig", [
-        "fluid.uploader.swfUploadStrategy.engine",
-        "fluid.uploader.flash.10"
-    ], {
-        funcName: "fluid.uploader.swfUploadStrategy.flash10SetupConfig",
-        args: [
-            "{engine}.config",
-            "{multiFileUploader}.events",
-            "{engine}.flashContainer",
-            "{multiFileUploader}.dom.browseButton"
-        ]
-    });
-
-     
-    /*********************************
-     * swfUpload.eventBinder *
-     *********************************/
-     
-    var unbindSWFUploadSelectFiles = function () {
-        // There's a bug in SWFUpload 2.2.0b3 that causes the entire browser to crash 
-        // if selectFile() or selectFiles() is invoked. Remove them so no one will accidently crash their browser.
-        var emptyFunction = function () {};
-        SWFUpload.prototype.selectFile = emptyFunction;
-        SWFUpload.prototype.selectFiles = emptyFunction;
-    };
-    
-    fluid.uploader.swfUploadStrategy.bindFileEventListeners = function (model, events) {
-        // Manually update our public model to keep it in sync with SWFUpload's insane,
-        // always-changing references to its internal model.        
-        var manualModelUpdater = function (file) {
-            fluid.find(model, function (potentialMatch) {
-                if (potentialMatch.id === file.id) {
-                    potentialMatch.filestatus = file.filestatus;
-                    return true;
-                }
-            });
-        };
-        
-        events.onFileStart.addListener(manualModelUpdater);
-        events.onFileProgress.addListener(manualModelUpdater);
-        events.onFileError.addListener(manualModelUpdater);
-        events.onFileSuccess.addListener(manualModelUpdater);
-    };
-    
-    fluid.uploader.swfUploadStrategy.flash10EventBinder = function (model, events) {
-        unbindSWFUploadSelectFiles();      
-              
-        fluid.uploader.swfUploadStrategy.bindFileEventListeners(model, events);
-    };
-    
-    fluid.demands("fluid.uploader.swfUploadStrategy.eventBinder", [
-        "fluid.uploader.swfUploadStrategy.engine",
-        "fluid.uploader.flash.10"
-    ], {
-        funcName: "fluid.uploader.swfUploadStrategy.flash10EventBinder",
-        args: [
-            "{multiFileUploader}.queue.files",
-            "{multiFileUploader}.events"
-        ]
-    });
-})(jQuery, fluid_1_4);
-/*
-Copyright 2008-2009 University of Toronto
-Copyright 2010 OCAD University
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global fluid_1_4:true, jQuery*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {
-
-    fluid.registerNamespace("fluid.uploader.swfUploadStrategy");
-    
-    /**********************************************************************************
-     * The functions in this file, which provide support for Flash 9 in the Uploader, *
-     * have been deprecated as of Infusion 1.3.                                       * 
-     **********************************************************************************/
-    
-    fluid.uploader.swfUploadStrategy.flash9SetupDOM = function (styles) {
-        var container = $("<div><span></span></div>");
-        container.addClass(styles.flash9Container);
-        $("body").append(container);
-        return container;       
-    };
-
-    fluid.demands("fluid.uploader.swfUploadStrategy.setupDOM", [
-        "fluid.uploader.swfUploadStrategy.engine",
-        "fluid.uploader.flash.9"
-    ], {
-        funcName: "fluid.uploader.swfUploadStrategy.flash9SetupDOM",
-        args: [
-            "{swfUploadStrategy}.options.styles"
-        ]
-    });
-
-    fluid.uploader.swfUploadStrategy.flash9SetupConfig = function (flashContainer, config, events) {
-        return fluid.uploader.swfUploadStrategy.convertConfigForSWFUpload(flashContainer, config, events);
-    };
-
-    fluid.demands("fluid.uploader.swfUploadStrategy.setupConfig", [
-        "fluid.uploader.swfUploadStrategy.engine",
-        "fluid.uploader.flash.9"
-    ], {
-        funcName: "fluid.uploader.swfUploadStrategy.flash9SetupConfig",
-        args: [
-            "{engine}.flashContainer",
-            "{engine}.config",
-            "{multiFileUploader}.events"
-        ]
-    });
-
-    fluid.uploader.swfUploadStrategy.flash9EventBinder = function (model, events, local, browseButton) {
-        browseButton.click(function (e) {        
-            local.browse();
-            e.preventDefault();
-        });
-        fluid.uploader.swfUploadStrategy.bindFileEventListeners(model, events);
-    };
-
-    fluid.demands("fluid.uploader.swfUploadStrategy.eventBinder", [
-        "fluid.uploader.swfUploadStrategy.engine",
-        "fluid.uploader.flash.9"
-    ], {
-        funcName: "fluid.uploader.swfUploadStrategy.flash9EventBinder",
-        args: [
-            "{multiFileUploader}.queue.files",
-            "{multiFileUploader}.events",
-            "{local}",
-            "{multiFileUploader}.dom.browseButton"
-        ]
-    });
-
-})(jQuery, fluid_1_4);
-/*
-Copyright 2010-2011 OCAD University 
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global FormData, fluid_1_4:true, jQuery*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {
-
-    fluid.demands("fluid.uploaderImpl", "fluid.uploader.html5", {
-        funcName: "fluid.uploader.multiFileUploader"
-    });
-    
-    fluid.demands("fluid.uploader.progressiveStrategy", "fluid.uploader.html5", {
-        funcName: "fluid.uploader.html5Strategy"
-    });
-    
-    fluid.defaults("fluid.uploader.html5Strategy", {
-        gradeNames: ["fluid.littleComponent", "autoInit"],
-        components: {
-            local: {
-                type: "fluid.uploader.local",
-                options: {
-                    queueSettings: "{multiFileUploader}.options.queueSettings",
-                    events: {
-                        onFileDialog: "{multiFileUploader}.events.onFileDialog",
-                        afterFileDialog: "{multiFileUploader}.events.afterFileDialog",
-                        afterFileQueued: "{multiFileUploader}.events.afterFileQueued",
-                        onQueueError: "{multiFileUploader}.events.onQueueError"
-                    }
-                }
-            },
-            
-            remote: {
-                type: "fluid.uploader.remote",
-                options: {
-                    queueSettings: "{multiFileUploader}.options.queueSettings",
-                    events: {
-                        afterReady: "{multiFileUploader}.events.afterReady",
-                        onFileStart: "{multiFileUploader}.events.onFileStart",
-                        onFileProgress: "{multiFileUploader}.events.onFileProgress",
-                        onFileSuccess: "{multiFileUploader}.events.onFileSuccess",
-                        onFileError: "{multiFileUploader}.events.onFileError",
-                        onFileComplete: "{multiFileUploader}.events.onFileComplete"
-                    }
-                }
-            }
-        },
-        
-        // Used for browsers that rely on File.getAsBinary(), such as Firefox 3.6,
-        // which load the entire file to be loaded into memory.
-        // Set this option to a sane limit (100MB) so your users won't experience crashes or slowdowns (FLUID-3937).
-        legacyBrowserFileLimit: 100000
-    });
-    
-    
-    // TODO: The following two or three functions probably ultimately belong on a that responsible for
-    // coordinating with the XHR. A fileConnection object or something similar.
-    
-    fluid.uploader.html5Strategy.fileSuccessHandler = function (file, events, xhr) {
-        events.onFileSuccess.fire(file, xhr.responseText, xhr);
-        events.onFileComplete.fire(file);
-    };
-    
-    fluid.uploader.html5Strategy.fileErrorHandler = function (file, events, xhr) {
-        events.onFileError.fire(file, 
-                                fluid.uploader.errorConstants.UPLOAD_FAILED,
-                                xhr.status,
-                                xhr);
-        events.onFileComplete.fire(file);
-    };
-    
-    fluid.uploader.html5Strategy.fileStopHandler = function (file, events, xhr) {
-        events.onFileError.fire(file, 
-                                fluid.uploader.errorConstants.UPLOAD_STOPPED,
-                                xhr.status,
-                                xhr);
-        events.onFileComplete.fire(file);
-    };
-    
-    fluid.uploader.html5Strategy.progressTracker = function () {
-        var that = {
-            previousBytesLoaded: 0
-        };
-        
-        that.getChunkSize = function (bytesLoaded) {
-            var chunkSize = bytesLoaded - that.previousBytesLoaded;
-            that.previousBytesLoaded = bytesLoaded;
-            return chunkSize;
-        };
-        
-        return that;
-    };
-    
-    fluid.uploader.html5Strategy.createFileUploadXHR = function () {
-        var xhr = new XMLHttpRequest();
-        return xhr;
-    };
-    
-    fluid.uploader.html5Strategy.monitorFileUploadXHR = function (file, events, xhr) {
-        xhr.onreadystatechange = function () {
-            if (xhr.readyState === 4) {
-                var status = xhr.status;
-                // TODO: See a pattern here? Fix it.
-                if (status === 200) {
-                    fluid.uploader.html5Strategy.fileSuccessHandler(file, events, xhr);
-                } else if (status === 0) {
-                    fluid.uploader.html5Strategy.fileStopHandler(file, events, xhr);
-                } else {
-                    fluid.uploader.html5Strategy.fileErrorHandler(file, events, xhr);
-                }
-            }
-        };
-
-        var progressTracker = fluid.uploader.html5Strategy.progressTracker();
-        xhr.upload.onprogress = function (pe) {
-            events.onFileProgress.fire(file, progressTracker.getChunkSize(pe.loaded), pe.total);
-        };
-        
-        return xhr;
-    };
-    
-    // Set additional POST parameters for xhr  
-    var setPostParams =  function (formData, postParams) {
-        $.each(postParams,  function (key, value) {
-            formData.append(key, value);
-        });
-    };
-    
-    fluid.uploader.html5Strategy.remote = function (queue, options) {
-        var that = fluid.initLittleComponent("fluid.uploader.html5Strategy.remote", options);
-        that.queue = queue;
-        that.queueSettings = that.options.queueSettings;
-        
-        // Upload files in the current batch without exceeding the fileUploadLimit
-        that.uploadNextFile = function () {
-            var batch = that.queue.currentBatch;
-            var file = batch.files[batch.fileIdx];                        
-            that.uploadFile(file);
-        };
-        
-        that.uploadFile = function (file) {
-            that.events.onFileStart.fire(file);
-            var xhr = that.createXHR();
-            that.currentXHR = fluid.uploader.html5Strategy.monitorFileUploadXHR(file, that.events, xhr);
-            that.doUpload(file, that.queueSettings, that.currentXHR);            
-        };
-
-        that.stop = function () {
-            that.queue.isUploading = false;
-            that.currentXHR.abort();         
-        };
-        
-        fluid.initDependents(that);
-        that.events.afterReady.fire();
-        return that;
-    };
-    
-    fluid.defaults("fluid.uploader.html5Strategy.remote", {
-        gradeNames: ["fluid.eventedComponent"],
-        argumentMap: {
-            options: 1  
-        },                
-        invokers: {
-            doUpload: "fluid.uploader.html5Strategy.doUpload",
-            createXHR: "fluid.uploader.html5Strategy.createFileUploadXHR"
-        }
-    });
-    
-    fluid.demands("fluid.uploader.remote", ["fluid.uploader.html5Strategy", "fluid.uploader.live"], {
-        funcName: "fluid.uploader.html5Strategy.remote",
-        args: [
-            "{multiFileUploader}.queue", 
-            fluid.COMPONENT_OPTIONS
-        ]
-    });
-    
-    var CRLF = "\r\n";
-    
-    /** 
-     * Firefox 4  implementation.  FF4 has implemented a FormData function which
-     * conveniently provides easy construct of set key/value pairs representing 
-     * form fields and their values.  The FormData is then easily sent using the 
-     * XMLHttpRequest send() method.  
-     */
-    fluid.uploader.html5Strategy.doFormDataUpload = function (file, queueSettings, xhr) {
-        var formData = new FormData();
-        formData.append("file", file);
-        
-        setPostParams(formData, queueSettings.postParams);
-        
-        // set post params here.
-        xhr.open("POST", queueSettings.uploadURL, true);
-        xhr.send(formData);
-    };
-    
-    fluid.uploader.html5Strategy.generateMultipartBoundary = function () {
-        var boundary = "---------------------------";
-        boundary += Math.floor(Math.random() * 32768);
-        boundary += Math.floor(Math.random() * 32768);
-        boundary += Math.floor(Math.random() * 32768);
-        return boundary;
-    };
-    
-    fluid.uploader.html5Strategy.generateMultiPartContent = function (boundary, file) {
-        var multipart = "";
-        multipart += "--" + boundary + CRLF;
-        multipart += "Content-Disposition: form-data;" +
-            " name=\"fileData\";" + 
-            " filename=\"" + file.name + 
-            "\"" + CRLF;
-        multipart += "Content-Type: " + file.type + CRLF + CRLF;
-        multipart += file.getAsBinary(); // Concatting binary data to JS String; yes, FF will handle it.
-        multipart += CRLF + "--" + boundary + "--" + CRLF;
-        return multipart;
-    };
-    
-    /*
-     * Create the multipart/form-data content by hand to send the file
-     */
-    fluid.uploader.html5Strategy.doManualMultipartUpload = function (file, queueSettings, xhr) {
-        var boundary =  fluid.uploader.html5Strategy.generateMultipartBoundary();
-        var multipart = fluid.uploader.html5Strategy.generateMultiPartContent(boundary, file);
-        
-        xhr.open("POST", queueSettings.uploadURL, true);
-        xhr.setRequestHeader("Content-Type", "multipart/form-data; boundary=" + boundary);
-        xhr.sendAsBinary(multipart);
-    };
-    
-    // Default configuration for older browsers that don't support FormData
-    fluid.demands("fluid.uploader.html5Strategy.doUpload", "fluid.uploader.html5Strategy.remote", {
-        funcName: "fluid.uploader.html5Strategy.doManualMultipartUpload",
-        args: ["@0", "@1", "@2"]
-    });
-    
-    fluid.demands("fluid.uploader.html5Strategy.createFileUploadXHR", "fluid.uploader.html5Strategy.remote", {
-        funcName: "fluid.uploader.html5Strategy.createFileUploadXHR"
-    });    
-    
-    // Configuration for FF4, Chrome, and Safari 4+, all of which support FormData correctly.
-    fluid.demands("fluid.uploader.html5Strategy.doUpload", [
-        "fluid.uploader.html5Strategy.remote", 
-        "fluid.browser.supportsFormData"
-    ], {
-        funcName: "fluid.uploader.html5Strategy.doFormDataUpload",
-        args: ["@0", "@1", "@2"]
-    });
-    
-    fluid.uploader.html5Strategy.local = function (queue, legacyBrowserFileLimit, options) {
-        var that = fluid.initLittleComponent("fluid.uploader.html5Strategy.local", options);
-        that.queue = queue;
-        that.queueSettings = that.options.queueSettings;
-
-        // Add files to the file queue without exceeding the fileUploadLimit and the fileSizeLimit
-        // NOTE:  fileSizeLimit set to bytes for HTML5 Uploader (KB for SWF Uploader).  
-        that.addFiles = function (files) {
-            // TODO: These look like they should be part of a real model.
-            var sizeLimit = (legacyBrowserFileLimit || that.queueSettings.fileSizeLimit) * 1024;
-            var fileLimit = that.queueSettings.fileUploadLimit;
-            var uploaded = that.queue.getUploadedFiles().length;
-            var queued = that.queue.getReadyFiles().length;
-            var remainingUploadLimit = fileLimit - uploaded - queued;
-            
-            // TODO:  Provide feedback to the user if the file size is too large and isn't added to the file queue
-            var numFilesAdded = 0;
-            for (var i = 0; i < files.length; i++) {
-                var file = files[i];
-                if (file.size < sizeLimit && (!fileLimit || remainingUploadLimit > 0)) {
-                    file.id = "file-" + fluid.allocateGuid();
-                    file.filestatus = fluid.uploader.fileStatusConstants.QUEUED;
-                    that.events.afterFileQueued.fire(file);
-                    remainingUploadLimit--;
-                    numFilesAdded++;
-                } else {
-                    file.filestatus = fluid.uploader.fileStatusConstants.ERROR;
-                    that.events.onQueueError.fire(file, fluid.uploader.errorConstants.UPLOAD_LIMIT_EXCEEDED);
-                }
-            }            
-            that.events.afterFileDialog.fire(numFilesAdded);
-        };
-        
-        that.removeFile = function (file) {
-        };
-        
-        that.enableBrowseButton = function () {
-            that.browseButtonView.enable();
-        };
-        
-        that.disableBrowseButton = function () {
-            that.browseButtonView.disable();
-        };
-        
-        fluid.initDependents(that);
-        return that;
-    };
-    
-    fluid.defaults("fluid.uploader.html5Strategy.local", {
-        argumentMap: {
-            options: 2  
-        },
-        gradeNames: ["fluid.eventedComponent"],
-        
-        components: {
-            browseButtonView: {
-                type: "fluid.uploader.html5Strategy.browseButtonView",
-                options: {
-                    queueSettings: "{multiFileUploader}.options.queueSettings",
-                    selectors: {
-                        browseButton: "{multiFileUploader}.selectors.browseButton"
-                    },
-                    listeners: {
-                        onFilesQueued: "{local}.addFiles"
-                    }
-                }
-            }
-        }
-    });
-    
-    fluid.demands("fluid.uploader.local", "fluid.uploader.html5Strategy", {
-        funcName: "fluid.uploader.html5Strategy.local",
-        args: [
-            "{multiFileUploader}.queue",
-            "{html5Strategy}.options.legacyBrowserFileLimit",
-            "{options}"
-        ]
-    });
-    
-    fluid.demands("fluid.uploader.local", [
-        "fluid.uploader.html5Strategy",
-        "fluid.browser.supportsFormData"
-    ], {
-        funcName: "fluid.uploader.html5Strategy.local",
-        args: [
-            "{multiFileUploader}.queue",
-            undefined,
-            "{options}"
-        ]
-    });
-    
-    
-    /********************
-     * browseButtonView *
-     ********************/
-    
-    var bindEventsToFileInput = function (that, fileInput) {
-        fileInput.click(function () {
-            that.events.onBrowse.fire();
-        });
-        
-        fileInput.change(function () {
-            var files = fileInput[0].files;
-            that.events.onFilesQueued.fire(files);
-            that.renderFreshMultiFileInput();
-        });
-        
-        fileInput.focus(function () {
-            that.browseButton.addClass("focus");
-        });
-        
-        fileInput.blur(function () {
-            that.browseButton.removeClass("focus");
-        });
-    };
-    
-    var renderMultiFileInput = function (that) {
-        var multiFileInput = $(that.options.multiFileInputMarkup);
-        bindEventsToFileInput(that, multiFileInput);
-        return multiFileInput;
-    };
-    
-    var setupBrowseButtonView = function (that) {
-        var multiFileInput = renderMultiFileInput(that);        
-        that.browseButton.append(multiFileInput);
-        that.browseButton.attr("tabindex", -1);
-    };
-    
-    fluid.uploader.html5Strategy.browseButtonView = function (container, options) {
-        var that = fluid.initView("fluid.uploader.html5Strategy.browseButtonView", container, options);
-        that.browseButton = that.locate("browseButton");
-        
-        that.renderFreshMultiFileInput = function () {
-            var previousInput = that.locate("fileInputs").last();
-            previousInput.hide();
-            previousInput.attr("tabindex", -1);
-            var newInput = renderMultiFileInput(that);
-            previousInput.after(newInput);
-        };
-        
-        that.enable = function () {
-            that.locate("fileInputs").removeAttr("disabled");
-        };
-        
-        that.disable = function () {
-            that.locate("fileInputs").attr("disabled", "disabled");
-        };
-        
-        setupBrowseButtonView(that);
-        return that;
-    };
-    
-    fluid.defaults("fluid.uploader.html5Strategy.browseButtonView", {
-        gradeNames: "fluid.viewComponent",
-        multiFileInputMarkup: "<input type='file' multiple='' class='flc-uploader-html5-input' />",
-        
-        queueSettings: {},
-        
-        selectors: {
-            browseButton: ".flc-uploader-button-browse",
-            fileInputs: ".flc-uploader-html5-input"
-        },
-        
-        events: {
-            onBrowse: null,
-            onFilesQueued: null
-        }        
-    });
-
-    fluid.demands("fluid.uploader.html5Strategy.browseButtonView", "fluid.uploader.html5Strategy.local", {
-        container: "{multiFileUploader}.container",
-        mergeOptions: {
-            events: {
-                onBrowse: "{local}.events.onFileDialog"
-            }
-        }
-    });
-
-})(jQuery, fluid_1_4);
-/*
-Copyright 2009 University of Toronto
-Copyright 2009 University of California, Berkeley
-Copyright 2010-2011 OCAD University
-
-Licensed under the Educational Community License (ECL), Version 2.0 or the New
-BSD license. You may not use this file except in compliance with one these
-Licenses.
-
-You may obtain a copy of the ECL 2.0 License and BSD License at
-https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
-*/
-
-// Declare dependencies
-/*global fluid_1_4:true, jQuery*/
-
-// JSLint options 
-/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
-
-var fluid_1_4 = fluid_1_4 || {};
-
-(function ($, fluid) {
-    
-    fluid.uploader = fluid.uploader || {};
-    
-    var startUploading; // Define early due to subtle circular dependency.
-    
-    var updateProgress = function (file, events, demoState, isUploading) {
-        if (!isUploading) {
-            return;
-        }
-        
-        var chunk = Math.min(demoState.chunkSize, file.size);
-        demoState.bytesUploaded = Math.min(demoState.bytesUploaded + chunk, file.size);
-        events.onFileProgress.fire(file, demoState.bytesUploaded, file.size);
-    };
-    
-    var finishAndContinueOrCleanup = function (that, file) {
-        that.queue.finishFile(file);
-        that.events.afterFileComplete.fire(file);
-        
-        if (that.queue.shouldUploadNextFile()) {
-            startUploading(that);
-        } else {
-            that.events.afterUploadComplete.fire(that.queue.currentBatch.files);
-            if (file.status !== fluid.uploader.fileStatusConstants.CANCELLED) {
-                that.queue.clearCurrentBatch(); // Only clear the current batch if we're actually done the batch.
-            }
-        }
-    };
-    
-    var finishUploading = function (that) {
-        if (!that.queue.isUploading) {
-            return;
-        }
-        
-        var file = that.demoState.currentFile;
-        that.events.onFileSuccess.fire(file);
-        that.demoState.fileIdx++;
-        finishAndContinueOrCleanup(that, file);
-    };
-    
-    var simulateUpload = function (that) {
-        if (!that.queue.isUploading) {
-            return;
-        }
-        
-        var file = that.demoState.currentFile;
-        if (that.demoState.bytesUploaded < file.size) {
-            fluid.invokeAfterRandomDelay(function () {
-                updateProgress(file, that.events, that.demoState, that.queue.isUploading);
-                simulateUpload(that);
-            });
-        } else {
-            finishUploading(that);
-        } 
-    };
-    
-    startUploading = function (that) {
-        // Reset our upload stats for each new file.
-        that.demoState.currentFile = that.queue.files[that.demoState.fileIdx];
-        that.demoState.chunksForCurrentFile = Math.ceil(that.demoState.currentFile / that.demoState.chunkSize);
-        that.demoState.bytesUploaded = 0;
-        that.queue.isUploading = true;
-        
-        that.events.onFileStart.fire(that.demoState.currentFile);
-        simulateUpload(that);
-    };
-
-    var stopDemo = function (that) {
-        var file = that.demoState.currentFile;
-        file.filestatus = fluid.uploader.fileStatusConstants.CANCELLED;
-        
-        // In SWFUpload's world, pausing is a combinination of an UPLOAD_STOPPED error and a complete.
-        that.events.onFileError.fire(file, 
-                                     fluid.uploader.errorConstants.UPLOAD_STOPPED, 
-                                     "The demo upload was paused by the user.");
-        finishAndContinueOrCleanup(that, file);
-        that.events.onUploadStop.fire();
-    };
-    
-    var setupDemo = function (that) {
-        if (that.simulateDelay === undefined || that.simulateDelay === null) {
-            that.simulateDelay = true;
-        }
-          
-        // Initialize state for our upload simulation.
-        that.demoState = {
-            fileIdx: 0,
-            chunkSize: 200000
-        };
-        
-        return that;
-    };
-       
-    /**
-     * The demo remote pretends to upload files to the server, firing all the appropriate events
-     * but without sending anything over the network or requiring a server to be running.
-     * 
-     * @param {FileQueue} queue the Uploader's file queue instance
-     * @param {Object} the Uploader's bundle of event firers
-     * @param {Object} configuration options
-     */
-    fluid.uploader.demoRemote = function (queue, options) {
-        var that = fluid.initLittleComponent("fluid.uploader.demoRemote", options);
-        that.queue = queue;
-        
-        that.uploadNextFile = function () {
-            startUploading(that);   
-        };
-        
-        that.stop = function () {
-            stopDemo(that);
-        };
-        
-        setupDemo(that);
-        return that;
-    };
-    
-    /**
-     * Invokes a function after a random delay by using setTimeout.
-     * If the simulateDelay option is false, the function is invoked immediately.
-     * This is an odd function, but a potential candidate for central inclusion.
-     * 
-     * @param {Function} fn the function to invoke
-     */
-    fluid.invokeAfterRandomDelay = function (fn) {
-        var delay = Math.floor(Math.random() * 1000 + 100);
-        setTimeout(fn, delay);
-    };
-    
-    fluid.defaults("fluid.uploader.demoRemote", {
-        gradeNames: ["fluid.eventedComponent"],
-        argumentMap: {
-            options: 1  
-        },
-        events: {
-            onFileProgress: "{multiFileUploader}.events.onFileProgress",
-            afterFileComplete: "{multiFileUploader}.events.afterFileComplete",
-            afterUploadComplete: "{multiFileUploader}.events.afterUploadComplete",
-            onFileSuccess: "{multiFileUploader}.events.onFileSuccess",
-            onFileStart: "{multiFileUploader}.events.onFileStart",
-            onFileError: "{multiFileUploader}.events.onFileError",
-            onUploadStop: "{multiFileUploader}.events.onUploadStop"
-        }
-    });
-    
-    fluid.demands("fluid.uploader.remote", ["fluid.uploader.multiFileUploader", "fluid.uploader.demo"], {
-        funcName: "fluid.uploader.demoRemote",
-        args: [
-            "{multiFileUploader}.queue",
-            "{multiFileUploader}.events",
-            fluid.COMPONENT_OPTIONS
-        ]
-    });
-    
-})(jQuery, fluid_1_4);

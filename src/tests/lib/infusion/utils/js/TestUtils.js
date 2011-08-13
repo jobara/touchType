@@ -8,14 +8,14 @@ BSD license. You may not use this file except in compliance with one these
 Licenses.
 
 You may obtain a copy of the ECL 2.0 License and BSD License at
-https://source.fluidproject.org/svn/LICENSE.txt
+https://github.com/fluid-project/infusion/raw/master/Infusion-LICENSE.txt
 */
 
 // Declare dependencies
 /*global fluid, jqUnit, jQuery*/
 
 // JSLint options 
-/*jslint white: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
+/*jslint white: true, funcinvoke: true, undef: true, newcap: true, nomen: true, regexp: true, bitwise: true, browser: true, forin: true, maxerr: 100, indent: 4 */
 
 fluid.registerNamespace("fluid.testUtils");
 
@@ -74,7 +74,7 @@ fluid.testUtils.sortTree = function (tree) {
     if (fluid.isArrayable(tree)) {
         tree.sort(comparator);
     }
-    fluid.transform(tree, function (value) {
+    fluid.each(tree, function (value) {
         if (!fluid.isPrimitive(value)) {
             fluid.testUtils.sortTree(value);
         }
@@ -82,10 +82,40 @@ fluid.testUtils.sortTree = function (tree) {
       
 };
 
-fluid.testUtils.assertTree = function (message, expected, actual) {
-    fluid.testUtils.sortTree(expected);
-    fluid.testUtils.sortTree(actual);
-    jqUnit.assertDeepEq(message, expected, actual);
+fluid.testUtils.canonicaliseFunctions = function (tree) {
+    return fluid.transform(tree, function(value) {
+        if (fluid.isPrimitive(value)) {
+            if (typeof(value) === "function") {
+                return fluid.identity;
+            }
+            else return value;
+        }
+        else return fluid.testUtils.canonicaliseFunctions(value);
+    });
+};
+
+/** Assert that two trees are equal after applying a "canonicalisation function". This can be used in 
+ * cases where the criterion for equivalence is looser than exact object equivalence - for example, 
+ * when using renderer trees, "fluid.testUtils.sortTree" can be used for canonFunc", or in the case
+ * of a resourceSpec, "fluid.testUtils.canonicaliseFunctions". **/
+
+fluid.testUtils.assertCanoniseEqual = function (message, expected, actual, canonFunc) {
+    var expected2 = canonFunc(expected);
+    var actual2 = canonFunc(actual);
+    jqUnit.assertDeepEq(message, expected2, actual2);  
+};
+
+/** Assert that the expected value object is a subset (considered in terms of shallow key coincidence) of the
+ * "actual" value object **/ 
+
+fluid.testUtils.assertLeftHand = function(message, expected, actual) {
+    jqUnit.assertDeepEq(message, expected, fluid.filterKeys(actual, fluid.keys(expected)));  
+};
+
+/** Assert that the expected value object is a superset of the "actual" value object **/
+
+fluid.testUtils.assertRightHand = function(message, expected, actual) {
+    jqUnit.assertDeepEq(message, fluid.filterKeys(expected, fluid.keys(actual)), actual);  
 };
 
 /** Condense a DOM node into a plain Javascript object, to facilitate testing against
